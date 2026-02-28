@@ -1,0 +1,406 @@
+{
+  "timestamp": "2026-02-17T16:18:01.333054",
+  "batch": "A",
+  "range": [
+    2020,
+    2025
+  ],
+  "results": [
+    {
+      "ticker": "AAPL",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 6,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 6,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "MSFT",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 6,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 6,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "GOOGL",
+      "success": true,
+      "error": null,
+      "filings_count": 4,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 5,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 2,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "AMZN",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 6,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 6,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "META",
+      "success": true,
+      "error": null,
+      "filings_count": 2,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 5,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "NVDA",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 4,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 6,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "TSLA",
+      "success": true,
+      "error": null,
+      "filings_count": 9,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 6,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "JPM",
+      "success": true,
+      "error": null,
+      "filings_count": 2,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 4,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "BAC",
+      "success": true,
+      "error": null,
+      "filings_count": 1,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 0,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "WFC",
+      "success": true,
+      "error": null,
+      "filings_count": 2,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 0,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "XOM",
+      "success": true,
+      "error": null,
+      "filings_count": 5,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 5,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "CVX",
+      "success": true,
+      "error": null,
+      "filings_count": 5,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 4,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 5,
+          "total": 6
+        }
+      }
+    }
+  ]
+}

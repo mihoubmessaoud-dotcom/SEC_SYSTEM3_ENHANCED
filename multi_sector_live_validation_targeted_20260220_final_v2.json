@@ -1,0 +1,102 @@
+{
+  "AAPL": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": null
+  },
+  "MSFT": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": null
+  },
+  "TSLA": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": null
+  },
+  "CVX": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": "SEC_HISTORY_CARRY_FORWARD_PROXY_NO_ANCHOR"
+  },
+  "PFE": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": "SEC_HISTORY_CARRY_FORWARD_PROXY_NO_ANCHOR"
+  },
+  "NEE": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": null
+  },
+  "JPM": {
+    "success": true,
+    "profile": "bank",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": null
+  },
+  "BAC": {
+    "success": true,
+    "profile": "bank",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": null
+  },
+  "AIG": {
+    "success": true,
+    "profile": "insurance",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": null
+  },
+  "PGR": {
+    "success": true,
+    "profile": "insurance",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": [],
+    "full_year_proxy_source": null
+  }
+}

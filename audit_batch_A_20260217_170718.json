@@ -1,0 +1,79 @@
+{
+  "batch": "A",
+  "timestamp": "2026-02-17T17:07:18.959136",
+  "results": [
+    {
+      "ticker": "AAPL",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "MSFT",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "GOOGL",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "AMZN",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "META",
+      "status": "FAIL",
+      "issues": 2,
+      "issues_list": [
+        "2021:balance",
+        "2022:balance"
+      ],
+      "error": null
+    },
+    {
+      "ticker": "NVDA",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "TSLA",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "NFLX",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "AMD",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "INTC",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "mapping_examples": [
+    {
+      "profile": "industrial",
+      "raw_concept": "RevenueFromContractWithCustomerExcludingAssessedTax",
+      "mapped_node": "IS.REV",
+      "confidence": 0.98,
+      "source": "exact"
+    },
+    {
+      "profile": "bank",
+      "raw_concept": "InterestIncomeExpenseNet",
+      "mapped_node": "IS.NII",
+      "confidence": 0.87,
+      "source": "keyword"
+    },
+    {
+      "profile": "utility",
+      "raw_concept": "RegulatedUtilityRevenue",
+      "mapped_node": "IS.REG_REV",
+      "confidence": 0.93,
+      "source": "exact"
+    },
+    {
+      "profile": "energy",
+      "raw_concept": "ExplorationAndProductionRevenue",
+      "mapped_node": "IS.HC_REV",
+      "confidence": 0.94,
+      "source": "exact"
+    }
+  ]
+}

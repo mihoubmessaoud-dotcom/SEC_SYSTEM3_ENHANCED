@@ -1,0 +1,356 @@
+{
+  "timestamp": "2026-02-17T16:30:01.064374",
+  "batch": "B",
+  "range": [
+    2020,
+    2025
+  ],
+  "results": [
+    {
+      "ticker": "JNJ",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 5,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 5,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "PFE",
+      "success": true,
+      "error": null,
+      "filings_count": 5,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 4,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 5,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "UNH",
+      "success": true,
+      "error": null,
+      "filings_count": 5,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 5,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "KO",
+      "success": true,
+      "error": null,
+      "filings_count": 5,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 5,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 5,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 5,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "PEP",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 6,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "MCD",
+      "success": true,
+      "error": null,
+      "filings_count": 5,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 5,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 5,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 5,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "WMT",
+      "success": true,
+      "error": null,
+      "filings_count": 3,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 5,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 5,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "HD",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 0,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "CAT",
+      "success": false,
+      "error": "Multi-year extraction failed for all filings. 000001823026000008: Balance sheet statement not found in consolidated statements. | 000001823025000008: Balance sheet statement not found in consolidated statements. | 000001823024000009: Balance sheet statement not found in consolidated statements. | 000001823023000011: Balance sheet statement not found in consolidated statements. | 000001823022000050: Balance sheet statement not found in consolidated statements. | 000001823021000063: Balance sheet statement not found in consolidated statements.",
+      "filings_count": null,
+      "ratios_years": 0,
+      "key_ratio_coverage": {}
+    },
+    {
+      "ticker": "BA",
+      "success": false,
+      "error": "Multi-year extraction failed for all filings. 000162828026004357: Balance sheet statement not found in consolidated statements. | 000001292725000015: Balance sheet statement not found in consolidated statements. | 000001292724000010: Balance sheet statement not found in consolidated statements. | 000001292723000007: Balance sheet statement not found in consolidated statements. | 000001292722000010: Balance sheet statement not found in consolidated statements. | 000001292721000011: Balance sheet statement not found in consolidated statements.",
+      "filings_count": null,
+      "ratios_years": 0,
+      "key_ratio_coverage": {}
+    },
+    {
+      "ticker": "V",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 5,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    },
+    {
+      "ticker": "MA",
+      "success": true,
+      "error": null,
+      "filings_count": 6,
+      "ratios_years": 6,
+      "key_ratio_coverage": {
+        "pe_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "pb_ratio": {
+          "computed": 6,
+          "total": 6
+        },
+        "operating_cash_flow_margin": {
+          "computed": 0,
+          "total": 6
+        },
+        "interest_coverage": {
+          "computed": 6,
+          "total": 6
+        },
+        "inventory_turnover": {
+          "computed": 0,
+          "total": 6
+        },
+        "current_ratio": {
+          "computed": 6,
+          "total": 6
+        }
+      }
+    }
+  ]
+}

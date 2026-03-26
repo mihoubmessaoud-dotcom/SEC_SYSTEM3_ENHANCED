@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Optional, List
 
 from .canonical_resolver import resolve_item
+from .semantic_matcher import semantic_select_raw_tag
 from .ratio_formats import canonicalize_ratio_value, get_ratio_metadata
 
 
@@ -21,22 +22,42 @@ class RatioEngine:
         'NetRevenue_Hierarchy',
         'NetRevenue',
         'Revenues',
+        'TotalRevenues',
+        'TotalRevenue',
         'SalesRevenueNet',
+        'SalesRevenueServicesNet',
+        'SalesRevenueGoodsNet',
+        'NetSales',
+        'OperatingRevenues',
+        'SalesAndServicesRevenues',
+        'SalesAndOtherOperatingRevenues',
+        'RevenuesAndOtherIncome',
+        'RevenueFromContractWithCustomerExcludingAssessedTax',
+        'RevenueFromContractWithCustomerIncludingAssessedTax',
+        'ServiceRevenue',
+        'ProductRevenue',
+        'SubscriptionRevenue',
         'RevenuesQTD',
         'SalesRevenueNetQTD',
-        'RevenueFromContractWithCustomerExcludingAssessedTax',
         'Revenue',
     ]
     COGS_TAGS = [
         'CostOfRevenue',
         'CostOfGoodsAndServicesSold',
         'COGS',
+        'CostOfSales',
+        'CostOfProductsSold',
+        'CostOfGoodsSold',
+        'CostOfServices',
+        'CostOfRevenueProduct',
+        'CostOfRevenueService',
     ]
     AR_TAGS = [
         'AccountsReceivableNetCurrent_Hierarchy',
         'AccountsReceivableNetCurrent',
         'AccountsReceivable',
         'ReceivablesNetCurrent',
+        'ReceivablesNet',
         'FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss',
         'FinancingReceivableAccruedInterestBeforeAllowanceForCreditLoss',
     ]
@@ -45,10 +66,124 @@ class RatioEngine:
         'AccountsPayableCurrent',
         'AccountsPayableAndAccruedLiabilitiesCurrentAndNoncurrent',
         'AccountsPayable',
+        'AccountsPayableAndAccruedLiabilitiesCurrent',
     ]
-    INVENTORY_TAGS = ['InventoryNet_Hierarchy', 'InventoryNet', 'Inventory']
-    NI_TAGS = ['NetIncomeLoss', 'ProfitLoss']
-    EQUITY_TAGS = ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest']
+    INVENTORY_TAGS = ['InventoryNet_Hierarchy', 'InventoryNet', 'Inventory', 'Inventories']
+    NI_TAGS = ['NetIncomeLoss', 'ProfitLoss', 'NetIncome', 'NetEarnings']
+    OP_INCOME_TAGS = ['OperatingIncomeLoss', 'OperatingIncome', 'IncomeLossFromOperations']
+    ASSETS_TAGS = ['Assets', 'Assets_Hierarchy', 'TotalAssets', 'AssetsCurrent+AssetsNoncurrent']
+    CURRENT_ASSETS_TAGS = ['AssetsCurrent_Hierarchy', 'AssetsCurrent', 'CurrentAssets']
+    CURRENT_LIABILITIES_TAGS = ['LiabilitiesCurrent_Hierarchy', 'LiabilitiesCurrent', 'CurrentLiabilities']
+    EQUITY_TAGS = [
+        'StockholdersEquity',
+        'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
+        'StockholdersEquityAttributableToParent',
+        'CommonStockholdersEquity',
+        'TotalEquity',
+    ]
+    GROSS_PROFIT_TAGS = ['GrossProfit', 'GrossProfit_Hierarchy', 'GrossProfitLoss']
+
+    _LEARNED_TAG_MAP = None
+    _LEARNED_TAG_PATH = None
+
+    @classmethod
+    def _load_learned_tag_map(cls) -> Dict[str, List[str]]:
+        if cls._LEARNED_TAG_MAP is not None:
+            return cls._LEARNED_TAG_MAP
+        root = Path(__file__).resolve().parents[1]
+        path = root / 'sec_learned_mappings.json'
+        cls._LEARNED_TAG_PATH = path
+        if not path.exists():
+            cls._LEARNED_TAG_MAP = {}
+            return cls._LEARNED_TAG_MAP
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except Exception:
+            payload = {}
+        cls._LEARNED_TAG_MAP = {k: [x for x in (v or []) if isinstance(x, str)] for k, v in payload.items()}
+        return cls._LEARNED_TAG_MAP
+
+    @classmethod
+    def _persist_learned_tag(cls, bucket: str, tag: str) -> None:
+        if not tag:
+            return
+        learned = cls._load_learned_tag_map()
+        bucket = str(bucket or '').strip().lower()
+        if not bucket:
+            return
+        existing = learned.get(bucket, [])
+        if tag in existing:
+            return
+        existing.append(tag)
+        learned[bucket] = existing
+        path = cls._LEARNED_TAG_PATH
+        if path is None:
+            return
+        try:
+            path.write_text(json.dumps(learned, indent=2, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
+
+    @classmethod
+    def _extend_tags_from_learned(cls) -> None:
+        learned = cls._load_learned_tag_map()
+        map_keys = {
+            'assets': 'ASSETS_TAGS',
+            'current_assets': 'CURRENT_ASSETS_TAGS',
+            'current_liabilities': 'CURRENT_LIABILITIES_TAGS',
+            'equity': 'EQUITY_TAGS',
+            'inventory': 'INVENTORY_TAGS',
+            'ar': 'AR_TAGS',
+            'ap': 'AP_TAGS',
+            'gross_profit': 'GROSS_PROFIT_TAGS',
+            'cogs': 'COGS_TAGS',
+            'operating_income': 'OP_INCOME_TAGS',
+            'net_income': 'NI_TAGS',
+        }
+        for learned_key, attr in map_keys.items():
+            extra = learned.get(learned_key, [])
+            if not extra:
+                continue
+            current = list(getattr(cls, attr, []))
+            for t in extra:
+                if t not in current:
+                    current.append(t)
+            setattr(cls, attr, current)
+
+    @staticmethod
+    def _discover_tags_by_keywords(raw: Dict, include, exclude) -> List[str]:
+        tags = []
+        for k in (raw or {}).keys():
+            key = str(k)
+            key_l = key.lower()
+            if any(tok in key_l for tok in include) and not any(tok in key_l for tok in exclude):
+                tags.append(key)
+        return tags
+
+    @staticmethod
+    def _semantic_pick_tag(raw: Dict, known_tags: List[str], include, exclude, min_score: float = 0.92) -> Optional[Dict]:
+        raw_keys = []
+        for k in (raw or {}).keys():
+            key = str(k)
+            key_l = key.lower()
+            if include and not any(tok in key_l for tok in include):
+                continue
+            if exclude and any(tok in key_l for tok in exclude):
+                continue
+            raw_keys.append(key)
+        if not raw_keys:
+            return None
+        picked, matched, score = semantic_select_raw_tag(raw_keys, known_tags, min_score=min_score)
+        if not picked:
+            return None
+        value = (raw or {}).get(picked)
+        return {
+            'tag': picked,
+            'value': value,
+            'semantic_matched_to': matched,
+            'confidence': int(round(score * 100)),
+            'selection_reason': f'semantic_match:{matched}',
+        }
 
     BASE_RATIO_IDS = [
         'roe',
@@ -158,7 +293,11 @@ class RatioEngine:
 
     FORMULA_MAP = {
         'gross_margin': '(Revenue - COGS) / Revenue',
+        'operating_margin': 'OperatingIncome / Revenue',
+        'net_margin': 'NetIncome / Revenue',
         'roe': 'NetIncome / AvgEquity',
+        'roa': 'NetIncome / AvgAssets',
+        'current_ratio': 'CurrentAssets / CurrentLiabilities',
         'days_sales_outstanding': '365 * AvgAR / Revenue',
         'ap_days': '365 * AvgAP / COGS',
         'inventory_days': '365 * AvgInventory / COGS',
@@ -168,6 +307,7 @@ class RatioEngine:
 
     def __init__(self) -> None:
         self.computation_timestamp = datetime.now(timezone.utc).isoformat()
+        self._extend_tags_from_learned()
 
     def build(self, data_by_year: Dict, ratios_by_year: Dict) -> Dict:
         years = sorted(
@@ -193,6 +333,11 @@ class RatioEngine:
             ar = self.get_canonical_accounts_receivable(year, raw)
             ap = self.get_canonical_accounts_payable(year, raw)
             inv = self.get_canonical_inventory(year, raw)
+            assets = self.get_canonical_assets(year, raw)
+            current_assets = self.get_canonical_current_assets(year, raw)
+            current_liabilities = self.get_canonical_current_liabilities(year, raw)
+            net_income = self.get_canonical_net_income(year, raw)
+            operating_income = self.get_canonical_operating_income(year, raw)
 
             # fail-closed for currency / scale mismatch
             if rev.get('value') is not None and cogs.get('value') is not None:
@@ -226,6 +371,11 @@ class RatioEngine:
                 'canonical_ar': ar,
                 'canonical_ap': ap,
                 'canonical_inventory': inv,
+                'canonical_assets': assets,
+                'canonical_current_assets': current_assets,
+                'canonical_current_liabilities': current_liabilities,
+                'canonical_net_income': net_income,
+                'canonical_operating_income': operating_income,
             }
 
             canonical_diag_by_year[str(year)] = {
@@ -237,6 +387,11 @@ class RatioEngine:
                 'canonical_ar_tag': ar.get('tag'),
                 'canonical_ap_tag': ap.get('tag'),
                 'canonical_inventory_tag': inv.get('tag'),
+                'canonical_assets_tag': assets.get('tag'),
+                'canonical_current_assets_tag': current_assets.get('tag'),
+                'canonical_current_liabilities_tag': current_liabilities.get('tag'),
+                'canonical_net_income_tag': net_income.get('tag'),
+                'canonical_operating_income_tag': operating_income.get('tag'),
                 'context_type': {
                     'revenue': rev.get('period_type'),
                     'cogs': cogs.get('period_type'),
@@ -244,6 +399,11 @@ class RatioEngine:
                     'accounts_receivable': ar.get('period_type'),
                     'accounts_payable': ap.get('period_type'),
                     'inventory': inv.get('period_type'),
+                    'assets': assets.get('period_type'),
+                    'current_assets': current_assets.get('period_type'),
+                    'current_liabilities': current_liabilities.get('period_type'),
+                    'net_income': net_income.get('period_type'),
+                    'operating_income': operating_income.get('period_type'),
                 },
                 'units_scale': {
                     'revenue': {'unit': rev.get('unit'), 'scale': rev.get('scale_applied')},
@@ -252,6 +412,11 @@ class RatioEngine:
                     'accounts_receivable': {'unit': ar.get('unit'), 'scale': ar.get('scale_applied')},
                     'accounts_payable': {'unit': ap.get('unit'), 'scale': ap.get('scale_applied')},
                     'inventory': {'unit': inv.get('unit'), 'scale': inv.get('scale_applied')},
+                    'assets': {'unit': assets.get('unit'), 'scale': assets.get('scale_applied')},
+                    'current_assets': {'unit': current_assets.get('unit'), 'scale': current_assets.get('scale_applied')},
+                    'current_liabilities': {'unit': current_liabilities.get('unit'), 'scale': current_liabilities.get('scale_applied')},
+                    'net_income': {'unit': net_income.get('unit'), 'scale': net_income.get('scale_applied')},
+                    'operating_income': {'unit': operating_income.get('unit'), 'scale': operating_income.get('scale_applied')},
                 },
                 'selection_confidence': {
                     'revenue': rev.get('confidence', 0),
@@ -260,6 +425,11 @@ class RatioEngine:
                     'accounts_receivable': ar.get('confidence', 0),
                     'accounts_payable': ap.get('confidence', 0),
                     'inventory': inv.get('confidence', 0),
+                    'assets': assets.get('confidence', 0),
+                    'current_assets': current_assets.get('confidence', 0),
+                    'current_liabilities': current_liabilities.get('confidence', 0),
+                    'net_income': net_income.get('confidence', 0),
+                    'operating_income': operating_income.get('confidence', 0),
                 },
                 'top_candidates': {
                     'revenue': rev.get('candidates', []),
@@ -268,6 +438,11 @@ class RatioEngine:
                     'accounts_receivable': ar.get('candidates', []),
                     'accounts_payable': ap.get('candidates', []),
                     'inventory': inv.get('candidates', []),
+                    'assets': assets.get('candidates', []),
+                    'current_assets': current_assets.get('candidates', []),
+                    'current_liabilities': current_liabilities.get('candidates', []),
+                    'net_income': net_income.get('candidates', []),
+                    'operating_income': operating_income.get('candidates', []),
                 },
             }
             integrity_rows_by_year[str(year)] = self._build_integrity_row(year, rev, cogs, equity, ar, ap, inv)
@@ -280,6 +455,10 @@ class RatioEngine:
                 'inventory_days',
                 'ccc_days',
                 'pb_ratio',
+                'operating_margin',
+                'net_margin',
+                'roa',
+                'current_ratio',
             }
             for rid in [r for r in self.BASE_RATIO_IDS if r not in passthrough_skip]:
                 contracts[rid] = self._build_base_contract(rid, row.get(rid))
@@ -332,6 +511,10 @@ class RatioEngine:
             contracts['days_sales_outstanding'] = self._compute_days_ratio('dso', raw, prev_raw, rev, cogs, ar, ap, inv)
             contracts['ap_days'] = self._compute_days_ratio('dpo', raw, prev_raw, rev, cogs, ar, ap, inv)
             contracts['inventory_days'] = self._compute_days_ratio('dih', raw, prev_raw, rev, cogs, ar, ap, inv)
+            contracts['operating_margin'] = self._compute_operating_margin(rev, operating_income)
+            contracts['net_margin'] = self._compute_net_margin(rev, net_income)
+            contracts['roa'] = self._compute_roa(raw, prev_raw, assets, net_income)
+            contracts['current_ratio'] = self._compute_current_ratio(current_assets, current_liabilities)
             contracts['ccc_days'] = self._compute_ccc(
                 contracts['days_sales_outstanding'],
                 contracts['inventory_days'],
@@ -365,6 +548,42 @@ class RatioEngine:
                 raw=raw,
             )
             self._apply_reliability_penalties(
+                contracts['operating_margin'],
+                rev,
+                cogs,
+                extra_items=[operating_income, rev],
+                ratio_id='operating_margin',
+                year=year,
+                raw=raw,
+            )
+            self._apply_reliability_penalties(
+                contracts['net_margin'],
+                rev,
+                cogs,
+                extra_items=[net_income, rev],
+                ratio_id='net_margin',
+                year=year,
+                raw=raw,
+            )
+            self._apply_reliability_penalties(
+                contracts['roa'],
+                rev,
+                cogs,
+                extra_items=[assets, net_income],
+                ratio_id='roa',
+                year=year,
+                raw=raw,
+            )
+            self._apply_reliability_penalties(
+                contracts['current_ratio'],
+                rev,
+                cogs,
+                extra_items=[current_assets, current_liabilities],
+                ratio_id='current_ratio',
+                year=year,
+                raw=raw,
+            )
+            self._apply_reliability_penalties(
                 contracts['ccc_days'],
                 rev,
                 cogs,
@@ -374,6 +593,18 @@ class RatioEngine:
                 raw=raw,
             )
             for rid in ['days_sales_outstanding', 'ap_days', 'inventory_days', 'ccc_days']:
+                lockdown_rows.append(
+                    self._lockdown_row(
+                        year,
+                        rid,
+                        contracts[rid],
+                        contracts[rid].get('inputs', {}),
+                        rev,
+                        cogs,
+                        input_tags=contracts[rid].get('input_tags', []),
+                    )
+                )
+            for rid in ['operating_margin', 'net_margin', 'roa', 'current_ratio']:
                 lockdown_rows.append(
                     self._lockdown_row(
                         year,
@@ -426,6 +657,7 @@ class RatioEngine:
                 )
             items_by_year[year] = item_ctx
 
+        self._apply_margin_interpolation(ratio_contracts_by_year)
         self._write_canonical_diagnostics(canonical_diag_by_year)
         self._write_data_integrity_diagnostics(integrity_rows_by_year)
         self._write_ratio_reliability_report(ratio_reliability_rows)
@@ -441,60 +673,383 @@ class RatioEngine:
             'ratio_reliability_report': ratio_reliability_rows,
         }
 
+    def _apply_margin_interpolation(self, ratio_contracts_by_year: Dict[int, Dict[str, Dict]]) -> None:
+        for ratio_id in ('gross_margin', 'operating_margin', 'net_margin'):
+            years = sorted(ratio_contracts_by_year.keys())
+            for i, y in enumerate(years):
+                c = (ratio_contracts_by_year.get(y, {}) or {}).get(ratio_id) or {}
+                if c.get('status') == 'COMPUTED' and isinstance(c.get('value'), (int, float)):
+                    continue
+                if i <= 0 or i >= len(years) - 1:
+                    continue
+                py, ny = years[i - 1], years[i + 1]
+                pc = (ratio_contracts_by_year.get(py, {}) or {}).get(ratio_id) or {}
+                nc = (ratio_contracts_by_year.get(ny, {}) or {}).get(ratio_id) or {}
+                pv = self._num(pc.get('value'))
+                nv = self._num(nc.get('value'))
+                if pv is None or nv is None or ny == py:
+                    continue
+                weight = (float(y) - float(py)) / float(ny - py)
+                est = float(pv) + (weight * (float(nv) - float(pv)))
+                # Keep strict plausibility envelope for margins.
+                if not (-1.0 <= est <= 1.0):
+                    continue
+                c['value'] = est
+                c['status'] = 'INTERPOLATED_ESTIMATE'
+                c['reliability'] = min(float(c.get('reliability') or 60), 60.0)
+                c['reason'] = f'Interpolated between {py} and {ny}'
+                c['source'] = 'ratio_engine'
+
     def get_canonical_annual_revenue(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
         strict_tree = bool((raw or {}).get('__statement_tree_required__'))
         by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('annual_revenue') or [])
         if strict_tree:
             candidates = list(by_meta)
         else:
             candidates = list(by_meta) if by_meta else [{'tag': t, 'value': raw.get(t)} for t in self.REVENUE_TAGS]
+            if not candidates:
+                discovered = self._discover_tags_by_keywords(
+                    raw,
+                    include=('revenue', 'revenues', 'sales'),
+                    exclude=('cost', 'expense', 'tax'),
+                )
+                candidates = [{'tag': t, 'value': raw.get(t)} for t in discovered]
+            if not candidates:
+                semantic = self._semantic_pick_tag(
+                    raw,
+                    self.REVENUE_TAGS,
+                    include=('revenue', 'revenues', 'sales'),
+                    exclude=('cost', 'expense', 'tax'),
+                )
+                if semantic:
+                    candidates = [semantic]
         for tag in ('Revenue_Hierarchy', 'NetRevenue_Hierarchy'):
             v = self._num((raw or {}).get(tag))
             if not strict_tree and v is not None and all((c.get('tag') != tag) for c in candidates):
                 candidates.insert(0, {'tag': tag, 'value': v, 'period_type': 'FY'})
-        return resolve_item(year, 'annual_revenue', candidates, require_fy=True, allow_negative=True)
+        resolved = resolve_item(
+            year,
+            'annual_revenue',
+            candidates,
+            require_fy=True,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.REVENUE_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('revenue', tag)
+        return resolved
 
     def get_canonical_cogs(self, year: int, raw: Dict, allow_negative_exception: bool = False) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
         strict_tree = bool((raw or {}).get('__statement_tree_required__'))
         by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('annual_cogs') or [])
-        candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t)} for t in self.COGS_TAGS]
-        return resolve_item(year, 'annual_cogs', candidates, require_fy=True, allow_negative=allow_negative_exception)
+        if strict_tree:
+            candidates = list(by_meta)
+            if not candidates:
+                discovered = self._discover_tags_by_keywords(
+                    raw,
+                    include=('costofrevenue', 'costofsales', 'cogs', 'costofgoods'),
+                    exclude=('tax',),
+                )
+                candidates = [{'tag': t, 'value': raw.get(t)} for t in discovered]
+            if not candidates:
+                semantic = self._semantic_pick_tag(
+                    raw,
+                    self.COGS_TAGS,
+                    include=('cost', 'cogs', 'cog', 'costof'),
+                    exclude=('tax',),
+                )
+                if semantic:
+                    candidates = [semantic]
+        else:
+            candidates = list(by_meta) if by_meta else [{'tag': t, 'value': raw.get(t)} for t in self.COGS_TAGS]
+            if not candidates:
+                discovered = self._discover_tags_by_keywords(
+                    raw,
+                    include=('costofrevenue', 'costofsales', 'cogs', 'costofgoods'),
+                    exclude=('tax',),
+                )
+                candidates = [{'tag': t, 'value': raw.get(t)} for t in discovered]
+            if not candidates:
+                semantic = self._semantic_pick_tag(
+                    raw,
+                    self.COGS_TAGS,
+                    include=('cost', 'cogs', 'cog', 'costof'),
+                    exclude=('tax',),
+                )
+                if semantic:
+                    candidates = [semantic]
+        resolved = resolve_item(
+            year,
+            'annual_cogs',
+            candidates,
+            require_fy=True,
+            allow_negative=allow_negative_exception,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.COGS_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('cogs', tag)
+        if self._num(resolved.get('value')) is None:
+            rev = self.get_canonical_annual_revenue(year, raw)
+            rv = self._num(rev.get('value'))
+            gp = None
+            for t in self.GROSS_PROFIT_TAGS:
+                v = self._num((raw or {}).get(t))
+                if v is not None:
+                    gp = v
+                    break
+            if rv is not None and gp is not None:
+                cogs_derived = rv - gp
+                if cogs_derived >= 0:
+                    resolved['value'] = float(cogs_derived)
+                    resolved['tag'] = 'derived:RevenueMinusGrossProfit'
+                    resolved['selection_reason'] = 'derived_from_revenue_minus_gross_profit'
+                    resolved['confidence'] = min(int(resolved.get('confidence') or 100), 85)
+        return resolved
 
     def get_canonical_equity(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
         strict_tree = bool((raw or {}).get('__statement_tree_required__'))
         by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('total_equity') or [])
         candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'INSTANT'} for t in self.EQUITY_TAGS]
-        return resolve_item(year, 'total_equity', candidates, require_fy=False, allow_negative=True)
+        if not candidates:
+            semantic = self._semantic_pick_tag(
+                raw,
+                self.EQUITY_TAGS,
+                include=('equity', 'stockholder', 'shareholder', 'capital'),
+                exclude=('tax', 'deferred'),
+            )
+            if semantic:
+                candidates = [semantic]
+        resolved = resolve_item(
+            year,
+            'total_equity',
+            candidates,
+            require_fy=False,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.EQUITY_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('equity', tag)
+        return resolved
 
     def get_canonical_accounts_receivable(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
         strict_tree = bool((raw or {}).get('__statement_tree_required__'))
         by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('accounts_receivable') or [])
         candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'INSTANT'} for t in self.AR_TAGS]
+        if not candidates:
+            semantic = self._semantic_pick_tag(
+                raw,
+                self.AR_TAGS,
+                include=('receivable', 'accountsreceivable', 'ar'),
+                exclude=('tax',),
+            )
+            if semantic:
+                candidates = [semantic]
         v = self._num((raw or {}).get('AccountsReceivableNetCurrent_Hierarchy'))
         if (not strict_tree) and v is not None and all((c.get('tag') != 'AccountsReceivableNetCurrent_Hierarchy') for c in candidates):
             candidates.insert(0, {'tag': 'AccountsReceivableNetCurrent_Hierarchy', 'value': v, 'period_type': 'INSTANT'})
-        return resolve_item(year, 'accounts_receivable', candidates, require_fy=False, allow_negative=True)
+        resolved = resolve_item(
+            year,
+            'accounts_receivable',
+            candidates,
+            require_fy=False,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.AR_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('ar', tag)
+        return resolved
 
     def get_canonical_accounts_payable(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
         strict_tree = bool((raw or {}).get('__statement_tree_required__'))
         by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('accounts_payable') or [])
         candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'INSTANT'} for t in self.AP_TAGS]
+        if not candidates:
+            semantic = self._semantic_pick_tag(
+                raw,
+                self.AP_TAGS,
+                include=('payable', 'accountspayable', 'ap'),
+                exclude=('tax',),
+            )
+            if semantic:
+                candidates = [semantic]
         v = self._num((raw or {}).get('AccountsPayableCurrent_Hierarchy'))
         if (not strict_tree) and v is not None and all((c.get('tag') != 'AccountsPayableCurrent_Hierarchy') for c in candidates):
             candidates.insert(0, {'tag': 'AccountsPayableCurrent_Hierarchy', 'value': v, 'period_type': 'INSTANT'})
-        return resolve_item(year, 'accounts_payable', candidates, require_fy=False, allow_negative=True)
+        resolved = resolve_item(
+            year,
+            'accounts_payable',
+            candidates,
+            require_fy=False,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.AP_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('ap', tag)
+        return resolved
 
     def get_canonical_inventory(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
         strict_tree = bool((raw or {}).get('__statement_tree_required__'))
         by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('inventory') or [])
         candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'INSTANT'} for t in self.INVENTORY_TAGS]
+        if not candidates:
+            semantic = self._semantic_pick_tag(
+                raw,
+                self.INVENTORY_TAGS,
+                include=('inventory', 'inventories'),
+                exclude=('tax',),
+            )
+            if semantic:
+                candidates = [semantic]
         v = self._num((raw or {}).get('InventoryNet_Hierarchy'))
         if (not strict_tree) and v is not None and all((c.get('tag') != 'InventoryNet_Hierarchy') for c in candidates):
             candidates.insert(0, {'tag': 'InventoryNet_Hierarchy', 'value': v, 'period_type': 'INSTANT'})
-        return resolve_item(year, 'inventory', candidates, require_fy=False, allow_negative=True)
+        resolved = resolve_item(
+            year,
+            'inventory',
+            candidates,
+            require_fy=False,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.INVENTORY_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('inventory', tag)
+        return resolved
+
+    def get_canonical_assets(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
+        strict_tree = bool((raw or {}).get('__statement_tree_required__'))
+        by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('total_assets') or [])
+        candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'INSTANT'} for t in self.ASSETS_TAGS]
+        if not candidates:
+            semantic = self._semantic_pick_tag(
+                raw,
+                self.ASSETS_TAGS,
+                include=('assets',),
+                exclude=('tax',),
+            )
+            if semantic:
+                candidates = [semantic]
+        resolved = resolve_item(
+            year,
+            'total_assets',
+            candidates,
+            require_fy=False,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.ASSETS_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('assets', tag)
+        return resolved
+
+    def get_canonical_current_assets(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
+        strict_tree = bool((raw or {}).get('__statement_tree_required__'))
+        by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('current_assets') or [])
+        candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'INSTANT'} for t in self.CURRENT_ASSETS_TAGS]
+        return resolve_item(
+            year,
+            'current_assets',
+            candidates,
+            require_fy=False,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+
+    def get_canonical_current_liabilities(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
+        strict_tree = bool((raw or {}).get('__statement_tree_required__'))
+        by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('current_liabilities') or [])
+        candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'INSTANT'} for t in self.CURRENT_LIABILITIES_TAGS]
+        return resolve_item(
+            year,
+            'current_liabilities',
+            candidates,
+            require_fy=False,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+
+    def get_canonical_net_income(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
+        strict_tree = bool((raw or {}).get('__statement_tree_required__'))
+        by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('net_income') or [])
+        candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'FY'} for t in self.NI_TAGS]
+        if not candidates:
+            semantic = self._semantic_pick_tag(
+                raw,
+                self.NI_TAGS,
+                include=('netincome', 'netincome', 'profit', 'earnings'),
+                exclude=('tax',),
+            )
+            if semantic:
+                candidates = [semantic]
+        resolved = resolve_item(
+            year,
+            'net_income',
+            candidates,
+            require_fy=True,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.NI_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('net_income', tag)
+        return resolved
+
+    def get_canonical_operating_income(self, year: int, raw: Dict) -> Dict:
+        sector_profile = self._resolve_sector_profile_from_row(raw)
+        strict_tree = bool((raw or {}).get('__statement_tree_required__'))
+        by_meta = (((raw or {}).get('__canonical_fact_candidates__') or {}).get('operating_income') or [])
+        candidates = list(by_meta) if (strict_tree or by_meta) else [{'tag': t, 'value': raw.get(t), 'period_type': 'FY'} for t in self.OP_INCOME_TAGS]
+        if not candidates:
+            semantic = self._semantic_pick_tag(
+                raw,
+                self.OP_INCOME_TAGS,
+                include=('operatingincome', 'operating', 'income'),
+                exclude=('tax',),
+            )
+            if semantic:
+                candidates = [semantic]
+        resolved = resolve_item(
+            year,
+            'operating_income',
+            candidates,
+            require_fy=True,
+            allow_negative=True,
+            sector_profile=sector_profile,
+        )
+        tag = resolved.get('tag')
+        if tag and tag not in self.OP_INCOME_TAGS:
+            if resolved.get('confidence', 100) >= 96:
+                self._persist_learned_tag('operating_income', tag)
+        return resolved
 
     def _compute_gross_margin(self, rev: Dict, cogs: Dict) -> Dict:
         out = self._contract(None, 0, 'gross_margin_inputs_missing', 'gross_margin', get_ratio_metadata('gross_margin'))
+        if 'not_applicable_for_sector' in str(cogs.get('selection_reason') or ''):
+            out['reason'] = 'ratio_not_applicable_sector'
+            return out
         rv = self._num(rev.get('value'))
         cg = self._num(cogs.get('value'))
         out['inputs'] = {'revenue': rv, 'cogs': cg}
@@ -542,7 +1097,19 @@ class RatioEngine:
     def _compute_days_ratio(self, kind: str, raw: Dict, prev_raw: Dict, rev: Dict, cogs: Dict, ar_ctx: Dict, ap_ctx: Dict, inv_ctx: Dict) -> Dict:
         rid = {'dso': 'days_sales_outstanding', 'dpo': 'ap_days', 'dih': 'inventory_days'}[kind]
         out = self._contract(None, 0, 'day_ratio_inputs_missing', rid, get_ratio_metadata(rid))
+        if kind in ('dpo', 'dih') and 'not_applicable_for_sector' in str(cogs.get('selection_reason') or ''):
+            out['reason'] = 'ratio_not_applicable_sector'
+            return out
+        if kind == 'dih' and 'not_applicable_for_sector' in str(inv_ctx.get('selection_reason') or ''):
+            out['reason'] = 'ratio_not_applicable_sector'
+            return out
         if kind == 'dso' and rev.get('period_type') != 'FY':
+            # If only QTD-style revenue exists, expose a precise failure reason.
+            if rev.get('value') is None:
+                qtd_tags = ('RevenuesQTD', 'SalesRevenueNetQTD')
+                if any(self._num((raw or {}).get(t)) is not None for t in qtd_tags):
+                    out['reason'] = 'revenue_not_fy'
+                    return out
             out['reason'] = 'revenue_not_fy'
             return out
         if kind == 'dso':
@@ -606,6 +1173,88 @@ class RatioEngine:
         out['formula_used'] = self.FORMULA_MAP.get('ccc_days')
         out['period_end'] = dso.get('period_end') or dih.get('period_end') or dpo.get('period_end')
         self._apply_bounds_or_reject(out, 'ccc_days')
+        return out
+
+    def _compute_operating_margin(self, rev: Dict, op_income: Dict) -> Dict:
+        out = self._contract(None, 0, 'operating_margin_inputs_missing', 'operating_margin', get_ratio_metadata('operating_margin'))
+        rv = self._num(rev.get('value'))
+        oi = self._num(op_income.get('value'))
+        out['inputs'] = {'revenue': rv, 'operating_income': oi}
+        out['input_tags'] = [rev.get('tag'), op_income.get('tag')]
+        out['period_end'] = rev.get('period_end') or op_income.get('period_end')
+        out['formula_used'] = self.FORMULA_MAP.get('operating_margin')
+        if rv == 0:
+            out['reason'] = 'zero_denominator'
+            return out
+        if rv is None or oi is None:
+            return out
+        out['value'] = float(oi / rv)
+        out['reliability'] = 100
+        out['reason'] = None
+        self._apply_bounds_or_reject(out, 'operating_margin')
+        return out
+
+    def _compute_net_margin(self, rev: Dict, net_income: Dict) -> Dict:
+        out = self._contract(None, 0, 'net_margin_inputs_missing', 'net_margin', get_ratio_metadata('net_margin'))
+        rv = self._num(rev.get('value'))
+        ni = self._num(net_income.get('value'))
+        out['inputs'] = {'revenue': rv, 'net_income': ni}
+        out['input_tags'] = [rev.get('tag'), net_income.get('tag')]
+        out['period_end'] = rev.get('period_end') or net_income.get('period_end')
+        out['formula_used'] = self.FORMULA_MAP.get('net_margin')
+        if rv == 0:
+            out['reason'] = 'zero_denominator'
+            return out
+        if rv is None or ni is None:
+            return out
+        out['value'] = float(ni / rv)
+        out['reliability'] = 100
+        out['reason'] = None
+        self._apply_bounds_or_reject(out, 'net_margin')
+        return out
+
+    def _compute_roa(self, raw: Dict, prev_raw: Dict, assets_ctx: Dict, net_income_ctx: Dict) -> Dict:
+        out = self._contract(None, 0, 'roa_inputs_missing', 'roa', get_ratio_metadata('roa'))
+        ni = self._num(net_income_ctx.get('value'))
+        assets = self._num(assets_ctx.get('value'))
+        prev_assets = self._pick(prev_raw, self.ASSETS_TAGS)
+        avg_assets = None
+        if assets is not None and prev_assets is not None:
+            avg_assets = (assets + prev_assets) / 2.0
+        elif assets is not None:
+            avg_assets = assets
+        out['input_tags'] = [net_income_ctx.get('tag'), assets_ctx.get('tag'), self._pick_tag(prev_raw, self.ASSETS_TAGS)]
+        out['inputs'] = {'net_income': ni, 'assets': assets, 'prev_assets': prev_assets, 'avg_assets': avg_assets}
+        out['period_end'] = assets_ctx.get('period_end') or net_income_ctx.get('period_end')
+        out['formula_used'] = self.FORMULA_MAP.get('roa')
+        if avg_assets is not None and abs(avg_assets) < 1e-12:
+            out['reason'] = 'zero_denominator'
+            return out
+        if ni is None or avg_assets is None:
+            return out
+        out['value'] = float(ni / avg_assets)
+        out['reliability'] = 100
+        out['reason'] = None
+        self._apply_bounds_or_reject(out, 'roa')
+        return out
+
+    def _compute_current_ratio(self, current_assets_ctx: Dict, current_liabilities_ctx: Dict) -> Dict:
+        out = self._contract(None, 0, 'current_ratio_inputs_missing', 'current_ratio', get_ratio_metadata('current_ratio'))
+        ca = self._num(current_assets_ctx.get('value'))
+        cl = self._num(current_liabilities_ctx.get('value'))
+        out['inputs'] = {'current_assets': ca, 'current_liabilities': cl}
+        out['input_tags'] = [current_assets_ctx.get('tag'), current_liabilities_ctx.get('tag')]
+        out['period_end'] = current_assets_ctx.get('period_end') or current_liabilities_ctx.get('period_end')
+        out['formula_used'] = self.FORMULA_MAP.get('current_ratio')
+        if cl == 0:
+            out['reason'] = 'zero_denominator'
+            return out
+        if ca is None or cl is None:
+            return out
+        out['value'] = float(ca / cl)
+        out['reliability'] = 100
+        out['reason'] = None
+        self._apply_bounds_or_reject(out, 'current_ratio')
         return out
 
     def _compute_pb(self, ratio_row: Dict, raw: Dict, prev_raw: Dict, equity_ctx: Dict) -> Dict:
@@ -837,6 +1486,9 @@ class RatioEngine:
             return None
         r = str(reason or '').strip().lower()
         ratio_type = self.RATIO_TYPE.get(ratio_id, 'ACCOUNTING_ONLY')
+        # Backward-compatible explicit reasons used by regression tests and UI diagnostics.
+        if r in {'plausibility_violation', 'revenue_not_fy', 'fy_mismatch', 'parent_child_mismatch', 'missing_ccc_components'}:
+            return r
         if ratio_type == 'MARKET_DEPENDENT':
             market_inputs = {'market_cap', 'price', 'shares', 'shares_outstanding'}
             if any((inputs or {}).get(k) is None for k in market_inputs if k in (inputs or {})):
@@ -853,6 +1505,8 @@ class RatioEngine:
             return 'INSUFFICIENT_HISTORY'
         if 'missing' in r:
             return 'MISSING_SEC_CONCEPT' if ratio_type != 'MARKET_DEPENDENT' else 'MISSING_MARKET_DATA'
+        if 'not_applicable' in r:
+            return 'DATA_NOT_APPLICABLE'
         if 'canonicalization' in r or 'non_numeric' in r or 'plausibility' in r or 'rejected' in r:
             return 'DATA_NOT_APPLICABLE'
         if 'fallback_companyfacts_no_statement_anchor' in r:
@@ -893,8 +1547,7 @@ class RatioEngine:
         c['raw_values_used'] = inputs
         c['period'] = self._extract_period(c)
         c['computation_timestamp'] = self.computation_timestamp
-        if status != 'COMPUTED' and 'value' in c:
-            c.pop('value', None)
+        c['reason_code'] = reason_code
         return c
 
     @staticmethod
@@ -924,7 +1577,29 @@ class RatioEngine:
 
     @staticmethod
     def _num(v) -> Optional[float]:
-        return float(v) if isinstance(v, (int, float)) else None
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            s = str(v).strip()
+            if not s:
+                return None
+            neg = False
+            if s.startswith('(') and s.endswith(')'):
+                neg = True
+                s = s[1:-1]
+            s = s.replace(',', '').replace('$', '').replace(' ', '')
+            if s.endswith('%'):
+                s = s[:-1]
+                val = float(s) / 100.0
+            else:
+                val = float(s)
+            if neg:
+                val = -val
+            return val
+        except Exception:
+            return None
 
     def _pick(self, raw: Dict, tags) -> Optional[float]:
         for t in tags:
@@ -945,6 +1620,15 @@ class RatioEngine:
             return 0.0
         v = contract.get('value')
         return float(v) if isinstance(v, (int, float)) else 0.0
+
+    @staticmethod
+    def _resolve_sector_profile_from_row(raw: Dict) -> str:
+        row = raw or {}
+        for k in ('__sector_profile__', 'sector_profile', 'sector'):
+            v = row.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip().lower()
+        return 'unknown'
 
     @staticmethod
     def _reject(contract: Dict, reason: str) -> None:
@@ -984,7 +1668,7 @@ class RatioEngine:
         out = Path('exports/sector_comparison')
         out.mkdir(parents=True, exist_ok=True)
         body = {
-            'generated_at': datetime.utcnow().isoformat() + 'Z',
+            'generated_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             'results_by_year': payload,
         }
         (out / 'ratio_results_with_explanations.json').write_text(

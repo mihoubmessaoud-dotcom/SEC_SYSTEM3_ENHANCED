@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: ["master", "main"]
+  pull_request:
+    branches: ["master", "main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Baseline release gate test
+        run: |
+          python -m unittest tests.test_release_v4_baseline -v
+
+      - name: Compile Critical Pipelines
+        run: |
+          python -m py_compile tools/batch_investor_gate.py tools/institutional_campaign_runner.py tools/ops_sla_monitor.py tools/enterprise_readiness_gate.py modules/sec_fetcher.py modules/ratio_engine.py

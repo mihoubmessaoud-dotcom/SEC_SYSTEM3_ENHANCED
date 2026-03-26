@@ -415,7 +415,10 @@ class YahooLayer:
             year_data = history.loc[str(year)]
             if year_data is None or len(year_data) == 0:
                 return None
-            return self._to_float(year_data["Volume"].fillna(0).sum())
+            volume_series = year_data["Volume"].dropna()
+            if volume_series is None or len(volume_series) == 0:
+                return None
+            return self._to_float(volume_series.sum())
         except Exception:
             return None
 

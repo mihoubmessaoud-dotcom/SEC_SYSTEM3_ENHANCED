@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+
+# Build / packaging
+build/
+dist/
+*.spec
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Logs / temp
+*.log
+*.tmp
+tmp*/
+
+# Data exports / generated artifacts
+exports/
+outputs/
+release/SEC_SYSTEM3_v4-definitive_20260228/
+release/SEC_SYSTEM3_v4-definitive_20260228.zip
+release/SEC_SYSTEM3_v4-definitive_20260228.sha256
+release/SECFinancialApp_Clean_Fast_20260213/
+release/SECFinancialApp_Clean_Fast_20260213_v2/
+
+# Binary and heavy files
+*.exe
+*.dll
+*.so
+*.dylib
+*.zip
+*.7z
+*.tar
+*.gz
+*.pdf
+*.docx
+*.xlsx
+*.xls
+*.csv
+
+# Caches and datasets
+ml_training_data/
+sec_learned_mappings.json
+unmatched_concepts.txt
+

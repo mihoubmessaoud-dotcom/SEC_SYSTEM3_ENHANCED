@@ -1,0 +1,66 @@
+{
+  "source_priors": {
+    "ratio_engine": [
+      16.88,
+      6.16
+    ],
+    "strategic_engine": [
+      16.0,
+      3.0
+    ],
+    "excel_import": [
+      19.0,
+      2.0
+    ],
+    "ui_fallback": [
+      9.0,
+      4.0
+    ],
+    "default": [
+      12.0,
+      4.0
+    ]
+  },
+  "evidence_weights": {
+    "input_concept_success": 0.9,
+    "input_concept_max": 6.0,
+    "raw_value_success": 0.6,
+    "raw_value_max": 4.0,
+    "missing_input_penalty": 1.8,
+    "missing_input_max": 8.0,
+    "fallback_penalty": 2.5,
+    "fallback_success_credit": 1.5,
+    "mismatch_penalty": 3.0,
+    "not_computable_penalty": 2.0,
+    "hint_weight": 2.0
+  },
+  "lcb_z_score": 1.0,
+  "calibration_curve": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.5049,
+      0.1866
+    ],
+    [
+      0.6826,
+      0.738
+    ],
+    [
+      1.0,
+      0.99
+    ]
+  ],
+  "recency_weights": {
+    "2025": 1.0,
+    "2024": 0.98,
+    "2023": 0.95,
+    "2022": 0.9,
+    "2021": 0.84,
+    "2020": 0.78,
+    "2019": 0.72,
+    "<2019": 0.2
+  }
+}

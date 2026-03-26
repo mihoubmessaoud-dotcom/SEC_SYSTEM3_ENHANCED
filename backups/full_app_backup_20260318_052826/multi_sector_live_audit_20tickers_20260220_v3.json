@@ -1,0 +1,510 @@
+{
+  "run_at": "2026-02-20T19:47:39.059709Z",
+  "start_year": 2023,
+  "end_year": 2025,
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "TSLA",
+    "XOM",
+    "CVX",
+    "PEP",
+    "KO",
+    "WMT",
+    "UNH",
+    "PFE",
+    "NEE",
+    "T",
+    "VZ",
+    "JPM",
+    "BAC",
+    "WFC",
+    "GS",
+    "AIG",
+    "PGR"
+  ],
+  "details": {
+    "AAPL": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 173.18,
+      "full_year_proxy_source": null
+    },
+    "MSFT": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 167.78,
+      "full_year_proxy_source": null
+    },
+    "NVDA": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 169.9,
+      "full_year_proxy_source": null
+    },
+    "TSLA": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 173.47,
+      "full_year_proxy_source": null
+    },
+    "XOM": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 174.27,
+      "full_year_proxy_source": null
+    },
+    "CVX": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 160.5,
+      "full_year_proxy_source": "SEC_HISTORY_CARRY_FORWARD_PROXY_NO_ANCHOR"
+    },
+    "PEP": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 182.19,
+      "full_year_proxy_source": null
+    },
+    "KO": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 176.73,
+      "full_year_proxy_source": null
+    },
+    "WMT": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 91.69,
+      "full_year_proxy_source": null
+    },
+    "UNH": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 77.49,
+      "full_year_proxy_source": null
+    },
+    "PFE": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 84.65,
+      "full_year_proxy_source": "SEC_HISTORY_CARRY_FORWARD_PROXY_NO_ANCHOR"
+    },
+    "NEE": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 31019.33,
+      "full_year_proxy_source": null
+    },
+    "T": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 91.38,
+      "full_year_proxy_source": null
+    },
+    "VZ": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 88.35,
+      "full_year_proxy_source": null
+    },
+    "JPM": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 78.13,
+      "full_year_proxy_source": null
+    },
+    "BAC": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 78.08,
+      "full_year_proxy_source": null
+    },
+    "WFC": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 82.6,
+      "full_year_proxy_source": null
+    },
+    "GS": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 75.96,
+      "full_year_proxy_source": null
+    },
+    "AIG": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 90.21,
+      "full_year_proxy_source": null
+    },
+    "PGR": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 81.13,
+      "full_year_proxy_source": null
+    }
+  },
+  "summary": {
+    "industrial": {
+      "count": 13,
+      "avg_coverage_latest_pct": 100.0,
+      "avg_coverage_any_pct": 100.0,
+      "worst_latest": [
+        [
+          100.0,
+          "AAPL"
+        ],
+        [
+          100.0,
+          "CVX"
+        ],
+        [
+          100.0,
+          "KO"
+        ],
+        [
+          100.0,
+          "MSFT"
+        ],
+        [
+          100.0,
+          "NEE"
+        ],
+        [
+          100.0,
+          "NVDA"
+        ],
+        [
+          100.0,
+          "PEP"
+        ],
+        [
+          100.0,
+          "PFE"
+        ]
+      ],
+      "worst_any": [
+        [
+          100.0,
+          "AAPL"
+        ],
+        [
+          100.0,
+          "CVX"
+        ],
+        [
+          100.0,
+          "KO"
+        ],
+        [
+          100.0,
+          "MSFT"
+        ],
+        [
+          100.0,
+          "NEE"
+        ],
+        [
+          100.0,
+          "NVDA"
+        ],
+        [
+          100.0,
+          "PEP"
+        ],
+        [
+          100.0,
+          "PFE"
+        ]
+      ],
+      "proxy_years": [
+        [
+          "CVX",
+          "SEC_HISTORY_CARRY_FORWARD_PROXY_NO_ANCHOR"
+        ],
+        [
+          "PFE",
+          "SEC_HISTORY_CARRY_FORWARD_PROXY_NO_ANCHOR"
+        ]
+      ]
+    },
+    "bank": {
+      "count": 4,
+      "avg_coverage_latest_pct": 100.0,
+      "avg_coverage_any_pct": 100.0,
+      "worst_latest": [
+        [
+          100.0,
+          "BAC"
+        ],
+        [
+          100.0,
+          "GS"
+        ],
+        [
+          100.0,
+          "JPM"
+        ],
+        [
+          100.0,
+          "WFC"
+        ]
+      ],
+      "worst_any": [
+        [
+          100.0,
+          "BAC"
+        ],
+        [
+          100.0,
+          "GS"
+        ],
+        [
+          100.0,
+          "JPM"
+        ],
+        [
+          100.0,
+          "WFC"
+        ]
+      ],
+      "proxy_years": []
+    },
+    "insurance": {
+      "count": 3,
+      "avg_coverage_latest_pct": 100.0,
+      "avg_coverage_any_pct": 100.0,
+      "worst_latest": [
+        [
+          100.0,
+          "AIG"
+        ],
+        [
+          100.0,
+          "PGR"
+        ],
+        [
+          100.0,
+          "UNH"
+        ]
+      ],
+      "worst_any": [
+        [
+          100.0,
+          "AIG"
+        ],
+        [
+          100.0,
+          "PGR"
+        ],
+        [
+          100.0,
+          "UNH"
+        ]
+      ],
+      "proxy_years": []
+    }
+  }
+}

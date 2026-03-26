@@ -1,0 +1,174 @@
+{
+  "start_year": 2023,
+  "end_year": 2025,
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "TSLA",
+    "JPM",
+    "BAC",
+    "WFC",
+    "GS",
+    "PGR",
+    "TRV"
+  ],
+  "summary": {
+    "AAPL": {
+      "sector": "industrial",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [],
+      "elapsed_sec": 118.9
+    },
+    "MSFT": {
+      "sector": "industrial",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [],
+      "elapsed_sec": 118.7
+    },
+    "TSLA": {
+      "sector": "industrial",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [],
+      "elapsed_sec": 135.2
+    },
+    "JPM": {
+      "sector": "bank",
+      "score_pct": 83.33,
+      "missing_by_year": {
+        "2025": [
+          "roe",
+          "debt_to_assets",
+          "net_interest_margin",
+          "loan_to_deposit_ratio",
+          "capital_ratio_proxy"
+        ]
+      },
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "JPM 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 106.9
+    },
+    "BAC": {
+      "sector": "bank",
+      "score_pct": 83.33,
+      "missing_by_year": {
+        "2025": [
+          "roe",
+          "debt_to_assets",
+          "net_interest_margin",
+          "loan_to_deposit_ratio",
+          "capital_ratio_proxy"
+        ]
+      },
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "BAC 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 106.1
+    },
+    "WFC": {
+      "sector": "bank",
+      "score_pct": 83.33,
+      "missing_by_year": {
+        "2025": [
+          "roe",
+          "debt_to_assets",
+          "net_interest_margin",
+          "loan_to_deposit_ratio",
+          "capital_ratio_proxy"
+        ]
+      },
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "WFC 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 114.9
+    },
+    "GS": {
+      "sector": "bank",
+      "score_pct": 83.33,
+      "missing_by_year": {
+        "2025": [
+          "roe",
+          "debt_to_assets",
+          "net_interest_margin",
+          "loan_to_deposit_ratio",
+          "capital_ratio_proxy"
+        ]
+      },
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "GS 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 109.6
+    },
+    "PGR": {
+      "sector": "insurance",
+      "score_pct": 85.19,
+      "missing_by_year": {
+        "2025": [
+          "roe",
+          "debt_to_assets",
+          "combined_proxy",
+          "capital_adequacy_proxy"
+        ]
+      },
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "PGR 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 114.3
+    },
+    "TRV": {
+      "sector": "insurance",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [],
+      "elapsed_sec": 121.0
+    }
+  }
+}

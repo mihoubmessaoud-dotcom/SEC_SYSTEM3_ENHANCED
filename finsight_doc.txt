@@ -1,0 +1,1056 @@
+FinSight Universal
+منصة التحليل المالي الذكية العالمية
+نظام ذكاء اصطناعي لا يسقط مهما كان نوع المؤسسة أو القطاع أو البلد
+للأغراض الأكاديمية والبحثية حصراً — ليس توصية استثمارية
+جدول المحتويات
+1.  ما الفرق — الملف السابق مقابل هذا الملف		3
+2.  الهندسة المعمارية الكاملة — 7 طبقات		4
+3.  المرحلة 1: هيكل المشروع الكامل		6
+4.  المرحلة 2: النماذج الشاملة		7
+5.  المرحلة 3: Universal Label Engine — متعدد المعايير		9
+6.  المرحلة 4: Universal Sector Classifier — 52 قطاعاً		13
+7.  المرحلة 5: Online Learning Engine — تعلم فوري		17
+8.  المرحلة 6: Anomaly Detection — كشف الشذوذات		19
+9.  المرحلة 7: Multi-Standard Adapter — GAAP/IFRS		21
+10.  المرحلة 8: البنية التحتية الكاملة		24
+11.  المرحلة 9: Pipeline Orchestrator الشامل		28
+12.  المرحلة 10: واجهة Streamlit العالمية		31
+13.  المرحلة 11: بيانات التدريب — 500+ شركة		34
+14.  المرحلة 12: الاختبارات النهائية — 49 اختباراً		38
+15.  requirements.txt الشامل وترتيب التنفيذ		42
+16.  معيار الإغلاق المطلق		43
+1. ما الفرق — الملف السابق مقابل هذا الملف
+الفارق الجوهري: الملف السابق يعمل مع شركات أمريكية كبيرة معروفة. هذا الملف يعمل مع أي مؤسسة في أي بلد تُبلّغ بأي معيار محاسبي.
+2. الهندسة المعمارية الكاملة — 7 طبقات
+2.1 هيكل المشروع الكامل
+financial_analyzer_universal/
+├── ai/
+│   ├── universal_label_engine.py     # NLP متعدد المعايير
+│   ├── universal_sector_classifier.py # 52 قطاع عالمي
+│   ├── online_learning_engine.py      # تعلم فوري
+│   └── anomaly_detector.py            # Isolation Forest
+├── adapters/
+│   ├── multi_standard_adapter.py      # GAAP/IFRS/UK/J-GAAP
+│   ├── gaap_adapter.py
+│   ├── ifrs_adapter.py
+│   └── currency_normalizer.py         # تحويل العملات
+├── core/
+│   ├── canonical_label_map.py         # 200+ label عالمي
+│   ├── corporate_actions_engine.py
+│   ├── data_anchor_validator.py
+│   ├── revenue_policy_engine.py
+│   ├── ratio_engine.py                # 52 نموذج قطاعي
+│   ├── sector_quality_models.py
+│   ├── verdict_engine.py
+│   └── peer_benchmark_engine.py
+├── models/
+│   ├── ratio_result.py
+│   ├── audit_log.py
+│   ├── pipeline_result.py
+│   └── company_profile.py             # GAAP/IFRS/country
+├── pipeline/
+│   └── universal_orchestrator.py
+├── ui/
+│   ├── app.py
+│   ├── i18n/                          # ترجمات
+│   │   ├── ar.json
+│   │   ├── en.json
+│   │   └── fr.json
+│   └── pages/
+│       ├── portfolio_dashboard.py
+│       ├── company_detail.py
+│       ├── ai_learning_page.py
+│       └── global_comparison.py
+├── data/
+│   ├── label_knowledge.json           # ذاكرة متراكمة
+│   ├── sector_model.joblib            # نموذج محفوظ
+│   ├── training_labels_500.json       # 500+ شركة
+│   ├── ifrs_gaap_mapping.json         # جدول توحيد
+│   ├── sector_reference_avgs.json     # متوسطات قطاعية
+│   └── currency_rates.json            # أسعار صرف
+└── tests/
+├── test_universal_label.py
+├── test_sector_classifier.py
+├── test_online_learning.py
+├── test_anomaly_detection.py
+├── test_ifrs_adapter.py
+└── test_acceptance_49.py          # 49 اختباراً
+3. المرحلة 1: هيكل المشروع الكامل
+أول أمر يُعطى لـ Codex — إنشاء كل المجلدات والملفات:
+أنت مهندس Python أول متخصص في الذكاء الاصطناعي المالي.
+نفّذ هذا الأمر أولاً قبل أي شيء آخر:
+mkdir -p financial_analyzer_universal/{ai,adapters,core,models,pipeline,ui/{pages,i18n},data,tests}
+touch financial_analyzer_universal/{ai,adapters,core,models,pipeline,ui,ui/pages}/__init__.py
+# ملفات AI
+touch financial_analyzer_universal/ai/{universal_label_engine,universal_sector_classifier,online_learning_engine,anomaly_detector}.py
+# ملفات Adapters
+touch financial_analyzer_universal/adapters/{multi_standard_adapter,gaap_adapter,ifrs_adapter,currency_normalizer}.py
+# ملفات Core
+touch financial_analyzer_universal/core/{canonical_label_map,corporate_actions_engine,data_anchor_validator,revenue_policy_engine,ratio_engine,sector_quality_models,verdict_engine,peer_benchmark_engine}.py
+# ملفات Models
+touch financial_analyzer_universal/models/{ratio_result,audit_log,pipeline_result,company_profile}.py
+# Pipeline + UI + Tests
+touch financial_analyzer_universal/pipeline/universal_orchestrator.py
+touch financial_analyzer_universal/ui/app.py
+touch financial_analyzer_universal/ui/pages/{portfolio_dashboard,company_detail,ai_learning_page,global_comparison}.py
+touch financial_analyzer_universal/tests/{test_universal_label,test_sector_classifier,test_online_learning,test_anomaly_detection,test_ifrs_adapter,test_acceptance_49}.py
+touch financial_analyzer_universal/{requirements.txt,README.md}
+# ملفات البيانات الأولية
+echo "{}" > financial_analyzer_universal/data/label_knowledge.json
+echo "{}" > financial_analyzer_universal/data/ifrs_gaap_mapping.json
+4. المرحلة 2: النماذج الشاملة
+4.1 RatioResult — نتيجة كل نسبة
+# models/ratio_result.py
+from dataclasses import dataclass, field
+from typing import Optional
+@dataclass
+class RatioResult:
+value:        Optional[float]
+status:       str         # COMPUTED|NOT_COMPUTABLE|BLOCKED|OUTLIER
+reliability:  int         # 0-100 (درجة موثوقية)
+source:       str  = ""   # المصدر: SEC|IFRS_ADAPTED|INFERRED
+reason:       str  = ""   # سبب N/A إذا value=None
+flag:         str  = ""   # تحذير خاص
+display:      str  = ""   # النص المعروض للمستخدم
+note:         str  = ""   # ملاحظة إضافية
+anomaly_score:float = 0.0 # درجة الشذوذ 0-1
+NA_MESSAGES = {
+"ZERO_DENOMINATOR":     "مقام صفر — لا ينطبق",
+"MISSING_SEC_CONCEPT":  "غير متاح في قاعدة البيانات",
+"BLOCKED_BY_SECTOR":    "غير مطبَّق لهذا القطاع",
+"IMPOSSIBLE_VALUE":     "قيمة مستحيلة — محذوفة",
+"PRE_REVENUE_STAGE":    "شركة ناشئة — لا إيراد بعد",
+"IFRS_NO_EQUIVALENT":   "لا مكافئ في IFRS",
+"CURRENCY_MISMATCH":    "عملة غير موحَّدة",
+}
+def to_display(self, fmt="percent", lang="ar"):
+if self.value is None:
+msg = self.NA_MESSAGES.get(self.reason, self.reason or "غير متاح")
+return f"— ({msg})"
+if fmt == "percent":  return f"{self.value:.1%}"
+if fmt == "multiple": return f"{self.value:.1f}×"
+if fmt == "days":     return f"{self.value:.0f} يوم"
+if fmt == "currency": return f"${self.value:,.0f}M"
+return f"{self.value:.2f}"
+4.2 CompanyProfile — بصمة الشركة العالمية
+# models/company_profile.py
+from dataclasses import dataclass
+@dataclass
+class CompanyProfile:
+ticker:           str
+name:             str = ""
+country:          str = "US"
+accounting_std:   str = "GAAP"   # GAAP|IFRS|UK_GAAP|J_GAAP|CN_GAAP
+currency:         str = "USD"
+fiscal_year_end:  int = 12        # شهر إغلاق السنة المالية
+is_pre_revenue:   bool = False    # شركة ناشئة بلا إيراد
+is_financial:     bool = False    # بنك أو تأمين
+sub_sector:       str = ""
+sector_confidence:float = 0.0
+exchange:         str = ""        # NYSE|NASDAQ|LSE|TSE|SSE
+@classmethod
+def detect_standard(cls, ticker, country="US", filename=""):
+"""يكتشف معيار المحاسبة تلقائياً"""
+non_gaap = {
+"UK":["RIO","BP","HSBC","BHP","AZN","GSK","ULVR","VOD"],
+"JP":["TM","SONY","7203","6758","9984"],
+"EU":["ASML","SAP","LVMH","AIR","MC","SIE"],
+"AU":["BHP","RIO","WBC","CBA","ANZ"],
+"HK":["BABA","JD","PDD","BIDU"],
+}
+for region, tickers in non_gaap.items():
+if ticker.upper() in tickers:
+mapping = {"UK":"IFRS","JP":"J_GAAP",
+"EU":"IFRS","AU":"IFRS","HK":"IFRS"}
+return mapping[region]
+if country != "US": return "IFRS"
+return "GAAP"
+5. المرحلة 3: Universal Label Engine
+هذا المكون يحل مشكلة N/A نهائياً في أي معيار محاسبي. يدعم GAAP + IFRS + UK GAAP + J-GAAP + Chinese GAAP.
+5.1 القاموس العالمي الشامل — 200+ بند
+# ai/universal_label_engine.py
+UNIVERSAL_DICTIONARY = {
+"revenue": {
+"GAAP": ["Revenues","Revenue","NetRevenues","SalesRevenueNet",
+"RevenueFromContractWithCustomerExcludingAssessedTax",
+"Net revenues","Net sales","Total revenues"],
+"IFRS": ["Revenue","Turnover","Net turnover",
+"Revenue from contracts with customers",
+"Sales revenue","Total revenue"],
+"UK_GAAP": ["Turnover","Revenue","Group revenue","Net revenue"],
+"J_GAAP":  ["NetSales","Net sales","売上高","Operating revenue"],
+"CN_GAAP": ["Revenue","Operating revenue","营业收入"],
+"sanity":  "annual_not_quarterly",
+"mandatory": True,
+},
+"gross_profit": {
+"GAAP": ["GrossProfit","GrossProfitLoss","Gross Profit",
+"Gross profit","GROSS PROFIT","Gross margin"],
+"IFRS": ["Gross profit","Gross Profit","Gross margin",
+"Revenue minus cost of sales"],
+"UK_GAAP":["Gross profit","Gross Profit on sales"],
+"J_GAAP": ["GrossProfit","Gross profit","売上総利益"],
+"fallback":"revenue - cost_of_revenue",
+"mandatory": True,
+},
+"cost_of_revenue": {
+"GAAP": ["CostOfRevenue","CostOfGoodsSold","COGS",
+"Cost of Revenue","Cost of revenue",
+"Cost of revenue: Product","Cost of revenue: Service",
+"Cost of goods sold","Cost of Sales"],
+"IFRS": ["Cost of sales","Cost of goods sold",
+"Cost of revenues","Direct costs",
+"Cost of products sold"],
+"UK_GAAP":["Cost of sales","Cost of revenues"],
+"J_GAAP": ["CostOfSales","Cost of sales","売上原価"],
+"aggregation":"sum_if_multiple",
+},
+"operating_income": {
+"GAAP": ["OperatingIncomeLoss","Operating Income",
+"Income from operations","Operating profit","EBIT"],
+"IFRS": ["Operating profit","Profit from operations",
+"Operating income","Results from operating activities"],
+"UK_GAAP":["Operating profit","Profit from operations"],
+"J_GAAP": ["OperatingIncome","Operating income","営業利益"],
+},
+"net_income": {
+"GAAP": ["NetIncome","NetIncomeLoss","Net Income",
+"Net earnings","Net profit",
+"Profit attributable to shareholders"],
+"IFRS": ["Profit for the year","Profit for the period",
+"Net profit for the year",
+"Profit attributable to owners"],
+"UK_GAAP":["Profit for the year","Net profit"],
+"J_GAAP": ["NetIncome","Net income","当期純利益"],
+"mandatory": True,
+},
+"total_assets": {
+"ALL": ["Assets","TotalAssets","Total assets",
+"Total Assets"],
+"IFRS": ["Total assets"],
+"J_GAAP":["TotalAssets","Total assets","資産合計"],
+"mandatory": True,
+},
+"total_equity": {
+"GAAP": ["StockholdersEquity","Equity","TotalEquity",
+"Total stockholders equity","Shareholders equity"],
+"IFRS": ["Total equity","Equity attributable to owners",
+"Shareholders equity","Net assets"],
+"UK_GAAP":["Net assets","Shareholders funds","Total equity"],
+"J_GAAP": ["NetAssets","Net assets","純資産合計"],
+"fallback":"total_assets - total_liabilities",
+"mandatory": True,
+},
+"total_liabilities": {
+"GAAP": ["Liabilities","TotalLiabilities","Total liabilities"],
+"IFRS": ["Total liabilities"],
+"fallback":"total_assets - total_equity",
+"mandatory": True,
+},
+"total_debt": {
+"GAAP": ["LongTermDebt","DebtNoncurrent","Long-term debt",
+"Notes payable","Long term borrowings"],
+"IFRS": ["Borrowings","Interest-bearing loans",
+"Financial liabilities","Loans and borrowings",
+"Debt"],
+"aggregation":"sum_short_and_long",
+},
+"capital_expenditure": {
+"GAAP": ["CapitalExpenditures","CapEx",
+"Purchases of property plant equipment",
+"Additions to PP&E"],
+"IFRS": ["Capital expenditure","Purchase of PPE",
+"Additions to property plant and equipment",
+"Acquisition of PP&E"],
+"J_GAAP":["CapitalExpenditures","設備投資額"],
+},
+"net_interest_margin": {
+"bank_only": True,
+"GAAP": ["NetInterestMargin","NIM","NetInterestIncome"],
+"IFRS": ["Net interest income","Net interest margin"],
+},
+"combined_ratio": {
+"insurance_only": True,
+"ALL": ["CombinedRatio","Combined ratio","Loss ratio + Expense ratio"],
+"fallback":"loss_ratio + expense_ratio",
+},
+"funds_from_operations": {
+"reit_only": True,
+"ALL": ["FundsFromOperations","FFO","Funds from operations"],
+"fallback":"net_income + depreciation_amortization + impairment",
+},
+}
+5.2 محرك التعرف الشامل
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+import json, re
+from pathlib import Path
+class UniversalLabelEngine:
+THRESHOLD  = 0.70
+MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"  # متعدد اللغات
+KB_FILE    = "data/label_knowledge.json"
+def __init__(self):
+self.model  = SentenceTransformer(self.MODEL_NAME)
+self.corpus = UNIVERSAL_DICTIONARY
+self.embs   = self._encode()
+self.kb     = self._load_kb()
+def _encode(self):
+embs = {}
+for canonical, cfg in self.corpus.items():
+all_examples = []
+for key, vals in cfg.items():
+if isinstance(vals, list):
+all_examples.extend(vals)
+if all_examples:
+e = self.model.encode(all_examples)
+embs[canonical] = {"e":e,"mean":np.mean(e,axis=0)}
+return embs
+def recognize(self, raw, accounting_std="GAAP",
+ticker=None, value=None, ctx=None):
+# 1. ذاكرة متراكمة (الأسرع)
+if raw in self.kb:
+e = self.kb[raw]
+if e.get("confidence",0) >= 0.88:
+return {**e,"method":"learned"}
+# 2. مطابقة دقيقة حسب المعيار المحاسبي
+for c,cfg in self.corpus.items():
+# تحقق من قيد القطاع
+if cfg.get("bank_only") and "bank" not in (ctx or {}).get("sector",""):
+continue
+if cfg.get("insurance_only") and "insur" not in (ctx or {}).get("sector",""):
+continue
+if cfg.get("reit_only") and "reit" not in (ctx or {}).get("sector",""):
+continue
+# تحقق من المعيار المحاسبي ثم ALL
+for std in [accounting_std, "ALL"]:
+labels = cfg.get(std, [])
+if isinstance(labels, list) and raw in labels:
+r = {"canonical":c,"confidence":1.0,"method":"exact_std"}
+self._learn(raw,r,ticker); return r
+# 3. مطابقة مُطبَّعة
+def norm(s): return re.sub(r"[\s\-_:.,/()（）]","",s.lower().strip())
+rn = norm(raw)
+for c,cfg in self.corpus.items():
+for key,vals in cfg.items():
+if not isinstance(vals,list): continue
+for v in vals:
+if rn == norm(v):
+r = {"canonical":c,"confidence":0.95,"method":"normalized"}
+self._learn(raw,r,ticker); return r
+# 4. تشابه دلالي متعدد اللغات
+raw_emb = self.model.encode([raw])[0]
+best_c, best_s = None, 0.0
+for c,data in self.embs.items():
+ms = float(cosine_similarity([raw_emb],[data["mean"]])[0][0])
+xs = float(np.max(cosine_similarity([raw_emb],data["e"])[0]))
+score = 0.35*ms + 0.65*xs
+if score > best_s: best_s,best_c = score,c
+if best_s >= self.THRESHOLD:
+r = {"canonical":best_c,"confidence":best_s,"method":"semantic_multilingual"}
+self._learn(raw,r,ticker); return r
+# 5. استدلال من القيمة والسياق
+if value is not None and ctx:
+r = self._value_inference(raw,value,ctx)
+if r: self._learn(raw,r,ticker); return r
+return {"canonical":None,"confidence":best_s,"method":"no_match","raw":raw}
+def _value_inference(self, raw, value, ctx):
+"""يستنتج البند من قيمته ومن القيم الأخرى"""
+try:
+v = float(value)
+rev  = float(ctx.get("revenue",0) or 0)
+cogs = float(ctx.get("cost_of_revenue",0) or 0)
+ta   = float(ctx.get("total_assets",0) or 0)
+# gross_profit = revenue - cogs
+if rev and cogs and abs(v-(rev-cogs))/(rev-cogs+1) < 0.02:
+return {"canonical":"gross_profit","confidence":0.88,
+"method":"value_inference_gp"}
+# total_assets ±3%
+if ta and abs(v-ta)/ta < 0.03:
+return {"canonical":"total_assets","confidence":0.85,
+"method":"value_inference_ta"}
+except: pass
+return None
+def _learn(self, raw, result, ticker=None):
+self.kb[raw] = {**result,"ticker":ticker}
+if len(self.kb) % 20 == 0: self._save_kb()
+def _load_kb(self):
+p = Path(self.KB_FILE)
+return json.loads(p.read_text()) if p.exists() else {}
+def _save_kb(self):
+Path("data").mkdir(exist_ok=True)
+Path(self.KB_FILE).write_text(
+json.dumps(self.kb,ensure_ascii=False,indent=2))
+def add_example(self, raw, canonical, std="ALL", source="manual"):
+"""تصحيح يدوي — يُحسّن النموذج فوراً ويُعيد تشفيره"""
+if canonical in self.corpus:
+lst = self.corpus[canonical].setdefault(std,[])
+if raw not in lst:
+lst.append(raw)
+all_ex = [v for k,vals in self.corpus[canonical].items()
+if isinstance(vals,list) for v in vals]
+e = self.model.encode(all_ex)
+self.embs[canonical] = {"e":e,"mean":np.mean(e,axis=0)}
+self.kb[raw] = {"canonical":canonical,"confidence":1.0,"source":source}
+self._save_kb()
+6. المرحلة 4: Universal Sector Classifier — 52 قطاعاً
+6.1 القائمة الكاملة للقطاعات الفرعية العالمية
+6.2 كود الشبكة العصبية الشاملة
+# ai/universal_sector_classifier.py
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.calibration import CalibratedClassifierCV  # معايرة الثقة
+import joblib
+from pathlib import Path
+EXPLICIT_OVERRIDES = {
+"INTC":"semiconductor_idm","TXN":"semiconductor_idm",
+"MCHP":"semiconductor_idm","STM":"semiconductor_idm",
+"TSM":"semiconductor_foundry","GFS":"semiconductor_foundry",
+"BRK":"conglomerate","BRK.B":"conglomerate",
+"DIB":"islamic_finance","EIB":"islamic_finance",
+}
+FEATURES = [
+"gross_margin","operating_margin","net_margin","roic","roe","roa",
+"revenue_cagr_3y","capex_to_revenue","rd_to_revenue",
+"debt_to_equity","current_ratio","asset_turnover",
+"fcf_yield","dividend_yield","interest_coverage",
+"net_interest_margin","combined_ratio","ffo_yield",  # قطاعات خاصة
+]
+class UniversalSectorClassifier:
+MODEL_PATH = "data/sector_model.joblib"
+def __init__(self):
+# Ensemble: RF + GBM + MLP → أدق من نموذج واحد
+self.rf  = RandomForestClassifier(n_estimators=300,random_state=42)
+self.gbm = GradientBoostingClassifier(n_estimators=200,random_state=42)
+self.mlp = MLPClassifier(hidden_layer_sizes=(256,128,64),
+activation="relu",max_iter=500,random_state=42)
+# CalibratedClassifierCV: يُعايِر الثقة (Platt Scaling)
+self.rf_cal  = CalibratedClassifierCV(self.rf,  method="isotonic")
+self.gbm_cal = CalibratedClassifierCV(self.gbm, method="isotonic")
+self.scaler  = StandardScaler()
+self.trained = False
+self.data    = []
+self._load()
+def features(self, ratios):
+v = []
+for f in FEATURES:
+val = ratios.get(f)
+try: v.append(float(val))
+except: v.append(0.0)
+return np.array(v)
+def predict(self, ratios, ticker=None, profile=None):
+# 0. استثناءات صريحة أولاً
+if ticker in EXPLICIT_OVERRIDES:
+s = EXPLICIT_OVERRIDES[ticker]
+return {"sub_sector":s,"confidence":1.0,"method":"explicit"}
+# 1. قواعد مختصة للكيانات غير التجارية
+if profile:
+r = self._special_entity_rules(ratios, profile)
+if r: return r
+# 2. نموذج قبل التدريب
+if not self.trained:
+return self._rules(ratios, profile)
+X = self.scaler.transform(self.features(ratios).reshape(1,-1))
+# Ensemble: وزن RF=40% GBM=40% MLP=20%
+from sklearn.base import clone
+SUBSECTORS = self.rf.classes_
+rf_p  = dict(zip(SUBSECTORS,self.rf_cal.predict_proba(X)[0]))
+gbm_p = dict(zip(SUBSECTORS,self.gbm_cal.predict_proba(X)[0]))
+mlp_p = dict(zip(SUBSECTORS,self.mlp.predict_proba(X)[0]))
+mp = {s:0.40*rf_p.get(s,0)+0.40*gbm_p.get(s,0)
++0.20*mlp_p.get(s,0) for s in SUBSECTORS}
+best = max(mp, key=mp.get)
+conf = mp[best]
+# إذا الثقة منخفضة → أضف تحذيراً
+if conf < 0.60:
+return {"sub_sector":best,"confidence":conf,
+"method":"ensemble_low_conf",
+"top3":sorted(mp.items(),key=lambda x:-x[1])[:3],
+"warning":"راجع التصنيف يدوياً"}
+return {"sub_sector":best,"confidence":conf,
+"method":"ensemble","all_probs":mp}
+def _special_entity_rules(self, ratios, profile):
+"""قواعد للكيانات غير التجارية وغير الربحية"""
+country = getattr(profile,"country","US")
+name    = getattr(profile,"name","").lower()
+# شركة ناشئة بلا إيراد
+if getattr(profile,"is_pre_revenue",False):
+rd = ratios.get("rd_to_revenue",0) or 0
+if rd > 0.5:
+return {"sub_sector":"pre_revenue_biotech",
+"confidence":0.80,"method":"pre_revenue_rule"}
+return {"sub_sector":"pre_revenue_tech",
+"confidence":0.80,"method":"pre_revenue_rule"}
+# صندوق سيادي
+if any(k in name for k in ["sovereign","fund","investment authority"]):
+return {"sub_sector":"sovereign_fund",
+"confidence":0.85,"method":"name_rule"}
+# بنك إسلامي
+if any(k in name for k in ["islamic","shariah","islami"]):
+return {"sub_sector":"islamic_finance",
+"confidence":0.85,"method":"name_rule"}
+return None
+def train(self, data):
+"""يُدرّب النموذج الثلاثي"""
+if len(data) < 20: return
+X = np.array([self.features(r) for r,_ in data])
+y = [l for _,l in data]
+Xs = self.scaler.fit_transform(X)
+self.rf.fit(Xs,y)
+self.rf_cal.fit(Xs,y)
+self.gbm.fit(Xs,y)
+self.gbm_cal.fit(Xs,y)
+self.mlp.fit(Xs,y)
+self.trained = True
+joblib.dump({"rf":self.rf,"rf_cal":self.rf_cal,
+"gbm":self.gbm,"gbm_cal":self.gbm_cal,
+"mlp":self.mlp,"scaler":self.scaler,
+"classes":self.rf.classes_,
+"n":len(data)},self.MODEL_PATH)
+def _load(self):
+if Path(self.MODEL_PATH).exists():
+d = joblib.load(self.MODEL_PATH)
+self.rf,self.rf_cal = d["rf"],d["rf_cal"]
+self.gbm,self.gbm_cal = d["gbm"],d["gbm_cal"]
+self.mlp,self.scaler = d["mlp"],d["scaler"]
+self.trained = True
+7. المرحلة 5: Online Learning Engine — تعلم فوري
+التعلم الدوري (كل 5 تصحيحات) يسبب تأخراً. هذا المكون يُحدّث النموذج فور كل تصحيح، ويكتشف انجراف البيانات تلقائياً.
+# ai/online_learning_engine.py
+from sklearn.linear_model import SGDClassifier  # يدعم partial_fit
+from sklearn.preprocessing import StandardScaler
+import numpy as np, json
+from pathlib import Path
+from collections import deque
+class OnlineLearningEngine:
+"""
+تعلم فوري: كل تصحيح يدوي يُحدّث النموذج مباشرة.
+لا انتظار لـ 5 تصحيحات — التحديث فوري.
+"""
+DRIFT_WINDOW  = 100   # نافذة كشف الانجراف
+DRIFT_THRESH  = 0.15  # نسبة خطأ تُعتبر انجرافاً
+def __init__(self):
+# SGDClassifier يدعم partial_fit → تعلم فوري
+self.model   = SGDClassifier(loss="log_loss",
+random_state=42)
+self.scaler  = StandardScaler()
+self.fitted  = False
+self.history = deque(maxlen=self.DRIFT_WINDOW)
+self.drift_alerts = []
+def update(self, ratios_vector, correct_sector,
+ticker, classes_all):
+"""
+يُحدّث النموذج فور تصحيح واحد.
+classes_all: كل القطاعات الممكنة (مطلوب لـ SGD).
+"""
+X = np.array(ratios_vector).reshape(1,-1)
+if not self.fitted:
+# أول تحديث: fit عادي
+Xs = self.scaler.fit_transform(X)
+self.model.partial_fit(Xs,[correct_sector],
+classes=classes_all)
+self.fitted = True
+else:
+Xs = self.scaler.transform(X)
+pred = self.model.predict(Xs)[0]
+# سجّل الخطأ لكشف الانجراف
+self.history.append(1 if pred!=correct_sector else 0)
+# تحديث فوري
+self.model.partial_fit(Xs,[correct_sector])
+self._check_drift(ticker)
+def _check_drift(self, ticker):
+"""يكتشف انجراف البيانات"""
+if len(self.history) >= self.DRIFT_WINDOW:
+error_rate = sum(self.history)/len(self.history)
+if error_rate > self.DRIFT_THRESH:
+alert = {
+"type":   "DATA_DRIFT",
+"ticker": ticker,
+"error_rate": error_rate,
+"msg": f"انجراف مكتشف: معدل خطأ {error_rate:.0%}",
+"action": "أعد تدريب النموذج الكامل",
+}
+self.drift_alerts.append(alert)
+def predict(self, ratios_vector):
+if not self.fitted: return None
+X = self.scaler.transform(
+np.array(ratios_vector).reshape(1,-1))
+pred  = self.model.predict(X)[0]
+proba = self.model.predict_proba(X)[0]
+return {"sector":pred,"confidence":float(max(proba))}
+8. المرحلة 6: Anomaly Detection — كشف الشذوذات
+يكتشف القيم المستحيلة والتلاعب المحاسبي والبيانات الخاطئة تلقائياً باستخدام Isolation Forest.
+# ai/anomaly_detector.py
+from sklearn.ensemble import IsolationForest
+import numpy as np
+class AnomalyDetector:
+"""
+طبقتان للكشف:
+1. قواعد صارمة: DSO=25000 يوم → مستحيل رياضياً
+2. Isolation Forest: شذوذ إحصائي قياساً بالقطاع
+"""
+HARD_BOUNDS = {
+"days_sales_outstanding":     (0,   365),
+"days_inventory_outstanding": (0,   730),
+"days_payable_outstanding":   (0,   730),
+"ccc_days":                   (-365, 730),
+"interest_coverage":          (-500, 1000),
+"altman_z_score":             (-30,  80),
+"net_debt_ebitda":            (-100, 100),
+"gross_margin":               (-0.5, 1.0),
+"operating_margin":           (-2.0, 1.0),
+"roic":                       (-2.0, 5.0),
+"revenue_cagr_3y":            (-1.0, 10.0),  # 1000%+ مشبوه
+}
+def __init__(self):
+# نموذج منفصل لكل قطاع رئيسي
+self.models = {}
+def check_hard_bounds(self, metric, value, ticker, year, audit):
+"""يحذف القيم المستحيلة رياضياً"""
+if value is None: return None
+try: v = float(value)
+except: return None
+bounds = self.HARD_BOUNDS.get(metric)
+if not bounds: return v
+lo, hi = bounds
+if lo <= v <= hi: return v
+audit.flag(year,f"IMPOSSIBLE_{metric.upper()}","CRITICAL",
+f"{ticker} {year}: {metric}={v:.2f} خارج [{lo},{hi}]")
+return None
+def fit_sector_model(self, sub_sector, training_vectors):
+"""يُدرّب نموذج Isolation Forest لكل قطاع"""
+if len(training_vectors) < 10: return
+X = np.array(training_vectors)
+self.models[sub_sector] = IsolationForest(
+contamination=0.05,  # نتوقع 5% شذوذات
+random_state=42
+).fit(X)
+def score(self, sub_sector, ratio_vector):
+"""
+يُعيد درجة شذوذ 0-1.
+0 = طبيعي جداً, 1 = شاذ جداً.
+"""
+model = self.models.get(sub_sector)
+if not model: return 0.0
+X = np.array(ratio_vector).reshape(1,-1)
+# decision_function: سالب = شاذ
+raw = model.decision_function(X)[0]
+# تحويل لمقياس 0-1
+return float(max(0, min(1, 0.5 - raw)))
+def compute_fraud_indicators(self, ratios, prev_ratios):
+"""
+مؤشرات التلاعب المحاسبي (Beneish M-Score تبسيط):
+- قفزة حادة في الذمم المدينة مقارنة بالإيراد
+- تحسن غير طبيعي في هامش الإجمالي
+- تدهور جودة الأرباح (Accruals مرتفعة)
+"""
+flags = []
+try:
+# DSI: تغير مخزون الأيام
+dsi_curr = ratios.get("days_inventory_outstanding",0) or 0
+dsi_prev = prev_ratios.get("days_inventory_outstanding",0) or 0
+if dsi_prev > 0 and dsi_curr/dsi_prev > 1.5:
+flags.append("INVENTORY_BUILDUP")
+# DSRI: تغير أيام الذمم المدينة
+dso_curr = ratios.get("days_sales_outstanding",0) or 0
+dso_prev = prev_ratios.get("days_sales_outstanding",0) or 0
+if dso_prev > 0 and dso_curr/dso_prev > 1.4:
+flags.append("RECEIVABLES_SPIKE")
+# GMI: تدهور الهامش الإجمالي
+gm_curr = ratios.get("gross_margin",0) or 0
+gm_prev = prev_ratios.get("gross_margin",0) or 0
+if gm_prev > 0 and gm_curr/gm_prev < 0.8:
+flags.append("MARGIN_DETERIORATION")
+# Accruals مرتفعة
+accruals = ratios.get("accruals_ratio",0) or 0
+if abs(accruals) > 0.10:
+flags.append("HIGH_ACCRUALS")
+except: pass
+return flags
+9. المرحلة 7: Multi-Standard Adapter — GAAP/IFRS/UK/J-GAAP
+يوحّد البيانات من أي معيار محاسبي إلى تعريفات موحَّدة قبل الحساب.
+# adapters/multi_standard_adapter.py
+# جدول التوحيد: IFRS → تعريف موحَّد
+IFRS_TO_CANONICAL = {
+# قائمة الدخل
+"Cost of sales":          "cost_of_revenue",
+"Gross profit":           "gross_profit",
+"Profit from operations": "operating_income",
+"Profit for the year":    "net_income",
+"Finance costs":          "interest_expense",
+"Finance income":         "interest_income",
+# الميزانية
+"Total equity":           "total_equity",
+"Borrowings":             "total_debt",
+"Interest-bearing loans": "total_debt",
+"Right-of-use assets":    "rou_assets",      # IFRS 16
+"Lease liabilities":      "lease_liabilities", # IFRS 16
+# التدفقات
+"Purchase of PP&E":       "capital_expenditure",
+"Proceeds from borrowings":"debt_issuance",
+# البنوك (IFRS)
+"Net interest income":    "net_interest_income",
+"Loans and advances to customers": "total_loans",
+"Customer deposits":      "total_deposits",
+"Impairment of loans":    "provision_credit_losses",
+}
+UK_GAAP_TO_CANONICAL = {
+"Turnover":               "revenue",
+"Cost of sales":          "cost_of_revenue",
+"Gross profit":           "gross_profit",
+"Operating profit":       "operating_income",
+"Profit for the year":    "net_income",
+"Shareholders funds":     "total_equity",
+"Net assets":             "total_equity",
+}
+J_GAAP_TO_CANONICAL = {
+"NetSales":               "revenue",
+"売上高":                  "revenue",
+"GrossProfit":            "gross_profit",
+"売上総利益":               "gross_profit",
+"OperatingIncome":        "operating_income",
+"営業利益":                "operating_income",
+"NetIncome":              "net_income",
+"当期純利益":               "net_income",
+"TotalAssets":            "total_assets",
+"資産合計":                "total_assets",
+"NetAssets":              "total_equity",
+"純資産合計":               "total_equity",
+"CapitalExpenditures":    "capital_expenditure",
+"設備投資額":               "capital_expenditure",
+}
+CN_GAAP_TO_CANONICAL = {
+"营业收入":                "revenue",
+"营业成本":                "cost_of_revenue",
+"营业利润":                "operating_income",
+"净利润":                  "net_income",
+"资产总计":                "total_assets",
+"所有者权益合计":            "total_equity",
+}
+class MultiStandardAdapter:
+MAPS = {
+"IFRS":    IFRS_TO_CANONICAL,
+"UK_GAAP": UK_GAAP_TO_CANONICAL,
+"J_GAAP":  J_GAAP_TO_CANONICAL,
+"CN_GAAP": CN_GAAP_TO_CANONICAL,
+"GAAP":    {},  # GAAP = المعيار الأساسي
+}
+def adapt(self, raw_data, accounting_std, audit, year):
+"""
+يُحوّل البيانات من أي معيار إلى التعريف الموحَّد.
+يُوثّق كل تحويل في Audit Trail.
+"""
+mapping = self.MAPS.get(accounting_std, {})
+adapted = {}
+for label, value in raw_data.items():
+canonical = mapping.get(label, label)
+if canonical != label:
+audit.correction(year, label, label, canonical,
+f"adapted_{accounting_std}_to_canonical")
+adapted[canonical] = value
+# تعديلات IFRS 16: Lease liabilities → total_debt
+if accounting_std == "IFRS":
+lease = adapted.get("lease_liabilities", 0) or 0
+if lease and "total_debt" in adapted:
+original = adapted["total_debt"]
+adapted["total_debt_pre_ifrs16"] = original
+adapted["total_debt"] = float(original or 0) + float(lease)
+audit.correction(year,"total_debt",original,
+adapted["total_debt"],"ifrs16_lease_adjustment")
+return adapted
+def normalize_currency(self, data, from_currency,
+to_currency="USD", rates=None):
+"""يوحّد العملة إلى USD للمقارنة العالمية"""
+if from_currency == to_currency: return data
+if not rates: return data
+rate = rates.get(from_currency, 1.0)
+numeric_fields = [
+"revenue","gross_profit","net_income",
+"total_assets","total_equity","total_liabilities",
+"total_debt","capital_expenditure",
+]
+normalized = dict(data)
+for field in numeric_fields:
+if field in normalized and normalized[field]:
+try:
+normalized[field] = float(normalized[field]) / rate
+except: pass
+return normalized
+10. المرحلة 8: البنية التحتية الكاملة
+10.1 نماذج الجودة — 52 قطاعاً
+10.2 Verdict Engine — الحكم مع السياق الزمني
+# core/verdict_engine.py — الحكم مع استثناءات COVID وأزمات
+GLOBAL_CRISIS_YEARS = {
+2020: {"name":"COVID-19","severity":"EXTREME",
+"sectors_affected":"all",
+"note":"خفّف معايير الحكم لهذه السنة"},
+2009: {"name":"GFC","severity":"HIGH",
+"sectors":"commercial_bank,investment_bank",
+"note":"أزمة مالية عالمية"},
+2022: {"name":"Inflation+Rates","severity":"MEDIUM",
+"sectors":"ev_automaker,pre_revenue_tech",
+"note":"ارتفاع حاد في أسعار الفائدة"},
+}
+def compute_verdict(ticker,year,ratios,strategic,
+sub_sector,profile,audit):
+"""
+يحسب الحكم مع مراعاة:
+- سياق القطاع الفرعي
+- سنوات الأزمات العالمية
+- معيار المحاسبة (IFRS/GAAP)
+- مرحلة دورة الأعمال
+"""
+# استثناء سنوات الأزمة
+crisis = GLOBAL_CRISIS_YEARS.get(year)
+crisis_adj = 0.0
+if crisis:
+sev = crisis["severity"]
+aff = crisis.get("sectors","all")
+if aff=="all" or sub_sector in aff:
+crisis_adj = {"EXTREME":0.20,"HIGH":0.10,"MEDIUM":0.05}.get(sev,0)
+# الحساب الأساسي
+roic = ratios.get("roic",{}).value if hasattr(ratios.get("roic",None),"value") else 0
+z    = strategic.get("Altman_Z_Score") or 5
+esp  = strategic.get("Economic_Spread") or 0
+# شركة ناشئة: معايير مختلفة
+if getattr(profile,"is_pre_revenue",False):
+runway = ratios.get("cash_runway_months",{}).value or 0
+if runway >= 18: return {"verdict":"WATCH","confidence":70}
+if runway >= 12: return {"verdict":"WATCH","confidence":55}
+return {"verdict":"FAIL","confidence":80}
+# الحكم القياسي
+base_score = 0
+if roic and roic > 0.10: base_score += 35
+elif roic and roic > 0:  base_score += 15
+if z > 3:   base_score += 30
+elif z > 1.8: base_score += 15
+if esp > 0: base_score += 25
+# تعديل الأزمة
+adjusted = base_score + crisis_adj * 100
+if adjusted >= 70: return {"verdict":"PASS","confidence":int(adjusted)}
+if adjusted >= 45: return {"verdict":"WATCH","confidence":int(adjusted)}
+return {"verdict":"FAIL","confidence":int(adjusted)}
+11. المرحلة 9: Pipeline Orchestrator الشامل
+# pipeline/universal_orchestrator.py
+from ai.universal_label_engine import UniversalLabelEngine
+from ai.universal_sector_classifier import UniversalSectorClassifier
+from ai.online_learning_engine import OnlineLearningEngine
+from ai.anomaly_detector import AnomalyDetector
+from adapters.multi_standard_adapter import MultiStandardAdapter
+from models.company_profile import CompanyProfile
+from models.audit_log import AuditLog
+OPTIMAL_START = 2015
+OPTIMAL_END   = 2025
+class UniversalOrchestrator:
+def __init__(self):
+self.label_ai   = UniversalLabelEngine()
+self.sector_ai  = UniversalSectorClassifier()
+self.online_ai  = OnlineLearningEngine()
+self.anomaly    = AnomalyDetector()
+self.adapter    = MultiStandardAdapter()
+# ... باقي المكونات
+def run(self, filepath, loaded_tickers=None,
+force_std=None, force_currency="USD"):
+sheets = pd.read_excel(filepath,sheet_name=None)
+ticker = self._fa(sheets,"Ticker")
+audit  = AuditLog(ticker)
+# ══ 1. بناء بروفايل الشركة ══
+std = force_std or CompanyProfile.detect_standard(ticker)
+profile = CompanyProfile(
+ticker=ticker,
+accounting_std=std,
+is_pre_revenue=self._detect_pre_revenue(sheets)
+)
+# ══ 2. استخراج وتوحيد البيانات ══
+raw = self._extract_raw(sheets)
+adapted_all = {}
+for year, yr in raw.items():
+if not (OPTIMAL_START <= year <= OPTIMAL_END): continue
+# توحيد المعيار المحاسبي
+adapted = self.adapter.adapt(yr, std, audit, year)
+# توحيد العملة
+currency = self._fa(sheets,"Currency") or "USD"
+rates = self._load_rates()
+adapted = self.adapter.normalize_currency(
+adapted, currency, force_currency, rates)
+adapted_all[year] = adapted
+# ══ 3. تعرف البنود بالذكاء الاصطناعي ══
+resolved = {}
+for year, yr in adapted_all.items():
+yr_resolved = {}
+ctx = {"sector": profile.sub_sector}
+for label, value in yr.items():
+r = self.label_ai.recognize(
+label,
+accounting_std=std,
+ticker=ticker,
+value=value,
+ctx=ctx)
+if r["canonical"] and r["confidence"]>=0.68:
+c = r["canonical"]
+# تجميع البنود المنقسمة
+if c in yr_resolved and c=="cost_of_revenue":
+try: yr_resolved[c]=float(yr_resolved[c] or 0)+float(value or 0)
+except: pass
+else: yr_resolved[c] = value
+resolved[year] = yr_resolved
+# ══ 4. التحقق من مراسي الميزانية ══
+anchor_r  = self.anchor.validate_all(ticker,resolved,audit)
+valid_years = anchor_r["valid_years"]
+# ══ 5. تصنيف القطاع بالذكاء ══
+latest = max(valid_years)
+quick  = self._quick_ratios(resolved[latest])
+sector_r = self.sector_ai.predict(quick,ticker,profile)
+profile.sub_sector = sector_r["sub_sector"]
+profile.sector_confidence = sector_r["confidence"]
+# ══ 6. كشف الشذوذات ══
+for year in valid_years:
+anomaly_score = self.anomaly.score(
+profile.sub_sector,
+list(quick.values()))
+if anomaly_score > 0.7:
+audit.flag(year,"ANOMALY_HIGH","HIGH",
+f"درجة شذوذ={anomaly_score:.2f}")
+# ══ 7. حساب النسب مع حذف المستحيلات ══
+ratios = {}
+prev_ratios = {}
+for year in sorted(valid_years):
+yr_ratios = self.ratio.compute_all(
+ticker,year,resolved[year],
+profile.sub_sector,audit)
+# فرض حدود القيم المستحيلة
+for metric in yr_ratios:
+v = yr_ratios[metric]
+val = v.value if hasattr(v,"value") else v
+cleaned = self.anomaly.check_hard_bounds(
+metric,val,ticker,year,audit)
+if cleaned is None and val is not None:
+if hasattr(v,"value"): v.value = None
+# مؤشرات التلاعب
+if prev_ratios:
+raw_curr = {m:getattr(r,"value",r)
+for m,r in yr_ratios.items()}
+fraud_flags = self.anomaly.compute_fraud_indicators(
+raw_curr,prev_ratios)
+for f in fraud_flags:
+audit.flag(year,f,"MEDIUM",
+"مؤشر تلاعب محاسبي محتمل")
+prev_ratios = {m:getattr(r,"value",r)
+for m,r in yr_ratios.items()}
+ratios[year] = yr_ratios
+# ══ 8-10. الأحكام + الدرجة + النظراء ══
+verdicts  = self._compute_verdicts(ratios,profile,valid_years,audit)
+quality   = self._compute_quality(ratios,profile.sub_sector,latest)
+benchmark = self.peer.benchmark(
+ticker,profile.sub_sector,ratios,loaded_tickers or {},latest)
+# ══ 11. تدريب تلقائي بالشركات عالية الثقة ══
+if sector_r["confidence"] >= 0.88:
+self.sector_ai.data.append((quick,profile.sub_sector))
+self.online_ai.update(
+list(quick.values()),
+profile.sub_sector,ticker,
+self.sector_ai.rf.classes_ if self.sector_ai.trained else [])
+return PipelineResult(
+ticker=ticker, profile=profile,
+valid_years=valid_years,
+ratios=ratios, verdicts=verdicts,
+quality_score=quality["score"],
+peers=benchmark, audit=audit)
+12. المرحلة 10: واجهة Streamlit العالمية
+12.1 التوطين — 3 لغات
+# ui/i18n/ar.json (مثال)
+{
+"app_title": "FinSight Universal — التحليل المالي الذكي",
+"disclaimer": "للأغراض الأكاديمية والبحثية حصراً. ليس توصية استثمارية.",
+"sector": "القطاع الفرعي",
+"confidence": "ثقة التصنيف",
+"data_quality": "جودة البيانات",
+"financial_health": "الصحة المالية",
+"upload": "ارفع ملفات Excel",
+"standard": "معيار المحاسبة",
+"anomaly_alert": "تحذير: شذوذ مكتشف في البيانات",
+"pre_revenue": "شركة ناشئة — لا إيراد بعد",
+"islamic": "تمويل إسلامي — لا فوائد"
+}
+12.2 هيكل الواجهة الكاملة
+12.3 خيارات متقدمة في الشريط الجانبي
+with st.sidebar:
+st.title("FinSight Universal")
+st.caption(i18n["disclaimer"])
+# رفع الملفات
+files = st.file_uploader("ارفع ملفات Excel",
+accept_multiple_files=True, type=["xlsx"])
+# إعدادات متقدمة
+with st.expander("إعدادات متقدمة"):
+std = st.selectbox("معيار المحاسبة",
+["تلقائي","GAAP","IFRS","UK_GAAP","J_GAAP","CN_GAAP"])
+currency = st.selectbox("عملة التقرير",
+["USD","EUR","GBP","JPY","SAR","AED"])
+lang = st.selectbox("اللغة",["عربي","English","Français"])
+year_start = st.slider("بداية النطاق الزمني",2000,2020,2015)
+# مؤشر التعلم
+kb_size = len(orchestrator.label_ai.kb)
+st.metric("بنود تعلّمها النظام", kb_size)
+n_trained = len(orchestrator.sector_ai.data)
+st.metric("شركات دُرِّب عليها", n_trained)
+13. المرحلة 11: بيانات التدريب — 500+ شركة عالمية
+ينفّذ Codex إنشاء data/training_labels_500.json بهذا المحتوى — يغطي كل القطاعات الـ 52:
+# data/training_labels_500.json — هيكل الملف
+{
+"version": "2.0",
+"total": 500,
+"labeled_companies": [
+{"ticker":"NVDA","sub_sector":"semiconductor_fabless","std":"GAAP","country":"US"},
+{"ticker":"INTC","sub_sector":"semiconductor_idm","std":"GAAP","country":"US"},
+{"ticker":"ASML","sub_sector":"semiconductor_idm","std":"IFRS","country":"NL"},
+{"ticker":"MSFT","sub_sector":"software_saas","std":"GAAP","country":"US"},
+{"ticker":"SAP","sub_sector":"software_saas","std":"IFRS","country":"DE"},
+{"ticker":"AAPL","sub_sector":"hardware_platform","std":"GAAP","country":"US"},
+{"ticker":"SONY","sub_sector":"hardware_platform","std":"J_GAAP","country":"JP"},
+{"ticker":"JPM","sub_sector":"commercial_bank","std":"GAAP","country":"US"},
+{"ticker":"HSBC","sub_sector":"commercial_bank","std":"IFRS","country":"UK"},
+{"ticker":"BNP","sub_sector":"commercial_bank","std":"IFRS","country":"FR"},
+{"ticker":"DIB","sub_sector":"islamic_finance","std":"IFRS","country":"AE"},
+{"ticker":"QNB","sub_sector":"commercial_bank","std":"IFRS","country":"QA"},
+{"ticker":"2222.SR","sub_sector":"integrated_oil","std":"IFRS","country":"SA"},
+{"ticker":"BP","sub_sector":"integrated_oil","std":"IFRS","country":"UK"},
+{"ticker":"TM","sub_sector":"traditional_auto","std":"J_GAAP","country":"JP"},
+{"ticker":"TSLA","sub_sector":"ev_automaker","std":"GAAP","country":"US"},
+{"ticker":"BYD","sub_sector":"ev_automaker","std":"CN_GAAP","country":"CN"},
+{"ticker":"LVMH","sub_sector":"luxury_goods","std":"IFRS","country":"FR"},
+{"ticker":"AMT","sub_sector":"reit_data_center","std":"GAAP","country":"US"},
+{"ticker":"PIF","sub_sector":"sovereign_fund","std":"IFRS","country":"SA"},
+{"ticker":"BRK.B","sub_sector":"conglomerate","std":"GAAP","country":"US"}
+// ... 479 شركة إضافية
+]
+}
+14. المرحلة 12: الاختبارات النهائية — 49 اختباراً
+15. requirements.txt الشامل وترتيب التنفيذ
+# requirements.txt — النظام الشامل
+# ── الأساسي ──
+streamlit>=1.32.0
+pandas>=2.0.0
+plotly>=5.20.0
+openpyxl>=3.1.0
+numpy>=1.26.0
+pydantic>=2.0.0
+# ── الذكاء الاصطناعي ──
+sentence-transformers>=2.6.0   # NLP متعدد اللغات
+torch>=2.0.0                   # مطلوب لـ sentence-transformers
+scikit-learn>=1.4.0            # RF + MLP + SGD + Isolation Forest
+xgboost>=2.0.0                 # GBM للـ Ensemble
+joblib>=1.3.0                  # حفظ النماذج
+# ── التحليل المالي ──
+scipy>=1.12.0                  # حسابات إحصائية
+statsmodels>=0.14.0            # نماذج إحصائية
+# ── الاختبارات ──
+pytest>=8.0.0
+pytest-cov>=4.0.0
+ترتيب التنفيذ الصارم
+16. معيار الإغلاق المطلق
+pytest tests/ -v  →  49/49 passed  ✅  — هذا هو معيار الإغلاق الوحيد
+16.1 قائمة التحقق اليدوي النهائية
+16.2 مسار التطور التجاري
+الميزة التنافسية التي لا يملكها أحد: نظام ذكاء اصطناعي يتعرف على أي بند محاسبي بأي لغة وأي معيار، ويُصنّف أي مؤسسة في أي بلد، ويتعلم فوراً من كل تصحيح، ويكشف الشذوذات تلقائياً — كل ذلك مع Audit Trail شامل وشفافية كاملة في المنهجية. Bloomberg وFactSet يُعطيانك أرقاماً. هذا النظام يُعطيك الأرقام + مصدرها + منهجية حسابها + درجة موثوقيتها.

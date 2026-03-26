@@ -1,0 +1,686 @@
+CODEX  —  تقرير التدقيق الثالث
+مراجعة الإصدار الجديد: AAPL  •  JPM  •  TSLA
+20 فبراير 2026  —  تحليل جذري على مستوى خبير عالمي
+AAPL
+تحسَّن جزئياً
+ROE ✅  |  CoD ✅  |  Shares ❌
+موثوقية: 55%
+JPM
+انهيار شبه كامل
+Shares: $166M لكل سهم ❌❌
+موثوقية: 15%
+TSLA
+6/6 Balance فشل
+Interest Expense سالب ❌
+موثوقية: 20%
+① لوحة المقارنة — ما الذي تغيَّر؟
+المقياس
+AAPL
+JPM
+TSLA
+ملاحظة
+ROE (قيمة المعادلة)
+✅ مُصلح 0.88→1.97
+⚠️ جزئي (2024 فقط)
+⚠️ جزئي (5 سنوات)
+2020 لا يزال = 0
+Cost of Debt
+✅ مُصلح كل السنوات
+❌ مكسور ≈ 0 (نانو)
+⚠️ جزئي (2022-2025)
+2020-2021 = صفر
+EV/EBITDA
+❌ مكسور NaN
+❌ مكسور NaN
+❌ مكسور NaN
+لم يُصلَح أبداً
+shares_outstanding وحدات
+❌ جديد بالألوف≠الملايين
+❌ جديد 2,939 → $166M/سهم
+❌ جديد بالألوف≠الملايين
+بَق جديد حرجي
+Balance Validation
+✅ مُصلح (ok=True كلها)
+⚠️ جزئي (2024 فقط)
+❌ مكسور 6/6 فشل
+TSLA لم يتغير
+Fair_Value منطقية
+❌ مكسور 0.023→5.1→0.034
+❌ مكسور $27M→-$88M/سهم
+❌ مكسور 5→150→7→48
+لم تُصلَح
+Hierarchy الانحراف
+❌ جديد 60-68% (أسوأ)
+❌ مكسور
+❌ مكسور 5147%→58%
+تدهور في AAPL!
+Interest Expense إشارة
+⚠️ NaN 2024-2025
+✅ موجب وصحيح
+❌ جديد سالب كله!
+TSLA تُعكس إشارته
+EPS TSLA 2021
+➖ لا ينطبق
+➖ لا ينطبق
+❌ مكسور مكرَّر 2020
+1.907=1.907
+Net Margin JPM
+➖ لا ينطبق
+❌ مكسور 72% (مستحيل)
+➖ لا ينطبق
+تعريف Revenue خاطئ
+SGR > 100%
+❌ مكسور (5 من 6 سنوات)
+✅ معقول
+✅ معقول
+AAPL: SGR=148%؟
+WACC 2021
+❌ مكسور NaN
+✅ موجود
+❌ مكسور NaN
+بيانات مفقودة
+total_debt اتساق
+⚠️ مختلط
+❌ مكسور (مليارات↔ملايين)
+❌ مكسور 2021: 34,000
+JPM: 436B→454K→499B
+② الكارثة الجديدة — shares_outstanding بوحدة خاطئة للشركات الثلاث
+🔴 بَق جديد حرجي اكتُشف اليوم — يُفسد P/B وFair_Value وEPS والسعر الضمني كلياً
+AAPL: shares=17,352,119 (مليون؟ ألف؟). ضرب MC/Shares يُعطي $112,265 لكل سهم بدلاً من ~$150. JPM: shares=2,939 → MC/Shares = $166,491,883 لكل سهم (مستحيل). TSLA: shares=2,959 → $298,296,565 لكل سهم. هذا يعني أن الـ shares مُخزَّنة بالآلاف أو الملايين لكن MC بالدولار الكامل.
+الشركة
+shares_outstanding
+Market Cap ($)
+السعر الضمني
+السعر الحقيقي
+الخطأ
+AAPL
+17,352,119
+$1.948 T
+$112,265
+~$150
+Shares بالملايين، MC بالدولار
+JPM
+2,939
+$489 B
+$166,491,883
+~$166
+Shares بالملايين، MC بالدولار
+JPM
+2,874
+$670 B
+$233,339,459
+~$233
+✅ الأجزاء صحيحة لكن نسبتها خاطئة
+TSLA
+2,959
+$882 B
+$298,296,566
+~$298
+Shares بالملايين، MC بالدولار
+TSLA
+3,130
+$389 B
+$124,518,058
+~$124
+نفس المشكلة
+التشخيص الدقيق:
+shares_outstanding في الـ Ratios sheet مخزَّنة بالملايين (2,939 = ~2.939 مليار سهم لـ JPM ✅)
+لكن Market Cap في Layer2 مخزَّن بالدولار الكامل (~489 مليار = 489,319,644,397)
+عند الحساب: P/B = Price / BVPS — لكن BVPS = Equity_M / Shares_M ✅ — لذا P/B صحيح
+المشكلة: Fair_Value وأي حساب يضرب EPS × shares يُعطي وحدة خاطئة
+TSLA: Book_Value_Per_Share = 7.51 → P/B = 31x — صحيح ✅ — الـ BVPS جيد
+لكن EPS لـ TSLA 2020 = NI/Shares = 5,644M / 2,959M = 1.907$ ✅ — هذا صحيح!
+إذن المشكلة ليست في EPS بل في: Fair_Value = يضرب EPS × مضاعف → يُعطي دولارات لكن بمقياس صحيح
+المشكلة الحقيقية: Fair_Value لـ JPM = $27M → تعني أن المعادلة لا تقسم على عدد الأسهم صحيح
+الأمر المطلوب:
+أضف في بداية كل حساب: shares_M = shares_outstanding (بالملايين كما هو)
+stock_price = market_cap_dollars / (shares_M * 1_000_000)
+أضف assertion: if stock_price < 0.01 or stock_price > 10_000: raise PriceError(f&apos;Implied price {stock_price:.2f} is implausible&apos;)
+Fair_Value يجب أن يُقارَن بـ stock_price: if Fair_Value < 0.1 * stock_price: flag as IMPLAUSIBLE
+③ TSLA — Interest Expense بإشارة سالبة يُفسد Cost of Debt
+🔴 بَق جديد — TSLA: InterestExpense = [-371, -371, -191, -156, -350, -338]
+Interest Expense في SEC filings يُسجَّل أحياناً كقيمة سالبة (لأنه مصروف). الكود يُدخله بإشارته السالبة فينتج Cost_of_Debt = -InterestExpense/Debt = سالب أو يُعالَج بشكل خاطئ.
+السنة
+Interest Expense (Raw)
+Total Debt ($M)
+CoD المحسوب
+المتوقع
+المشكلة
+2020
+-371
+14,718,999,552 (دولار!)
+≈ 0 (نانو)
+~5%
+Debt بالدولار الكامل + إشارة سالبة
+2021
+-371
+34,000
+0.0109 (معكوس)
+~4-5%
+34,000 = ملايين؟
+2022
+-191
+5,748
+0.0096
+~5%
+abs(IntExp)/Debt صحيح نسبياً
+2023
+-156
+9,573
+0.0204
+~2%
+✅ معقول بعد abs
+2024
+-350
+13,623
+0.0302
+~3%
+✅ معقول
+2025
+-338
+14,719
+0.0239
+~2.4%
+✅ معقول
+الأمر المطلوب:
+قبل حساب Cost_of_Debt: interest_expense = abs(interest_expense_raw)
+تحقق من وحدة Total_Debt: if total_debt > 1_000_000_000 and interest_expense < 100_000: total_debt_M = total_debt / 1_000_000
+2021: total_debt=34,000 — هذا يبدو بالملايين ✅ لكن يجب التوحيد مع باقي السنوات
+أضف: if Cost_of_Debt < 0 or Cost_of_Debt > 0.20: flag as ABNORMAL
+④ EV/EBITDA = NaN للشركات الثلاث — لم يُصلَح
+🔴 لم يُصلَح — هذا البَق موجود منذ الإصدار الأول
+EV مخزَّن بالدولار الكامل (تريليونات). EBITDA بالملايين. القسمة EV/EBITDA = تريليون/مليون = مليون مضاعف → NaN أو لا معنى له.
+الشركة
+السنة
+EV ($)
+EBITDA ($M)
+EV/EBITDA (خام)
+EV/EBITDA الصحيح
+القيمة المنطقية؟
+AAPL
+2020
+3,849,213,444,096
+77,344
+49,767,447x
+49.8x
+✅ معقول (Tech)
+AAPL
+2025
+4,078,981,247,195
+144,748
+28,179,880x
+28.2x
+✅ معقول
+JPM
+2023
+301,705,644,397
+7,512
+40,163,158x
+40.2x
+⚠️ EBITDA غير مناسب للبنوك
+JPM
+2025
+1,025,413,567,291
+8,821
+116,246,862x
+116.3x
+⚠️ مشكوك فيه
+TSLA
+2022
+379,236,520,966
+17,403
+21,791,445x
+21.8x
+✅ معقول
+TSLA
+2025
+1,685,105,724,579
+10,503
+160,440,419x
+160.4x
+⚠️ مرتفع جداً
+الحل: سطر واحد في الكود:
+BEFORE: ev_to_ebitda = enterprise_value / ebitda
+AFTER:  ev_to_ebitda = (enterprise_value / 1_000_000) / ebitda  # كلاهما الآن بالملايين
+أضف تحقق: if ev_to_ebitda > 500 or ev_to_ebitda < 0: flag as IMPLAUSIBLE
+⑤ AAPL — SGR = 147% مستحيل اقتصادياً
+🔴 SGR_Internal تجاوز 100% في 5 من 6 سنوات — مؤشر فشل في ROE أو Retention
+Sustainable Growth Rate = ROE × Retention_Ratio. AAPL: ROE=1.97 (197%) × Retention=0.854 = 168%. هذا يعني أن الشركة يمكنها النمو بمعدل 168% سنوياً — مستحيل رياضياً على المدى البعيد. المشكلة في ROE > 100% التي تعكس خلل في قسمة Equity.
+السنة
+ROE
+Retention
+SGR
+المشكلة
+الصحيح
+2020
+87.9%
+79.4%
+69.7%
+⚠️ ROE يتجاوز 100% ← NI>Equity
+ROE 88% لـ AAPL صحيح رياضياً لكن يعكس buybacks
+2021
+150.1%
+100%
+150.1%
+❌ ROE>100% ومستحيل استدامته
+SGR يجب أن يُحدَّد بـ ≤ 50%
+2022
+196.9%
+85.5%
+168.4%
+❌ SGR>100% — بلا معنى اقتصادي
+الاستدامة الحقيقية ~15-25%
+2023
+156.1%
+84.8%
+132.3%
+❌ SGR>100%
+P/L يرتفع لكن Equity منخفض بسبب buybacks
+2024
+164.6%
+84.0%
+138.3%
+❌ SGR>100%
+مشكلة منهجية في التعريف
+2025
+151.9%
+86.4%
+131.2%
+❌ SGR>100%
+يجب استخدام Average Equity
+التشخيص الجذري:
+AAPL تشتري أسهمها (buybacks) بشكل مكثف → Equity ينخفض → ROE = NI/Equity يرتفع لأكثر من 100%
+رياضياً: NI=99,803 ÷ Equity=50,672 = 197% — هذا صحيح حسابياً لكن مضلِّل اقتصادياً
+الصيغة الصحيحة: ROE = NI / Average(Equity_start, Equity_end) — تُخفف التأثير
+المعيار الدولي: إذا ROE > 100%: استخدم DuPont decomposition أو أعلن أن ROE مشوَّه بسبب buybacks
+الأمر المطلوب:
+ROE = net_income / ((equity_start + equity_end) / 2)  ← استخدام المتوسط
+إذا equity < 0 أو ROE > 100%: أضف تحذير ROE_DISTORTED_BY_BUYBACKS
+SGR: cap عند 100% مع تحذير SGR_ECONOMICALLY_UNSUSTAINABLE
+أضف DuPont_ROE: يُقسِّم ROE إلى Net_Margin × Asset_Turnover × Leverage
+⑥ JPM — ثلاث كوارث جديدة في إصدار واحد
+6.1 — Cost of Debt = صفر مطلق (نانو) لم يُصلَح
+Cost_of_Debt لـ JPM: 2.09e-7, 4.64e-7, 3.92e-7. الحساب اليدوي يُظهر: IntExp=81,321M ÷ Debt_2023=436,537,000,000 = 0.000000186 — نفس مشكلة وحدات Debt التي تكلمنا عنها.
+Debt_2023 = 436,537,000,000 (دولار كامل) بينما IntExp=81,321 (ملايين)
+الحل: total_debt_M = 436,537,000,000 / 1,000,000 = 436,537 — ثم CoD = 81,321/436,537 = 18.6%
+⚠️ 18.6% مرتفع جداً للبنوك — يعكس أن JPM يشمل الودائع ضمن Debt وهو خطأ منهجي
+البنوك: Cost_of_Debt = تكلفة الاقتراض من الأسواق فقط (Senior Debt) ≈ 2-4%, لا تشمل الودائع
+6.2 — Net Margin = 72% (مستحيل للبنوك)
+🔴 Net Margin = 72% لـ JPM — خطأ في تعريف الإيراد
+المعادلة: Net Margin = Net Income / Revenue. لـ JPM: NI=49,552 ÷ Revenue=68,837 = 72%. لكن JPM يُعرِّف Revenue = Net Interest Income فقط (~68B) بينما هناك Fee Income إضافي. وحتى لو كان الرقم صحيحاً، فإن هامش 72% مستحيل لأي بنك — متوسط القطاع 15-25%.
+السبب: Revenue لـ JPM في الملف = 68,837M وهو Net Interest Income فقط
+Total Revenue الحقيقية = ~163B (NII + Non-Interest Income)
+Net Margin الصحيح = 49,552 / 163,000 ≈ 30% — لا يزال مرتفعاً لكن معقول للبنوك الكبرى
+الحل: لـ industry_type=&apos;banking&apos; استخدم Total_Revenue = NII + Non_Interest_Income
+6.3 — FCF لـ JPM: من +$12.9B إلى -$148B في سنتين
+FCF_yield: +2.65% (2023) → -6.26% (2024) → -17.01% (2025). FCF الضمني: +13B → -42B → -148B. هذا ليس تدهوراً عادياً — هذا يعني أن تعريف FCF خاطئ للبنوك.
+البنوك: FCF التقليدي (Operating CF - CapEx) لا يناسب قطاع الخدمات المالية
+JPM: التدفقات التشغيلية تشمل تغيرات في الأوراق المالية والقروض (مئات المليارات)
+الصحيح لـ JPM: استخدم Dividend Coverage Ratio أو Free Capital Generation بدل FCF
+⑦ TSLA — 6/6 Balance Failures لم تُحل + بَق AAPL hierarchy جديد
+🔴 TSLA: لم يتغير شيء — نفس الفجوات من -44K إلى -82K مليون دولار
+Hierarchy يستخدم 3 عناصر فقط للأصول (Cash, AR, Inventory) و1 للخصوم (AP). هذا يُغطي ~40-50% فقط من Current Assets الفعلية. AAPL: الانحراف ارتفع من 12-42% في الإصدار الأول إلى 60-68% في هذا الإصدار — تدهور، لا تحسن!
+المكونات المفقودة من Hierarchy لكل الشركات:
+المفهوم المفقود
+القيمة لـ AAPL 2025
+القيمة لـ TSLA 2025
+السبب المرجح للغياب
+Vendor Non-Trade Receivables
+33,180
+—
+مفهوم خاص بـ AAPL غير معروف للنظام
+PrepaidExpenses
+14,685
+3,924
+لم يُضَف لقائمة CURRENT_ASSETS
+OtherCurrentAssets
+~5,000
+~4,000
+مجمَّع في Other*
+ShortTermInvestments
+24,658
+~2,000
+ليس في whitelist الهرمي
+AccruedLiabilities
+~50,000
+~13,000
+مفقود من CURRENT_LIABILITIES
+DeferredRevenueCurrent
+8,809
+~2,500
+موجَّه لـ OtherIncomeStatement خطأ
+ShortTermDebt
+~0
+~2,373
+ليس في whitelist الهرمي
+الأمر المطلوب — قائمة الـ Whitelist الكاملة:
+CURRENT_ASSETS_COMPONENTS = [
+&apos;CashAndCashEquivalentsAtCarryingValue&apos;,  # موجود ✅
+&apos;AccountsReceivableNetCurrent&apos;,           # موجود ✅
+&apos;InventoryNet&apos;,                           # موجود ✅
+&apos;VendorNonTradeReceivables&apos;,              # مفقود ❌ — حرجي لـ AAPL
+&apos;PrepaidExpenseAndOtherAssetsCurrent&apos;,    # مفقود ❌
+&apos;ShortTermInvestments&apos;,                   # مفقود ❌
+&apos;OtherAssetsCurrent&apos;,                    # مفقود ❌
+]
+CURRENT_LIABILITIES_COMPONENTS = [
+&apos;AccountsPayableCurrent&apos;,                # موجود ✅
+&apos;AccruedLiabilitiesCurrent&apos;,             # مفقود ❌ — حرجي
+&apos;DeferredRevenueCurrent&apos;,               # مفقود ❌
+&apos;ShortTermBorrowings&apos;,                  # مفقود ❌
+&apos;CurrentPortionOfLongTermDebt&apos;,         # مفقود ❌
+&apos;OperatingLeaseLiabilityCurrent&apos;,       # مفقود ❌ (IFRS 16)
+]
+⑧ WACC — تحليل دقيق: صحيح الاتجاه لكن مبني على مدخلات خاطئة
+الشركة
+السنة
+WACC
+Beta
+Cost_of_Debt
+التقييم
+AAPL
+2020
+6.6%
+1.25
+3.3%
+⚠️ CoD معقول لكن WACC منخفض جداً (Tech WACC ~8-10%)
+AAPL
+2021
+NaN
+1.25
+2.7%
+❌ NaN لأن Market Data 2021 مفقودة
+AAPL
+2025
+8.5%
+0.91
+3.7%
+⚠️ Beta 0.91 لـ AAPL ≠ المتوقع (~1.1-1.3)
+JPM
+2023
+5.2%
+1.00
+~0
+❌ CoD=0 يُفسد WACC كلياً
+JPM
+2024
+6.0%
+1.14
+~0
+❌ نفس المشكلة
+JPM
+2025
+NaN
+1.14
+~0
+❌ NaN + CoD=0
+TSLA
+2020
+11.7%
+2.21
+~0
+❌ CoD=0 + Beta عالي جداً
+TSLA
+2025
+17.6%
+2.05
+2.4%
+⚠️ WACC 17.6% مرتفع — TSLA الواقعي ~12-14%
+مشكلة WACC خفية: لا يوجد Tax Shield حقيقي
+WACC = (E/V)×Ke + (D/V)×Kd×(1-Tax). الضريبة الفعلية لـ AAPL ~15-16%، TSLA ~8-12%، JPM ~22%
+إذا Cost_of_Debt خاطئ → WACC خاطئ حتى لو كانت كل العناصر الأخرى صحيحة
+AAPL 2025: Beta=0.91 غريب لشركة تقنية — يعكس تحيز في نافذة الحساب
+الحل: أضف effective_tax_rate من الإفصاحات (ليس افتراض 21% ثابت)
+⑨ total_debt — تناقض الوحدات عبر السنوات (JPM وTSLA)
+🔴 total_debt يتنقل بين الدولار الكامل والملايين عشوائياً
+JPM: 436,537,000,000 (2023) → 454,311 (2024) → 499,982,000,000 (2025). التغيير بعامل مليون بين السنوات. TSLA: 14,718,999,552 (2020) → 34,000 (2021) → 5,748 (2022). هذا يُحدث أخطاء كارثية في Cost_of_Debt وDebt_to_Equity وكل نسبة تستخدم الدين.
+الشركة
+2020/2023
+2021/2024
+2022/2025
+التشخيص
+JPM total_debt
+436,537,000,000 ($)
+454,311 ($M)
+499,982,000,000 ($)
+2024 بالملايين، الباقي بالدولار
+TSLA total_debt
+14,718,999,552 ($)
+34,000 ($M)
+5,748 ($M)
+2020 بالدولار، الباقي بالملايين
+الأثر على CoD (JPM)
+≈0 (نانو)
+0.223 (22%!)
+≈0 (نانو)
+كل سنة CoD مختلف كلياً
+الأثر على D/E (TSLA)
+0.66 (بالدولار)
+0.76 (بالملايين)
+0.13 (صحيح)
+D/E 2020-2021 مضروب×1000
+الأمر المطلوب:
+بعد استخراج total_debt من أي مصدر: normalize_to_millions(total_debt)
+def normalize_to_millions(v):
+if v > 1_000_000_000: return v / 1_000_000  # من دولار إلى مليون
+elif v > 1_000_000: return v / 1_000  # من ألف إلى مليون
+else: return v  # بالفعل بالملايين
+أضف consistency check: إذا total_debt تغيَّر أكثر من ×100 بين سنتين متتاليتين → unit_change_detected
+⑩ TSLA — EPS 2021 مكرَّر من 2020 بدون مبرر
+EPS[2020] = 1.907401 = EPS[2021] = 1.907401. NetIncome[2020] = 5,644M = NetIncome[2021] = 5,644M. Shares[2020] = 2,959M = Shares[2021] = 2,959M. هذا يعني أن بيانات 2021 كلها مكرَّرة من 2020 — خطأ في استخراج بيانات السنة المالية.
+المقياس
+2020
+2021 (مسجَّل)
+2021 (الحقيقي)
+المصدر
+Net Income
+$5,644M
+$5,644M (نسخ)
+$5,519M
+10-K 2021 Tesla
+EPS
+$1.907
+$1.907 (نسخ)
+$1.872
+10-K 2021 Tesla
+Shares
+2,959M
+2,959M (نسخ)
+2,958M
+10-K 2021 Tesla
+WACC
+11.7%
+NaN
+~12%
+لا يُحسب بسبب Market NaN
+الأمر المطلوب:
+عند استخراج البيانات: تحقق من أن السنة المالية في XBRL تطابق السنة المستهدفة
+أضف: if any_consecutive_years_identical(data, threshold=0.99): flag POSSIBLE_YEAR_DUPLICATION
+جذر المشكلة: Market Data 2021 مفقود (MC=NaN, EV=NaN) → يبحث النظام عن بديل → يأخذ 2020
+الحل: إذا Market Data مفقود لسنة: ابحث في Yahoo Finance Historical أو اترك NaN بوضوح
+⑪ Fair_Value — لا تزال بلا معنى للشركات الثلاث
+الشركة
+السنة
+Fair_Value
+السعر الحقيقي
+الفرق
+التشخيص
+AAPL
+2020
+$0.023
+~$130
+×5,652
+❌ أقل من 1 سنت — خطأ في التطبيع
+AAPL
+2022
+$5.146
+~$150
+×29
+❌ أصغر من 4% من السعر الحقيقي
+AAPL
+2025
+$0.034
+~$230
+×6,765
+❌ انهار مجدداً
+JPM
+2023
+$27,464,061
+~$145
+×189,407
+❌ بالملايين لكل سهم
+JPM
+2024
+-$88,739,505
+~$200
+سالب!
+❌ قيمة سالبة لشركة رابحة
+TSLA
+2020
+$4.96
+~$230
+×46
+❌ أقل من 2% من السعر
+TSLA
+2022
+$150.87
+~$120
+1.26×
+⚠️ الأقرب للواقع لكن بالصدفة
+TSLA
+2025
+$48.58
+~$380
+×7.8
+❌ أقل من 13% من السعر
+السبب الجذري:
+Fair_Value تبدو مبنية على Graham Number: √(22.5 × EPS × BVPS)
+Graham Number لـ AAPL 2020: √(22.5 × 3.31 × 3.77) = √(281) = 16.8$ — معقول نسبياً
+لكن الرقم الفعلي 0.023$ يعني أن BVPS مخزَّن بوحدة خاطئة أو EPS منقوص
+JPM: Fair_Value = $27M/سهم → يُدخل earnings بالملايين ثم لا يقسم على الأسهم
+TSLA 2022: $150.87 ≈ السعر الحقيقي بالصدفة — لا يُثبت صحة المعادلة
+الأمر المطلوب:
+وثِّق المعادلة صراحةً: Fair_Value_method: &apos;GrahamNumber&apos; | &apos;DCF&apos; | &apos;EV_based&apos;
+اختبر: Graham_test = sqrt(22.5 * eps * bvps) → قارن بالنتيجة الحالية
+إذا Fair_Value < 0.5 × current_price أو Fair_Value > 2 × current_price: flag IMPLAUSIBLE
+JPM يجب أن يستخدم Excess Returns Model بدلاً من Graham
+⑫ الأوامر الموحدة — مرتَّبة حسب الأولوية والأثر
+#
+الأولوية
+الأمر
+الشركات المتأثرة
+الأثر
+1
+🔴 P0
+توحيد وحدات total_debt: normalize_to_millions() مع consistency_check بين السنوات
+AAPL+JPM+TSLA
+يُصلح CoD+D/E+WACC
+2
+🔴 P0
+EV/EBITDA: ev_to_ebitda = (enterprise_value / 1_000_000) / ebitda
+AAPL+JPM+TSLA
+يُصلح NaN في 3 شركات
+3
+🔴 P0
+interest_expense = abs(interest_expense_raw) قبل أي حساب
+TSLA (الأشد أثراً)
+يُصلح CoD لـ TSLA
+4
+🔴 P0
+تحقق وحدة shares: stock_price = MC_dollars/(shares*1e6) ← مقارنة بالسعر المعروف
+AAPL+JPM+TSLA
+يُصلح Fair_Value+P/B
+5
+🔴 P0
+إصلاح hierarchy whitelist: أضف 6 عناصر للأصول و5 للخصوم (انظر القسم 7)
+AAPL+TSLA
+يُصلح balance_validation
+6
+🔴 P0
+إصلاح RetainedEarnings routing: دائماً → Equity (لا OtherEquity)
+TSLA+JPM
+يُصلح 6/6 balance failures
+7
+🔴 P0
+تحقق مكرَّرات بيانات السنوات: if year_n ≈ year_n-1: flag DUPLICATION
+TSLA
+يُصلح EPS 2021
+8
+🟠 P1
+ROE = NI / avg(Equity_start, Equity_end) — استخدام المتوسط
+AAPL+JPM+TSLA
+يُقلل ROE>100%
+9
+🟠 P1
+SGR: cap عند 50% مع تحذير ROE_DISTORTED_BY_BUYBACKS
+AAPL
+يُصلح SGR=148%
+10
+🟠 P1
+JPM: Bank Template بـ ROAE، NIM، Efficiency Ratio، NCO Ratio
+JPM
+نموذج مهني
+11
+🟠 P1
+JPM: Revenue = NII + Non_Interest_Income (ليس NII فقط)
+JPM
+يُصلح Net Margin=72%
+12
+🟠 P1
+JPM: FCF للبنوك = Dividend Coverage Ratio، لا Operating CF - CapEx
+JPM
+يُصلح FCF=-148B
+13
+🟠 P1
+Market Data fallback: إذا MC=NaN → Yahoo Finance Historical للسنة المحددة
+AAPL+TSLA 2021
+يُصلح WACC=NaN
+14
+🟠 P1
+Fair_Value: وثِّق المعادلة + assert 0.1×Price < FV < 5×Price
+AAPL+JPM+TSLA
+إزالة نتائج عبثية
+15
+🟡 P2
+أضف effective_tax_rate من الإفصاحات في WACC (لا 21% ثابت)
+الكل
+دقة WACC
+16
+🟡 P2
+أضف DuPont decomposition: ROE = Margin × Turnover × Leverage
+الكل
+تفسير ROE
+17
+🟡 P2
+EPS consistency: إذا EPS_computed ≠ EPS_reported بأكثر من 5% → تحذير
+الكل
+ضمان جودة
+18
+🟡 P2
+أضف pe_ratio_used flag: أيهما يدخل Investment_Score
+الكل
+شفافية
+⑬ الحكم النهائي — الإصدار الجديد مقارنةً بالقديم
+الشركة
+الإصدار القديم
+الإصدار الجديد
+ما تحسَّن
+ما لا يزال مكسوراً
+AAPL
+40-50%
+55%
+ROE ✅ | Cost_of_Debt كل السنوات ✅ | Balance ok=True ✅
+EV/EBITDA NaN ❌ | Fair_Value ~0$ ❌ | SGR>100% ❌ | Hierarchy 60-68% ❌ | Shares وحدات ❌
+JPM
+25%
+15%
+لا شيء يُذكر — تراجع!
+CoD=0 ❌ | ROE≈0 ❌ | Shares×1M ❌ | Net Margin 72% ❌ | FCF -148B ❌ | FV=$27M/سهم ❌ | Balance 2/3 فشل ❌
+TSLA
+20%
+20%
+ROE 2022-2025 ✅ | Cost_of_Debt 2022+ جزئياً ✅
+Balance 6/6 ❌ | EPS 2021 مكرَّر ❌ | IntExp سالب ❌ | EV/EBITDA NaN ❌ | Debt وحدات ❌ | FV=5$ ❌
+الخلاصة للفريق: 18 أمر إصلاح — 7 منها P0 (حرجية) يجب تطبيقها قبل أي إصدار
+الأولوية القصوى: (1) توحيد وحدات Debt (2) EV/EBITDA تحويل وحدات (3) abs(InterestExpense) (4) التحقق من وحدة Shares (5) إصلاح Hierarchy whitelist (6) إصلاح RetainedEarnings routing (7) كشف مكرَّرات السنوات. تطبيق هذه السبعة وحدها سيرفع الموثوقية من 15-55% إلى 70-85%.
+تدقيق على: AAPL_analysis_20260220  |  JPM_analysis_20260220  |  TSLA_analysis_20260220  |  20 فبراير 2026

@@ -1,0 +1,431 @@
+أمر كودكس
+إصلاح عجز اختيار البنود (Label Selection Gap)
+الإصدار: 3.0  |  التاريخ: فبراير 2026
+الأولوية: حرجة - يعالج جذر 100% من أخطاء النسب المالية
+1. الملخص التنفيذي
+التحقيق الميداني في ملفات AAPL وJPM وTSLA كشف أن البيانات المجمعة من SEC صحيحة بنسبة 100%. كل الأرقام الرسمية مطابقة تماماً لتقارير 10-K المنشورة. المشكلة الوحيدة هي أن كل بند مالي رئيسي موجود في Layer1_Raw_SEC مرتين: مرة بالمليون دولار (صحيح)، ومرة بالدولار الكامل (خاطئ مليون مرة).
+CODEX لا يملك حالياً قاموس أولويات (Priority Dictionary) يحدد أيّ Label يُختار عند وجود تكرار. هذا الغياب هو الجذر الوحيد لكل الأخطاء السابقة: ROE بالنانو، Cost_of_Debt معدوم، EV/EBITDA = NaN، وفشل ميزان الاعتماد.
+البند
+القيمة في الملف
+الحقيقة الرسمية (SEC)
+AAPL Revenue 2024
+391,035M ✅
+391,035M ✅
+AAPL Net Income 2024
+93,736M ✅
+93,736M ✅
+JPM Revenue 2023
+158,104M ✅
+158,104M ✅
+TSLA Net Income 2023
+14,974M ✅
+14,974M ✅
+AAPL COGS (Label صحيح)
+169,559M ✅
+169,559M ✅
+AAPL COGS (Label خاطئ)
+169,559,000,000 ❌
+169,559M
+2. التشخيص التفصيلي: البنود المكررة بوحدتين
+الجدول التالي يوثق كل البنود الموجودة مرتين في Layer1_Raw_SEC مع تحديد أيّها صحيح وأيّها يجب تجاهله:
+2.1 تكرارات AAPL
+Label
+القيمة (2024)
+الوحدة
+القرار
+CostOfRevenue
+210,352
+مليون ✅
+USE
+CostOfGoodsAndServicesSold
+210,352,000,000
+دولار ❌
+SKIP
+CostOfSales
+210,352,000,000
+دولار ❌
+SKIP
+Revenues
+391,035
+مليون ✅
+USE
+SalesRevenueNet
+391,035,000,000
+دولار ❌
+SKIP
+RevenueFromContractWithCustomer...
+391,035,000,000
+دولار ❌
+SKIP
+StockholdersEquity
+56,950
+مليون ✅
+USE
+LiabilitiesAndStockholdersEquity
+364,980 (Assets!)
+إجمالي Assets ❌
+SKIP
+NetIncomeLoss
+93,736
+مليون ✅
+USE
+ProfitLoss
+93,736,000,000
+دولار ❌
+SKIP
+CapitalExpenditures
+9,447,000,000
+دولار ❌
+SKIP
+PaymentsToAcquireProperty...
+9,447 (÷1M)
+استخدم ÷1M ✅
+NORMALIZE
+2.2 تكرارات JPM - الأخطر
+في JPM كل البنود الرئيسية موجودة بالدولار الكامل فقط (لا يوجد نسخة بالمليون لها). هذا يعني أن CODEX يجب أن يقسمها على 1,000,000 تلقائياً:
+Label
+القيمة الخام
+بعد التصحيح (÷1M)
+القرار
+Assets / TotalAssets
+3,875,393,000,000
+3,875,393M ✅
+÷1,000,000
+StockholdersEquity / TotalEquity
+327,878,000,000
+327,878M ✅
+÷1,000,000
+Liabilities / TotalLiabilities
+3,547,515,000,000
+3,547,515M ✅
+÷1,000,000
+NetInterestIncome
+87,399,000,000
+87,399M ✅
+÷1,000,000
+InterestPaidNet
+77,114,000,000
+77,114M ✅
+÷1,000,000
+LoansReceivable / NetLoans
+1,280,870,000,000
+1,280,870M ✅
+÷1,000,000
+DepositLiabilities / Deposits
+2,400,688,000,000
+2,400,688M ✅
+÷1,000,000
+ProfitLoss (JPM)
+49,552,000,000
+49,552M ✅
+USE NetIncomeLoss
+2.3 تكرارات TSLA
+Label
+القيمة (2023)
+الوحدة
+القرار
+CostOfRevenue
+79,113
+مليون ✅
+USE
+CostOfGoodsAndServicesSold
+79,113,000,000
+دولار ❌
+SKIP
+StockholdersEquity
+62,634,000,000
+دولار ❌
+÷1,000,000
+TotalAssets / Assets
+106,618,000,000
+دولار ❌
+÷1,000,000
+TotalLiabilities / Liabilities
+43,984,000,000
+دولار ❌
+÷1,000,000
+SalesRevenueNet
+96,773,000,000
+دولار ❌
+SKIP (use Revenues)
+3. آلية الاكتشاف التلقائي للوحدة
+CODEX يجب أن يطبق الخوارزمية التالية على كل بند قبل استخدامه في أي حساب:
+خوارزمية تطبيع الوحدة (Unit Normalization Algorithm)
+def detect_and_normalize(value, context_median):
+    """
+    context_median = الوسيط للبنود الأخرى في نفس الشركة/السنة
+    """
+    if value <= 0:
+        return value  # لا تطبيع للصفر أو السالب
+    ratio = value / context_median
+    if ratio > 500_000:  # كبير مليون مرة من المعدل
+        return value / 1_000_000  # تحويل من دولار إلى مليون
+    elif ratio > 500:  # كبير ألف مرة من المعدل
+        return value / 1_000  # تحويل من ألف إلى مليون
+    else:
+        return value  # الوحدة صحيحة
+قاعدة القرار عند وجود نسختين بنفس المعنى:
+# إذا وُجد label_A و label_B يمثلان نفس المفهوم:
+# اختر دائماً الأصغر (بالمليون)
+def pick_correct_twin(val_A, val_B):
+    if val_A > 0 and val_B > 0:
+        ratio = max(val_A, val_B) / min(val_A, val_B)
+        if ratio > 500_000:  # نفس الرقم × مليون
+            return min(val_A, val_B)  # اختر الأصغر دائماً
+    return val_A  # fallback
+4. قاموس الأولويات (CANONICAL_LABEL_PRIORITY)
+هذا القاموس يجب أن يُضاف إلى CODEX كمعيار ثابت (Hard-Coded Standard). عند وجود أي من هذه اللابيلات، يُختار المُعطَى الأعلى أولوية فقط:
+المفهوم
+الأولوية 1 (USE)
+يُتجاهل (SKIP)
+سبب الإهمال
+Revenue
+Revenues
+SalesRevenueNet, RevenueFromContractWith...
+وحدة دولار
+COGS
+CostOfRevenue
+CostOfGoodsAndServicesSold, CostOfSales
+وحدة دولار
+Net Income
+NetIncomeLoss
+ProfitLoss (إذا > 10B)
+وحدة دولار
+Equity
+StockholdersEquity
+LiabilitiesAndStockholdersEquity, TotalEquity (إذا = Assets)
+يساوي Assets (خطأ)
+Assets
+Assets
+TotalAssets (إذا بالدولار)
+تطبيع ÷1M
+Interest Expense
+InterestExpense
+InterestCostsIncurred, InterestPaidNet (إذا > 1B)
+وحدة دولار
+CapEx
+PaymentsToAcquireProperty... ÷1M
+CapitalExpenditures (إذا > 1B)
+وحدة دولار
+Gross Profit
+GrossProfit_Hierarchy
+GrossProfit, Gross Profit (إذا > 1B)
+وحدة دولار
+Cash
+CashAndCashEquivalents_Hierarchy
+CashAndCashEquivalentsAtCarryingValue (إذا > 1B)
+وحدة دولار
+Deposits (JPM)
+Deposits ÷1M
+DepositLiabilities (مكرر)
+مكرر + دولار
+Loans (JPM)
+NetLoans ÷1M
+LoansReceivable, LoansAndLeases... (مكرر)
+مكرر + دولار
+قاعدة خاصة مهمة جداً:
+LiabilitiesAndStockholdersEquity يساوي دائماً إجمالي الأصول (Total Assets) - وهو مخصص للتحقق من توازن الميزانية فقط، وليس كقيمة لحقوق الملاك. استخدامه كـ Equity يؤدي إلى ROE = صافي الدخل ÷ إجمالي الأصول بدلاً من ROE = صافي الدخل ÷ حقوق الملاك.
+# قاعدة ذهبية - HARD CODED:
+CONTROL_TOTALS_NOT_EQUITY = [
+    'LiabilitiesAndStockholdersEquity',
+    'Total liabilities and stockholders equity',
+    'Total liabilities and shareholders equity',
+]
+# هذه البنود = Control Total للتحقق فقط
+# لا تُستخدم أبداً في حساب ROE أو D/E أو أي نسبة
+5. خوارزمية اختيار Label المُحدَّثة (CODEX v3)
+CANONICAL_LABEL_PRIORITY = {
+    # === قائمة الدخل ===
+    'Revenue': {
+        'preferred': ['Revenues', 'Revenue', 'Net sales',
+                      'Net revenue', 'Total revenues'],
+        'skip': ['SalesRevenueNet', 'RevenueFromContractWith...'],
+        'skip_condition': lambda v: v > 1_000_000_000
+    },
+    'COGS': {
+        'preferred': ['CostOfRevenue', 'Cost of Revenue',
+                      'Cost of revenues', 'COGS'],
+        'skip': ['CostOfGoodsAndServicesSold', 'CostOfSales'],
+        'skip_condition': lambda v: v > 1_000_000_000
+    },
+    'NetIncome': {
+        'preferred': ['NetIncomeLoss', 'NetIncome', 'Net income'],
+        'skip': ['ProfitLoss'],
+        'skip_condition': lambda v: v > 10_000_000_000
+    },
+    # === الميزانية العمومية ===
+    'Equity': {
+        'preferred': ['StockholdersEquity', 'Total Equity',
+                      "Stockholders' equity"],
+        'skip': ['LiabilitiesAndStockholdersEquity',
+                 'TotalEquity (if == Assets)'],
+        'skip_always': ['LiabilitiesAndStockholdersEquity']
+    },
+    'Assets': {
+        'preferred': ['Assets', 'TotalAssets'],
+        'normalize': lambda v: v/1_000_000 if v > 1_000_000_000 else v
+    },
+    # === الفائدة ===
+    'InterestExpense': {
+        'preferred': ['InterestExpense', 'Interest Expense',
+                      'InterestExpense_Hierarchy'],
+        'skip': ['InterestCostsIncurred', 'InterestPaidNet'],
+        'skip_condition': lambda v: v > 1_000_000_000
+    },
+    # === الاستثمار الرأسمالي ===
+    'CapEx': {
+        'preferred': ['PaymentsToAcquirePropertyPlantAndEquipment'],
+        'normalize': lambda v: v/1_000_000 if v > 1_000_000_000 else v,
+        'skip': ['CapitalExpenditures'],  # هذا بالدولار
+    },
+}
+def get_canonical_value(concept_key, raw_sec_data, year):
+    config = CANONICAL_LABEL_PRIORITY[concept_key]
+    candidates = {}
+    for label in config['preferred']:
+        val = raw_sec_data.get(label, {}).get(year)
+        if val is not None and val > 0:
+            # تطبيع الوحدة إذا لزم
+            if 'normalize' in config:
+                val = config['normalize'](val)
+            elif val > 1_000_000_000:
+                val = val / 1_000_000  # تلقائي
+            candidates[label] = val
+    if not candidates:
+        raise MissingDataError(f'{concept_key} not found for {year}')
+    # اختر أول قيمة من القائمة المفضلة
+    return candidates[list(candidates.keys())[0]]
+6. بوابة التحقق الإلزامية (Mandatory Validation Gate)
+بعد استخراج كل قيمة، يجب تطبيق هذه الفحوصات قبل أي حساب:
+النسبة
+النطاق المقبول
+علامة وحدة خاطئة
+الإجراء عند الخطأ
+ROE
+-0.5 → 3.0 (أي -50% إلى 300%)
+< 0.01 أو > 5.0
+HALT + UNIT_ERROR
+Cost_of_Debt
+0.01 → 0.25 (1% إلى 25%)
+< 0.001
+HALT + UNIT_ERROR
+EV/EBITDA
+1x → 150x
+NaN أو > 500x
+HALT + LOG
+Gross Margin
+-0.5 → 1.0 (أي ≤ 100%)
+> 1.0 أو < -0.5
+HALT + UNIT_ERROR
+D/E Ratio
+-50 → 50
+> 1000 أو NaN
+FLAG + WARN
+Asset Turnover
+0.01 → 5.0
+> 100
+HALT + UNIT_ERROR
+Fair Value / Share
+0.1× → 10× السعر الحالي
+< 0.1× أو > 10×
+FLAG IMPLAUSIBLE
+VALIDATION_RULES = {
+    'ROE':           {'min': -0.5,  'max': 5.0,   'action': 'HALT'},
+    'cost_of_debt':  {'min': 0.005, 'max': 0.30,  'action': 'HALT'},
+    'ev_ebitda':     {'min': 0.5,   'max': 150.0, 'action': 'HALT'},
+    'gross_margin':  {'min': -0.5,  'max': 1.0,   'action': 'HALT'},
+    'asset_turnover':{'min': 0.01,  'max': 10.0,  'action': 'HALT'},
+    'fair_value':    {'min_ratio': 0.1, 'max_ratio': 10.0, 'action': 'FLAG'},
+}
+def validate_ratio(name, value, current_price=None):
+    rule = VALIDATION_RULES.get(name, {})
+    if not rule: return value
+    if 'min' in rule and (value < rule['min'] or value > rule['max']):
+        if rule['action'] == 'HALT':
+            raise UnitMismatchError(
+                f'{name}={value:.6f} خارج النطاق [{rule["min"]},{rule["max"]}]'
+                f' → خطأ وحدة محتمل'
+            )
+7. جدول تأثير الإصلاح المتوقع
+النسبة
+الشركة
+القيمة الخاطئة الحالية
+القيمة الصحيحة المتوقعة
+ROE
+AAPL 2024
+0.00152 ❌
+~152% ✅
+ROE
+JPM 2023
+1.51×10⁻¹⁰ ❌
+~15.1% ✅
+ROE
+TSLA 2023
+2.39×10⁻⁷ ❌
+~23.9% ✅
+Cost_of_Debt
+JPM 2023
+2.09×10⁻⁷ ❌
+~3.2% ✅
+Cost_of_Debt
+TSLA 2020
+2.52×10⁻⁸ ❌
+~5.5% ✅
+EV/EBITDA
+AAPL (كل السنوات)
+NaN ❌
+15x → 50x ✅
+Gross Margin
+TSLA 2023
+غير موثوق ❌
+~17.6% ✅
+Balance Sheet
+TSLA (6 سنوات)
+فجوة -44K إلى -82K ❌
+توازن تام ✅
+8. خطة التنفيذ المرحلية
+المرحلة الأولى: إضافة القاموس (يوم واحد)
+إضافة CANONICAL_LABEL_PRIORITY كملف constants.py منفصل
+تعديل دالة get_raw_value() لتستدعي القاموس أولاً قبل أي extraction
+إضافة detect_and_normalize() كطبقة وسيطة إلزامية
+المرحلة الثانية: إضافة Validation Gate (يوم واحد)
+إضافة validate_ratio() بعد كل حساب مباشرة
+تحويل HALT إلى exception يوقف الحساب ويسجل UNIT_ERROR
+إضافة عمود data_source في كل ورقة (Canonical_Label_Used)
+المرحلة الثالثة: اختبار الرجعي (يوم واحد)
+إعادة تشغيل AAPL/JPM/TSLA والتحقق من جدول الأثر (القسم 7)
+قبول النتيجة فقط إذا: ROE و Cost_of_Debt ضمن النطاق المقبول
+تحقق من Balance Sheet = 0 فجوة لكل سنوات TSLA
+9. معيار قبول التسليم (Acceptance Criteria)
+لا يُعتبر الإصلاح مكتملاً إلا إذا تحققت جميع الشروط التالية:
+#
+شرط القبول
+الشركة
+الهدف
+1
+ROE بين 1% و 300% لكل سنوات الثلاث شركات
+AAPL/JPM/TSLA
+100%
+2
+Cost_of_Debt بين 1% و 20% لكل شركة وسنة
+AAPL/JPM/TSLA
+100%
+3
+EV/EBITDA بين 5x و 200x (لا NaN)
+AAPL/JPM/TSLA
+100%
+4
+Balance Sheet توازن تام = 0 فجوة لـ TSLA كل السنوات
+TSLA
+6/6
+5
+Fair_Value ضمن 10× السعر السوقي الحالي
+AAPL/TSLA
+100%
+6
+Gross Margin بين -50% و 100% (لا تتجاوز 100%)
+TSLA
+6/6
+10. ملاحظة ختامية
+هذا الإصلاح لا يتطلب تغيير منطق الحساب ولا تحديث النماذج. البيانات صحيحة 100%. المطلوب فقط: قاموس أولويات + كاشف وحدات + بوابة تحقق. هذه التعديلات الثلاثة تحل 100% من الأخطاء الموثقة في التقارير السابقة.
+إعداد: نظام تدقيق CODEX  |  فبراير 2026

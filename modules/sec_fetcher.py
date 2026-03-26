@@ -9,6 +9,7 @@ SEC API Module - Ø¬Ø§Ù„Ø¨ Ø¨ÙŠØ§Ù†Ø§Øª SEC Ù…Ø­Ø³Ù
 """
 import requests
 import traceback
+import copy
 from .ratio_formats import canonicalize_ratio_value, format_ratio_value, get_ratio_metadata
 import time
 import re
@@ -51,6 +52,10 @@ except Exception:
 
 from .sec_auto_learner import SECAutoLearner
 from .institutional import InstitutionalFinancialIntelligenceEngine, EngineConfig
+try:
+    from .financial_analysis_system import FinancialAnalysisSystem
+except Exception:
+    FinancialAnalysisSystem = None
 
 class SECDataFetcher:
     # Canonical label priorities requested by user:
@@ -137,6 +142,42 @@ class SECDataFetcher:
         'unknown': set(),
     }
 
+    SUB_SECTOR_TO_PRIMARY = {
+        'software_saas': 'technology',
+        'hardware_platform': 'technology',
+        'semiconductor_fabless': 'technology',
+        'commercial_bank': 'bank',
+        'investment_bank': 'bank',
+        'insurance_life': 'insurance',
+        'insurance_pc': 'insurance',
+        'insurance_broker': 'insurance',
+        'integrated_oil': 'industrial',
+        'consumer_staples': 'industrial',
+        'ev_automaker': 'industrial',
+    }
+
+    SUB_SECTOR_RATIO_BLOCKLIST = {
+        'commercial_bank': set(SECTOR_RATIO_BLOCKLIST['bank']),
+        'investment_bank': set(SECTOR_RATIO_BLOCKLIST['bank']) | {
+            'loan_to_deposit_ratio',
+            'net_interest_margin',
+        },
+        'insurance_life': (set(SECTOR_RATIO_BLOCKLIST['insurance']) - {'fcf_yield'}) | {
+            'combined_proxy',
+        },
+        'insurance_pc': set(SECTOR_RATIO_BLOCKLIST['insurance']) - {'fcf_yield'},
+        'insurance_broker': set(SECTOR_RATIO_BLOCKLIST['industrial']) | {
+            'combined_proxy', 'capital_adequacy_proxy', 'net_income_to_assets', 'equity_ratio',
+            'net_interest_margin', 'loan_to_deposit_ratio', 'capital_ratio_proxy',
+        },
+        'software_saas': set(SECTOR_RATIO_BLOCKLIST['technology']),
+        'hardware_platform': set(SECTOR_RATIO_BLOCKLIST['technology']),
+        'semiconductor_fabless': set(SECTOR_RATIO_BLOCKLIST['technology']),
+        'integrated_oil': set(SECTOR_RATIO_BLOCKLIST['industrial']),
+        'consumer_staples': set(SECTOR_RATIO_BLOCKLIST['industrial']),
+        'ev_automaker': set(SECTOR_RATIO_BLOCKLIST['industrial']),
+    }
+
     SECTOR_STRATEGIC_BLOCKLIST = {
         'bank': {
             'CCC_Days', 'Inventory_Days', 'AR_Days', 'AP_Days', 'Op_Leverage',
@@ -173,6 +214,28 @@ class SECDataFetcher:
             'Net_Income_to_Assets', 'Equity_Ratio',
         },
         'unknown': set(),
+    }
+
+    SUB_SECTOR_STRATEGIC_BLOCKLIST = {
+        'commercial_bank': set(SECTOR_STRATEGIC_BLOCKLIST['bank']),
+        'investment_bank': set(SECTOR_STRATEGIC_BLOCKLIST['bank']) | {
+            'Loan_to_Deposit_Ratio',
+            'Net_Interest_Margin',
+        },
+        'insurance_life': (set(SECTOR_STRATEGIC_BLOCKLIST['insurance']) - {'FCF', 'FCF_Yield', 'FCF_per_Share'}) | {
+            'Combined_Ratio_Proxy',
+        },
+        'insurance_pc': set(SECTOR_STRATEGIC_BLOCKLIST['insurance']) - {'FCF', 'FCF_Yield', 'FCF_per_Share'},
+        'insurance_broker': set(SECTOR_STRATEGIC_BLOCKLIST['industrial']) | {
+            'Combined_Ratio_Proxy', 'Capital_Adequacy_Proxy', 'Net_Income_to_Assets', 'Equity_Ratio',
+            'Net_Interest_Margin', 'Loan_to_Deposit_Ratio', 'Capital_Ratio_Proxy',
+        },
+        'software_saas': set(SECTOR_STRATEGIC_BLOCKLIST['technology']),
+        'hardware_platform': set(SECTOR_STRATEGIC_BLOCKLIST['technology']),
+        'semiconductor_fabless': set(SECTOR_STRATEGIC_BLOCKLIST['technology']),
+        'integrated_oil': set(SECTOR_STRATEGIC_BLOCKLIST['industrial']),
+        'consumer_staples': set(SECTOR_STRATEGIC_BLOCKLIST['industrial']),
+        'ev_automaker': set(SECTOR_STRATEGIC_BLOCKLIST['industrial']),
     }
 
     MODERN_METRIC_ALIASES = {
@@ -225,6 +288,49 @@ class SECDataFetcher:
         'AccountsPayableCurrent': ('Accounts Payable', 'Balance Sheet'),
     }
 
+    @staticmethod
+    def _truthy_env(name: str) -> bool:
+        v = str(os.environ.get(name, '')).strip().lower()
+        return v in ('1', 'true', 'yes', 'on')
+
+    def _sanitize_proxy_environment(self):
+        """
+        Protect SEC connectivity from broken system proxy settings.
+        If proxy points to loopback discard/port (e.g. 127.0.0.1:9), force direct mode.
+        """
+        if self._truthy_env('SEC_ALLOW_SYSTEM_PROXY'):
+            return
+
+        proxy_keys = ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy')
+        bad_markers = ('127.0.0.1:9', 'localhost:9')
+        current = {k: str(os.environ.get(k, '')).strip() for k in proxy_keys}
+        has_broken_proxy = any(v and any(m in v.lower() for m in bad_markers) for v in current.values())
+        if not has_broken_proxy:
+            return
+
+        disabled = {}
+        for k in proxy_keys:
+            if os.environ.get(k):
+                disabled[k] = os.environ.get(k)
+                os.environ.pop(k, None)
+
+        no_proxy_tokens = set(
+            t.strip() for t in str(os.environ.get('NO_PROXY', '')).split(',') if str(t).strip()
+        )
+        no_proxy_tokens.update({
+            'localhost',
+            '127.0.0.1',
+            '::1',
+            '.sec.gov',
+            'sec.gov',
+            'www.sec.gov',
+            'data.sec.gov',
+        })
+        os.environ['NO_PROXY'] = ','.join(sorted(no_proxy_tokens))
+        os.environ['no_proxy'] = os.environ['NO_PROXY']
+        self._disabled_proxy_env = disabled
+        print("🌐 Proxy safeguard: disabled broken loopback proxy for direct SEC access.")
+
     def __init__(self, user_agent_email='mihoubmessaoud@yahoo.fr'):
         try:
             if hasattr(sys.stdout, 'reconfigure'):
@@ -248,10 +354,17 @@ class SECDataFetcher:
         self._active_ticker = None
         self._active_start_year = None
         self._active_end_year = None
+        self._fetch_request_cache = {}
+        self._fetch_request_cache_path = Path('outputs') / 'fetch_request_cache.json'
+        self._submissions_cache = {}
+        self._submissions_cache_path = Path('outputs') / 'submissions_cache.json'
+        self._disabled_proxy_env = {}
         self.institutional_engine = None
         self.direct_engine = None
         self._sector_memory_path = Path('exports') / 'sector_profile_memory.json'
         self._sector_profile_memory = {}
+        self._sanitize_proxy_environment()
+        self._init_yfinance_cache()
         
         # âœ… NEW: Ù†Ø¸Ø§Ù… Ø§Ù„ØªØ¹Ù„Ù… Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ
         try:
@@ -281,9 +394,210 @@ class SECDataFetcher:
             )
         except Exception:
             self.direct_engine = None
+        try:
+            self.financial_analysis_system = FinancialAnalysisSystem() if FinancialAnalysisSystem is not None else None
+        except Exception:
+            self.financial_analysis_system = None
         self._load_sector_profile_memory()
+        self._load_fetch_request_cache()
+        self._load_submissions_cache()
         
         self._load_companies()
+
+    def _make_fetch_cache_key(self, ticker: str, start_year: int, end_year: int, filing_type: str) -> str:
+        t = str(ticker or '').upper().strip()
+        return f"{t}|{int(start_year)}|{int(end_year)}|{str(filing_type or '').upper().strip()}"
+
+    def _load_fetch_request_cache(self):
+        try:
+            p = self._fetch_request_cache_path
+            if p.exists():
+                payload = json.loads(p.read_text(encoding='utf-8'))
+                if isinstance(payload, dict):
+                    self._fetch_request_cache = payload
+        except Exception:
+            self._fetch_request_cache = {}
+
+    def _save_fetch_request_cache(self):
+        try:
+            p = self._fetch_request_cache_path
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(
+                json.dumps(self._fetch_request_cache, ensure_ascii=False),
+                encoding='utf-8'
+            )
+        except Exception:
+            pass
+
+    def _load_submissions_cache(self):
+        try:
+            p = self._submissions_cache_path
+            if p.exists():
+                payload = json.loads(p.read_text(encoding='utf-8'))
+                if isinstance(payload, dict):
+                    self._submissions_cache = payload
+        except Exception:
+            self._submissions_cache = {}
+
+    def _save_submissions_cache(self):
+        try:
+            p = self._submissions_cache_path
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(
+                json.dumps(self._submissions_cache, ensure_ascii=False),
+                encoding='utf-8'
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _normalize_year_keyed_dict(payload):
+        if not isinstance(payload, dict):
+            return payload
+        out = {}
+        for k, v in payload.items():
+            nk = k
+            try:
+                nk = int(k)
+            except Exception:
+                nk = k
+            out[nk] = v
+        return out
+
+    def _normalize_cached_fetch_result(self, result):
+        if not isinstance(result, dict):
+            return result
+        normalized = copy.deepcopy(result)
+        for key in ('data_by_year', 'financial_ratios', 'strategic_analysis', 'core_ratio_results', 'core_strategy_results'):
+            normalized[key] = self._normalize_year_keyed_dict(normalized.get(key) or {})
+
+        dl = normalized.get('data_layers') or {}
+        if isinstance(dl, dict):
+            for lk in ('layer1_by_year', 'layer2_by_year', 'layer3_by_year', 'layer4_by_year'):
+                dl[lk] = self._normalize_year_keyed_dict(dl.get(lk) or {})
+            extra = dl.get('extra_layers_by_year') or {}
+            if isinstance(extra, dict):
+                fixed_extra = {}
+                for exk, exv in extra.items():
+                    fixed_extra[exk] = self._normalize_year_keyed_dict(exv or {})
+                dl['extra_layers_by_year'] = fixed_extra
+            normalized['data_layers'] = dl
+        return normalized
+
+    @staticmethod
+    def _fas_to_num(value):
+        try:
+            if value is None:
+                return None
+            if isinstance(value, str):
+                vv = value.strip().replace(',', '')
+                if vv == '' or vv.lower() in {'nan', 'na', 'n/a', 'none', '--'}:
+                    return None
+                return float(vv)
+            return float(value)
+        except Exception:
+            return None
+
+    def _fas_pick(self, row: dict, keys: list):
+        if not isinstance(row, dict):
+            return None
+        for k in keys:
+            if k in row:
+                v = self._fas_to_num(row.get(k))
+                if v is not None:
+                    return v
+        return None
+
+    def _build_fas_raw_metrics(self, data_by_year: dict, financial_ratios: dict) -> dict:
+        years = sorted(
+            {
+                int(y) for y in (list((data_by_year or {}).keys()) + list((financial_ratios or {}).keys()))
+                if str(y).lstrip('-').isdigit()
+            }
+        )
+        out = {}
+        ratio_growth_rev = {}
+        ratio_growth_ni = {}
+        prev_rev = None
+        prev_ni = None
+
+        def _set(metric_name: str, year: int, value):
+            out.setdefault(metric_name, {})[int(year)] = value
+
+        for y in years:
+            drow = (data_by_year or {}).get(y, {}) or {}
+            rrow = (financial_ratios or {}).get(y, {}) or {}
+
+            rev = self._fas_pick(drow, ['Revenues', 'SalesRevenueNet', 'Revenue', 'TotalRevenue'])
+            ni = self._fas_pick(drow, ['NetIncomeLoss', 'NetIncome', 'ProfitLoss'])
+            capex_raw = self._fas_pick(drow, ['PaymentsToAcquirePropertyPlantAndEquipment', 'CapitalExpenditures', 'CapEx'])
+            rd_raw = self._fas_pick(drow, ['ResearchAndDevelopmentExpense', 'ResearchDevelopmentExpense', 'RAndDExpense'])
+
+            capex_to_rev = None
+            if rev not in (None, 0) and capex_raw is not None:
+                capex_to_rev = abs(capex_raw) / abs(rev)
+            rd_to_rev = None
+            if rev not in (None, 0) and rd_raw is not None:
+                rd_to_rev = rd_raw / rev
+
+            if prev_rev not in (None, 0) and rev is not None:
+                ratio_growth_rev[y] = (rev - prev_rev) / abs(prev_rev)
+            if prev_ni not in (None, 0) and ni is not None:
+                ratio_growth_ni[y] = (ni - prev_ni) / abs(prev_ni)
+            if rev is not None:
+                prev_rev = rev
+            if ni is not None:
+                prev_ni = ni
+
+            roe = self._fas_pick(rrow, ['roe'])
+            wacc = self._fas_pick(rrow, ['wacc'])
+            roe_spread = (roe - wacc) if (roe is not None and wacc is not None) else None
+
+            _set('gross_margin', y, self._fas_pick(rrow, ['gross_margin']))
+            _set('net_margin', y, self._fas_pick(rrow, ['net_margin']))
+            _set('operating_margin', y, self._fas_pick(rrow, ['operating_margin']))
+            _set('roic', y, self._fas_pick(rrow, ['roic']))
+            _set('fcf_yield', y, self._fas_pick(rrow, ['fcf_yield']))
+            _set('asset_turnover', y, self._fas_pick(rrow, ['asset_turnover']))
+            _set('interest_coverage', y, self._fas_pick(rrow, ['interest_coverage']))
+            _set('altman_z', y, self._fas_pick(rrow, ['altman_z_score', 'altman_z']))
+            _set('leverage', y, self._fas_pick(rrow, ['debt_to_equity', 'debt_to_assets', 'net_debt_ebitda']))
+            _set('nim', y, self._fas_pick(rrow, ['net_interest_margin', 'nim']))
+            _set('roe_spread', y, roe_spread)
+            _set('capex_to_revenue', y, capex_to_rev)
+            _set('rd_to_revenue', y, rd_to_rev)
+
+            # strict integrity metrics
+            _set('ap_days', y, self._fas_pick(rrow, ['ap_days', 'days_payable_outstanding']))
+            _set('dso', y, self._fas_pick(rrow, ['days_sales_outstanding', 'dso']))
+            _set('inventory_days', y, self._fas_pick(rrow, ['inventory_days', 'days_inventory_outstanding']))
+
+        out['revenue_growth'] = ratio_growth_rev
+        out['net_income_growth'] = ratio_growth_ni
+        return out
+
+    def _run_financial_analysis_system(self, ticker: str, data_by_year: dict, financial_ratios: dict) -> dict:
+        if self.financial_analysis_system is None:
+            return {'status': 'DISABLED', 'reason': 'FINANCIAL_ANALYSIS_SYSTEM_NOT_AVAILABLE'}
+        try:
+            raw_metrics = self._build_fas_raw_metrics(data_by_year or {}, financial_ratios or {})
+            return self.financial_analysis_system.analyze(
+                ticker=str(ticker or '').upper(),
+                raw_metrics_by_year=raw_metrics,
+            )
+        except Exception as exc:
+            return {'status': 'ERROR', 'reason': f'FINANCIAL_ANALYSIS_SYSTEM_FAILED: {exc}'}
+
+    def _init_yfinance_cache(self):
+        if yf is None:
+            return
+        try:
+            cache_dir = Path('outputs') / 'yf_cache'
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            if hasattr(yf, 'set_tz_cache_location'):
+                yf.set_tz_cache_location(str(cache_dir.resolve()))
+        except Exception:
+            pass
 
     def _load_sector_profile_memory(self):
         try:
@@ -334,6 +648,110 @@ class SECDataFetcher:
         if sic_key and isinstance(by_sic.get(sic_key), str):
             return by_sic.get(sic_key)
         return inferred
+
+    def _resolve_sub_sector_profile(
+        self,
+        company_name: str,
+        ticker: str,
+        sector_profile: str,
+        sic_description: str = '',
+    ) -> str:
+        t = str(ticker or '').upper().strip()
+        txt = f"{company_name or ''} {sic_description or ''}".lower()
+        sic_txt = str(sic_description or '').lower()
+        sector = str(sector_profile or '').strip().lower()
+
+        ticker_map = {
+            'NVDA': 'semiconductor_fabless',
+            'AMD': 'semiconductor_fabless',
+            'QCOM': 'semiconductor_fabless',
+            'MRVL': 'semiconductor_fabless',
+            'AVGO': 'semiconductor_fabless',
+            'MSFT': 'software_saas',
+            'ORCL': 'software_saas',
+            'CRM': 'software_saas',
+            'SNOW': 'software_saas',
+            'ADBE': 'software_saas',
+            'AAPL': 'hardware_platform',
+            'DELL': 'hardware_platform',
+            'HPQ': 'hardware_platform',
+            'JPM': 'commercial_bank',
+            'BAC': 'commercial_bank',
+            'WFC': 'commercial_bank',
+            'C': 'commercial_bank',
+            'USB': 'commercial_bank',
+            'MS': 'investment_bank',
+            'GS': 'investment_bank',
+            'BX': 'investment_bank',
+            'KKR': 'investment_bank',
+            'SCHW': 'investment_bank',
+            'PRU': 'insurance_life',
+            'MET': 'insurance_life',
+            'LNC': 'insurance_life',
+            'AFL': 'insurance_life',
+            'AIG': 'insurance_pc',
+            'PGR': 'insurance_pc',
+            'TRV': 'insurance_pc',
+            'ALL': 'insurance_pc',
+            'CB': 'insurance_pc',
+            'AON': 'insurance_broker',
+            'MMC': 'insurance_broker',
+            'WTW': 'insurance_broker',
+            'RYAN': 'insurance_broker',
+            'XOM': 'integrated_oil',
+            'CVX': 'integrated_oil',
+            'BP': 'integrated_oil',
+            'SHEL': 'integrated_oil',
+            'KO': 'consumer_staples',
+            'PEP': 'consumer_staples',
+            'PG': 'consumer_staples',
+            'CL': 'consumer_staples',
+            'KMB': 'consumer_staples',
+            'TSLA': 'ev_automaker',
+            'NIO': 'ev_automaker',
+            'RIVN': 'ev_automaker',
+            'LCID': 'ev_automaker',
+        }
+        if t in ticker_map:
+            return ticker_map[t]
+
+        if sector == 'technology':
+            if 'semiconductor' in txt or 'micro devices' in txt:
+                return 'semiconductor_fabless'
+            if any(tok in txt for tok in ('software', 'cloud', 'saas', 'productivity', 'enterprise applications')):
+                return 'software_saas'
+            if any(tok in txt for tok in ('iphone', 'mac', 'hardware', 'consumer electronics')):
+                return 'hardware_platform'
+        if sector == 'bank':
+            if any(tok in txt for tok in ('investment bank', 'broker', 'securities', 'capital markets', 'asset management')):
+                return 'investment_bank'
+            return 'commercial_bank'
+        if sector == 'insurance':
+            if 'insurance agents' in sic_txt or any(tok in txt for tok in ('broker', 'brokerage', 'risk services', 'reinsurance brokerage')):
+                return 'insurance_broker'
+            if 'life insurance' in sic_txt or any(tok in txt for tok in ('life insurance', 'annuities', 'retirement services')):
+                return 'insurance_life'
+            return 'insurance_pc'
+        if sector == 'industrial':
+            if 'petroleum' in sic_txt or any(tok in txt for tok in ('oil', 'petroleum', 'upstream', 'downstream', 'refining')):
+                return 'integrated_oil'
+            if any(tok in txt for tok in ('beverage', 'consumer products', 'soft drinks', 'cola')):
+                return 'consumer_staples'
+            if any(tok in txt for tok in ('electric vehicle', 'ev', 'automotive')):
+                return 'ev_automaker'
+        return sector or 'unknown'
+
+    def _resolve_sector_ratio_blocklist(self, sector_profile: str, sub_sector_profile: str = None) -> set:
+        sub = str(sub_sector_profile or '').strip().lower()
+        if sub in self.SUB_SECTOR_RATIO_BLOCKLIST:
+            return set(self.SUB_SECTOR_RATIO_BLOCKLIST.get(sub, set()))
+        return set(self.SECTOR_RATIO_BLOCKLIST.get(sector_profile, set()))
+
+    def _resolve_sector_strategic_blocklist(self, sector_profile: str, sub_sector_profile: str = None) -> set:
+        sub = str(sub_sector_profile or '').strip().lower()
+        if sub in self.SUB_SECTOR_STRATEGIC_BLOCKLIST:
+            return set(self.SUB_SECTOR_STRATEGIC_BLOCKLIST.get(sub, set()))
+        return set(self.SECTOR_STRATEGIC_BLOCKLIST.get(sector_profile, set()))
 
     def _learn_sector_profile(self, ticker: str, sic_description: str, sector_profile: str):
         try:
@@ -670,8 +1088,21 @@ class SECDataFetcher:
                             best_label = lbl
                     if best_label is not None:
                         src_kind = 'canonical' if best_label in canonical_labels else 'fallback'
+                        picked_val = merged_revenue_cands[best_label]
+                        # Unit sanity fix: if revenue is far below COGS/gross profit,
+                        # try a 10x correction before giving up (common SEC unit slip).
+                        try:
+                            pv = float(picked_val)
+                            if cogs_ref is not None and pv > 0:
+                                if pv < (0.5 * cogs_ref) and (pv * 10.0) >= (0.8 * cogs_ref):
+                                    picked_val = pv * 10.0
+                            if gross_ref is not None and pv > 0:
+                                if pv <= gross_ref and (pv * 10.0) > gross_ref:
+                                    picked_val = max(picked_val, pv * 10.0)
+                        except Exception:
+                            pass
                         _learn_mapping_once(concept_key, best_label)
-                        return merged_revenue_cands[best_label], best_label, src_kind
+                        return picked_val, best_label, src_kind
 
             picked_abs = self.pick_correct_unit(canonical_cands)
             if picked_abs is None:
@@ -759,6 +1190,107 @@ class SECDataFetcher:
                 return fv
         return fv
 
+    def _normalize_concept_key(self, text):
+        s = str(text or '').strip().lower()
+        if not s:
+            return ''
+        s = re.sub(r'[\s\-_:/\.\(\)\[\]]+', '', s)
+        return s
+
+    def _tokenize_concept_key(self, text):
+        s = str(text or '').strip()
+        if not s:
+            return []
+        # split CamelCase + separators
+        s = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', s)
+        parts = re.split(r'[^A-Za-z0-9]+', s.lower())
+        return [p for p in parts if p]
+
+    def _semantic_bucket_hints(self):
+        return {
+            'revenue': {'need_any': {'revenue', 'sales'}, 'exclude': {'cost', 'expense', 'tax', 'interest', 'per', 'share'}},
+            'cogs': {'need_any': {'cost', 'cogs'}, 'need_all_one_of': [{'revenue'}, {'sales'}, {'goods'}], 'exclude': {'operating', 'interest', 'tax'}},
+            'gross_profit': {'need_any': {'gross', 'profit'}, 'exclude': {'comprehensive'}},
+            'operating_income': {'need_any': {'operating', 'income', 'profit'}, 'exclude': {'comprehensive', 'other', 'tax'}},
+            'net_income': {'need_any': {'net', 'income', 'profit'}, 'exclude': {'comprehensive', 'other', 'tax', 'interest'}},
+            'assets': {'need_any': {'assets', 'asset'}, 'exclude': {'current', 'noncurrent'}},
+            'current_assets': {'need_any': {'current', 'assets', 'asset'}, 'exclude': {'noncurrent'}},
+            'liabilities': {'need_any': {'liabilities', 'liability'}, 'exclude': {'current', 'noncurrent', 'andstockholdersequity'}},
+            'current_liabilities': {'need_any': {'current', 'liabilities', 'liability'}, 'exclude': {'noncurrent'}},
+            'equity': {'need_any': {'equity', 'stockholders'}, 'exclude': {'liabilitiesandstockholdersequity'}},
+            'ar': {'need_any': {'receivable', 'receivables', 'accounts'}, 'exclude': {'allowance', 'doubtful'}},
+            'ap': {'need_any': {'payable', 'payables', 'accounts'}, 'exclude': {'interest'}},
+            'inventory': {'need_any': {'inventory', 'inventories'}, 'exclude': set()},
+            'cash': {'need_any': {'cash', 'cashequivalents'}, 'exclude': {'interest'}},
+            'ocf': {'need_any': {'operating', 'cash', 'activities'}, 'exclude': {'investing', 'financing'}},
+            'capex': {'need_any': {'acquire', 'property', 'plant', 'equipment', 'capital', 'expenditures'}, 'exclude': {'proceeds'}},
+            'shares': {'need_any': {'shares', 'share', 'weightedaverage'}, 'exclude': {'price'}},
+            'interest_expense': {'need_any': {'interest', 'expense', 'costs'}, 'exclude': {'income'}},
+            'depreciation': {'need_any': {'depreciation', 'amortization', 'depletion'}, 'exclude': set()},
+            'dividends': {'need_any': {'dividend', 'dividends', 'paid'}, 'exclude': {'per', 'share'}},
+            'net_interest_income': {'need_any': {'net', 'interest', 'income'}, 'exclude': {'expense'}},
+            'interest_income': {'need_any': {'interest', 'income'}, 'exclude': {'expense'}},
+            'noninterest_income': {'need_any': {'noninterest', 'income'}, 'exclude': {'expense'}},
+            'noninterest_expense': {'need_any': {'noninterest', 'expense'}, 'exclude': {'income'}},
+            'deposits': {'need_any': {'deposit', 'deposits'}, 'exclude': {'interestexpense'}},
+            'loans': {'need_any': {'loan', 'loans', 'leases', 'receivable'}, 'exclude': {'allowance'}},
+            'cet1': {'need_any': {'cet1', 'tier1', 'capital'}, 'exclude': {'ratio'}},
+        }
+
+    def _build_semantic_concept_index(self, data):
+        idx = {
+            'norm_to_values': {},
+            'rows': [],
+        }
+        for k, v in (data or {}).items():
+            fv = self._safe_float(v)
+            if fv is None:
+                continue
+            norm = self._normalize_concept_key(k)
+            toks = set(self._tokenize_concept_key(k))
+            norm_fv = self._detect_and_normalize(fv)
+            lk = str(k or '').lower()
+            if (
+                isinstance(norm_fv, (int, float))
+                and not any(tok in lk for tok in ('share', 'per', 'ratio', 'margin', 'turnover', 'days', 'yield', 'score'))
+                and abs(norm_fv) >= 10_000_000.0
+            ):
+                norm_fv = norm_fv / 1_000_000.0
+            row = {'key': k, 'value': float(norm_fv), 'norm': norm, 'tokens': toks}
+            idx['rows'].append(row)
+            if norm and norm not in idx['norm_to_values']:
+                idx['norm_to_values'][norm] = float(norm_fv)
+        return idx
+
+    def _semantic_pick_bucket_value(self, bucket, index):
+        hints = self._semantic_bucket_hints().get(str(bucket or '').lower())
+        if not hints:
+            return None, None
+        need_any = set(hints.get('need_any') or [])
+        exclude = set(hints.get('exclude') or [])
+        need_all_one_of = hints.get('need_all_one_of') or []
+        best = None
+        for row in (index or {}).get('rows', []):
+            toks = row.get('tokens') or set()
+            if exclude and any(t in toks for t in exclude):
+                continue
+            if need_any and not any(t in toks for t in need_any):
+                continue
+            ok_groups = True
+            for grp in need_all_one_of:
+                if grp and not any(g in toks for g in grp):
+                    ok_groups = False
+                    break
+            if not ok_groups:
+                continue
+            overlap = len(toks & need_any) if need_any else 1
+            score = overlap - (0.0000001 * abs(row.get('value', 0.0)))
+            if (best is None) or (score > best[0]):
+                best = (score, row)
+        if best is None:
+            return None, None
+        return best[1].get('value'), best[1].get('key')
+
     def _select_per_share_scaled_value(self, numerator, shares, price_hint=None, target_ratio=None):
         """
         Choose the most plausible per-share value under mixed SEC scales.
@@ -772,7 +1304,7 @@ class SECDataFetcher:
         if num is None or sh in (None, 0):
             return None
 
-        num_scales = [1.0, 1_000.0, 1_000_000.0]
+        num_scales = [1e-6, 1e-3, 1.0, 1_000.0, 1_000_000.0]
         sh_scales = [1.0, 1_000.0, 1_000_000.0]
         candidates = []
         for ns in num_scales:
@@ -1884,6 +2416,59 @@ class SECDataFetcher:
                     row['InterestExpense_Hierarchy'] = best_val
         return out
 
+    def _needs_companyconcept_backfill(self, layer1_by_year, start_year, end_year):
+        """
+        Run expensive companyconcept backfill only when core annual anchors are missing.
+        This preserves institutional quality while avoiding unnecessary network-heavy calls.
+        """
+        rows = layer1_by_year or {}
+        years = range(int(start_year), int(end_year) + 1)
+
+        def _has_any(row, keys):
+            for k in keys:
+                v = (row or {}).get(k)
+                if isinstance(v, (int, float)):
+                    return True
+            return False
+
+        # Trigger only for ratio-critical anchors, not for every secondary concept.
+        revenue_keys = ['Revenues', 'Revenue', 'SalesRevenueNet', 'RevenueFromContractWithCustomerExcludingAssessedTax']
+        net_income_keys = ['NetIncomeLoss', 'NetIncome', 'ProfitLoss']
+        assets_keys = ['Assets', 'TotalAssets']
+        liabilities_keys = ['Liabilities', 'TotalLiabilities']
+        equity_keys = ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest', 'TotalEquity']
+
+        severe_missing_years = 0
+        total_years = 0
+        for y in years:
+            row = rows.get(int(y), {}) or {}
+            total_years += 1
+
+            # Very sparse year row can justify backfill, but keep threshold conservative.
+            if len(row) < 4:
+                severe_missing_years += 1
+                continue
+
+            has_revenue = _has_any(row, revenue_keys)
+            has_net_income = _has_any(row, net_income_keys)
+            has_assets = _has_any(row, assets_keys)
+            has_capital_side = _has_any(row, liabilities_keys) or _has_any(row, equity_keys)
+
+            # A year is "severely missing" only when multiple anchor blocks are absent.
+            missing_blocks = sum([
+                0 if has_revenue else 1,
+                0 if has_net_income else 1,
+                0 if has_assets else 1,
+                0 if has_capital_side else 1,
+            ])
+            if missing_blocks >= 2:
+                severe_missing_years += 1
+
+        # Run expensive backfill only when the gap is meaningful across period.
+        if total_years <= 1:
+            return severe_missing_years >= 1
+        return severe_missing_years >= 2
+
     def _fetch_companyconcept_series(self, cik_padded, taxonomy, concept, start_year, end_year):
         """
         Direct SEC companyconcept fetch:
@@ -2036,7 +2621,12 @@ class SECDataFetcher:
             fv = self._safe_float(v)
             if fv is None:
                 return None
-            nv = self._normalize_million_value(abs(fv))
+            fv = abs(fv)
+            # Interest expense in system outputs is expected in million-USD scale.
+            # Values like 247000000 are almost always raw USD and must be normalized.
+            if fv >= 1_000_000.0:
+                fv = fv / 1_000_000.0
+            nv = self._normalize_million_value(fv)
             if nv is None or nv <= 0:
                 return None
             return float(nv)
@@ -2047,6 +2637,7 @@ class SECDataFetcher:
             'InterestExpense_Hierarchy',
             'InterestExpenseDebt',
             'InterestAndDebtExpense',
+            'InterestExpenseAndDebtExpense',
             'InterestCostsIncurred',
             'InterestPaidNet',
             'Cash paid for interest',
@@ -2057,6 +2648,7 @@ class SECDataFetcher:
                 'InterestExpenseDebt',
                 'InterestExpense',
                 'InterestAndDebtExpense',
+                'InterestExpenseAndDebtExpense',
                 'InterestPaidNet',
                 'Cash paid for interest',
             ]
@@ -2082,6 +2674,7 @@ class SECDataFetcher:
             ('us-gaap', 'InterestExpense'),
             ('us-gaap', 'InterestExpenseNonoperating'),
             ('us-gaap', 'InterestAndDebtExpense'),
+            ('us-gaap', 'InterestExpenseAndDebtExpense'),
             ('us-gaap', 'InterestExpenseDebt'),
             ('us-gaap', 'InterestCostsIncurred'),
             ('us-gaap', 'InterestPaidNet'),
@@ -2091,6 +2684,7 @@ class SECDataFetcher:
                 ('us-gaap', 'InterestExpenseDeposits'),
                 ('us-gaap', 'InterestExpenseDebt'),
                 ('us-gaap', 'InterestAndDebtExpense'),
+                ('us-gaap', 'InterestExpenseAndDebtExpense'),
                 ('us-gaap', 'InterestExpense'),
                 ('us-gaap', 'InterestPaidNet'),
             ]
@@ -2138,6 +2732,23 @@ class SECDataFetcher:
         if not candidates:
             result['missing_inputs'] = [f'{t}:{c}' for t, c in concepts]
             return result
+
+        # Outlier guard: if one candidate is orders of magnitude above the rest,
+        # prefer the sane expense concept rather than carrying a raw-USD slip.
+        positive_vals = [float(c.get('value') or 0.0) for c in candidates if self._safe_float(c.get('value')) not in (None, 0)]
+        if len(positive_vals) >= 2:
+            min_val = min(v for v in positive_vals if v > 0)
+            if min_val > 0:
+                sane_candidates = []
+                for c in candidates:
+                    cv = self._safe_float(c.get('value'))
+                    if cv is None or cv <= 0:
+                        continue
+                    if (cv / min_val) > 1000.0:
+                        continue
+                    sane_candidates.append(c)
+                if sane_candidates:
+                    candidates = sane_candidates
 
         best = max(candidates, key=lambda c: float(c.get('score') or 0.0))
         result.update({
@@ -2752,8 +3363,34 @@ class SECDataFetcher:
         all_years = sorted(set(list(ratios.keys()) + list(rows.keys()) + list(l2.keys()) + list(l4.keys())))
         ticker_ctx = str(getattr(self, '_active_ticker', '') or '').upper()
         manual_split_rules = {
-            'NVDA': {'cutoff_year': 2023, 'ratio': 10.0},
+            'NVDA': [
+                {'effective_year': 2021, 'factor': 4.0},
+                {'effective_year': 2024, 'factor': 10.0},
+            ],
         }
+
+        def _effective_split_ratio(year, market_ratio=None):
+            actions = manual_split_rules.get(ticker_ctx)
+            if actions:
+                factor = 1.0
+                for action in actions:
+                    try:
+                        effective_year = int(action.get('effective_year') or 0)
+                        split_factor = float(action.get('factor') or 1.0)
+                    except Exception:
+                        continue
+                    if split_factor > 1.0 and int(year) < effective_year:
+                        factor *= split_factor
+                if factor > 1.0:
+                    return factor
+            if market_ratio not in (None, 0):
+                try:
+                    mr = abs(float(market_ratio))
+                    if mr > 1.0:
+                        return mr
+                except Exception:
+                    pass
+            return 1.0
         allow_market_debt_override = str(os.environ.get('ALLOW_MARKET_DEBT_OVERRIDE', '0')).strip().lower() in ('1', 'true', 'yes')
         market_debt_series = {
             y: _pick_market(y, 'market:total_debt', 'yahoo:total_debt')
@@ -3061,7 +3698,10 @@ class SECDataFetcher:
             market_pe = _pick_market(year, 'market:pe_ratio', 'yahoo:pe_ratio')
             market_pb = _pick_market(year, 'market:pb_ratio', 'yahoo:pb_ratio')
             market_div_yield = _pick_market(year, 'market:dividend_yield', 'yahoo:dividend_yield')
-            split_latest_ratio = _pick_market(year, 'market:split_latest_ratio', 'yahoo:split_latest_ratio')
+            split_latest_ratio = _effective_split_ratio(
+                year,
+                _pick_market(year, 'market:split_latest_ratio', 'yahoo:split_latest_ratio'),
+            )
             payout_ratio = _pick_market(year, 'market:payout_ratio', 'yahoo:payout_ratio')
             market_bvps = _pick_market(year, 'market:book_value_per_share', 'yahoo:book_value_per_share')
 
@@ -3517,7 +4157,7 @@ class SECDataFetcher:
                         ebitda_for_ev * 1_000.0,
                         ebitda_for_ev * 1_000_000.0,
                     ]
-                    plausible_e = [c for c in e_cands if c not in (None, 0) and 1.0 <= (abs(market_ev) / abs(c)) <= 200.0]
+                    plausible_e = [c for c in e_cands if c not in (None, 0) and 1.0 <= (abs(market_ev) / abs(c)) <= 500.0]
                     if plausible_e:
                         denom = min(plausible_e, key=lambda c: abs((abs(market_ev) / abs(c)) - 25.0))
                         r['ev_ebitda'] = market_ev / denom if denom else None
@@ -3988,8 +4628,8 @@ class SECDataFetcher:
             return 'industrial'
         return 'technology'
 
-    def _apply_sector_ratio_gating(self, ratios_by_year: dict, sector_profile: str) -> dict:
-        blocked = set(self.SECTOR_RATIO_BLOCKLIST.get(sector_profile, set()))
+    def _apply_sector_ratio_gating(self, ratios_by_year: dict, sector_profile: str, sub_sector_profile: str = None) -> dict:
+        blocked = self._resolve_sector_ratio_blocklist(sector_profile, sub_sector_profile)
         if not blocked:
             return ratios_by_year or {}
         out = {}
@@ -4264,13 +4904,36 @@ class SECDataFetcher:
             if self.direct_engine is None:
                 return {'success': False, 'error': 'Direct extraction engine is unavailable.'}
 
+            # Fast path: return cached institutional result for same request window.
+            cache_key = self._make_fetch_cache_key(
+                ticker=ticker,
+                start_year=int(start_year),
+                end_year=int(end_year),
+                filing_type=req_norm,
+            )
+            cached = (self._fetch_request_cache or {}).get(cache_key)
+            if isinstance(cached, dict) and cached.get('success'):
+                update('Using cached result for identical request...')
+                return self._normalize_cached_fetch_result(cached)
+
             submissions_url = f"{self.base_url}/submissions/CIK{cik}.json"
             update('Loading submissions...')
-            r = requests.get(submissions_url, headers=self.headers, timeout=30)
-            if r.status_code != 200:
-                return {'success': False, 'error': f'SEC connection failed: HTTP {r.status_code}'}
-
-            subs = r.json()
+            subs_key = str(cik).zfill(10)
+            subs = (self._submissions_cache or {}).get(subs_key)
+            if not isinstance(subs, dict):
+                r = requests.get(submissions_url, headers=self.headers, timeout=30)
+                if r.status_code != 200:
+                    return {'success': False, 'error': f'SEC connection failed: HTTP {r.status_code}'}
+                subs = r.json()
+                try:
+                    self._submissions_cache[subs_key] = subs
+                    # keep bounded cache size
+                    while len(self._submissions_cache) > 300:
+                        oldest_key = next(iter(self._submissions_cache.keys()))
+                        self._submissions_cache.pop(oldest_key, None)
+                    self._save_submissions_cache()
+                except Exception:
+                    pass
             sic = str(subs.get('sic') or '')
             sic_description = str(subs.get('sicDescription') or '')
             recent = subs.get('filings', {}).get('recent', {})
@@ -4341,26 +5004,40 @@ class SECDataFetcher:
                 except Exception:
                     continue
 
-            out_csv = str(Path('exports/institutional') / 'SEC_Official_Statement.csv')
+            safe_ticker = re.sub(r'[^A-Za-z0-9_.-]', '', str(ticker or '').strip().upper()) or 'UNKNOWN'
+            out_csv = str(Path('exports/institutional') / f'{safe_ticker}_SEC_Official_Statement.csv')
 
             update('Running direct SEC 10-K multi-year extraction...')
-            direct_meta = self.direct_engine.extract_multi(
-                cik=cik,
-                filings=strict_10k,
-                output_csv=out_csv,
-                timeout=60,
-                required_years=None,
-                enforce_full_period=False,
-                period_start_year=int(start_year),
-                period_end_year=int(end_year),
-            )
-
-            update('Building ratios and strategic/AI inputs from direct SEC output...')
-            data_by_year = self._build_data_by_year_from_direct_csv(
-                direct_meta.get('output_csv'),
-                start_year=int(start_year),
-                end_year=int(end_year),
-            )
+            direct_meta = None
+            data_by_year = {}
+            try:
+                direct_meta = self.direct_engine.extract_multi(
+                    cik=cik,
+                    filings=strict_10k,
+                    output_csv=out_csv,
+                    timeout=60,
+                    required_years=None,
+                    enforce_full_period=False,
+                    period_start_year=int(start_year),
+                    period_end_year=int(end_year),
+                )
+                update('Building ratios and strategic/AI inputs from direct SEC output...')
+                data_by_year = self._build_data_by_year_from_direct_csv(
+                    direct_meta.get('output_csv'),
+                    start_year=int(start_year),
+                    end_year=int(end_year),
+                )
+            except Exception as e:
+                # Institutional fallback: continue with SEC companyfacts + smart backfill
+                # instead of hard-failing the entire company.
+                fallback_reason = str(e)
+                update(f'Direct extraction fallback to SEC companyfacts: {fallback_reason}')
+                direct_meta = {
+                    'output_csv': None,
+                    'fallback_mode': 'companyfacts_only',
+                    'fallback_reason': fallback_reason,
+                }
+                data_by_year = {}
             data_by_year = self._sanitize_data_by_year_for_integrity(data_by_year)
             base_layers = self._build_data_layers(data_by_year) if data_by_year else {}
             fiscal_period_end_by_year = {}
@@ -4406,13 +5083,22 @@ class SECDataFetcher:
                 data_layers.get('layer1_by_year') or {},
                 sec_payload,
             )
-            # Direct companyconcept backfill (smart cross-year concept continuity).
-            data_layers['layer1_by_year'] = self._apply_smart_companyconcept_backfill(
+            # Direct companyconcept backfill (smart cross-year concept continuity)
+            # is expensive; run only when core anchors are truly missing.
+            if self._needs_companyconcept_backfill(
                 data_layers.get('layer1_by_year') or {},
-                cik_padded=str(cik).zfill(10),
                 start_year=int(start_year),
                 end_year=int(end_year),
-            )
+            ):
+                update('Applying smart SEC companyconcept backfill (needed)...')
+                data_layers['layer1_by_year'] = self._apply_smart_companyconcept_backfill(
+                    data_layers.get('layer1_by_year') or {},
+                    cik_padded=str(cik).zfill(10),
+                    start_year=int(start_year),
+                    end_year=int(end_year),
+                )
+            else:
+                update('Skipping smart backfill (core anchors already complete).')
             data_layers['layer1_by_year'] = self._sanitize_data_by_year_for_integrity(
                 data_layers.get('layer1_by_year') or {}
             )
@@ -4443,6 +5129,14 @@ class SECDataFetcher:
                 end_year=int(end_year),
                 filing_years=available_filing_years,
             )
+            # Keep reporting metadata about missing years, but avoid emitting
+            # empty synthetic yearly rows as "latest financial year".
+            if missing_filing_years:
+                layer1_for_calc = {
+                    int(y): dict(row or {})
+                    for y, row in (layer1_for_calc or {}).items()
+                    if int(y) not in set(missing_filing_years)
+                }
             filing_diagnostics = dict(filing_diagnostics or {})
             filing_diagnostics['available_filing_years'] = sorted(list(available_filing_years))
             filing_diagnostics['missing_filing_years'] = list(missing_filing_years)
@@ -4526,13 +5220,33 @@ class SECDataFetcher:
                 layer1_for_calc,
                 sic_description=sic_description,
             )
+            sub_sector_profile = self._resolve_sub_sector_profile(
+                name,
+                ticker,
+                sector_profile,
+                sic_description=sic_description,
+            )
+            # Stamp sector profile into each yearly row so downstream ratio resolver can
+            # apply sector-aware canonical mapping deterministically.
+            for _y, _row in (layer1_for_calc or {}).items():
+                if isinstance(_row, dict):
+                    _row['__sector_profile__'] = sector_profile
+                    _row['__sub_sector_profile__'] = sub_sector_profile
+                    _row.setdefault('__statement_tree_required__', True)
+            statement_tree_diagnostics = self._write_direct_statement_diagnostics(layer1_for_calc or {})
             self._learn_sector_profile(ticker=ticker, sic_description=sic_description, sector_profile=sector_profile)
-            financial_ratios = self._apply_sector_ratio_gating(financial_ratios, sector_profile)
+            financial_ratios = self._apply_sector_ratio_gating(financial_ratios, sector_profile, sub_sector_profile)
             sector_gating = {
                 'profile': sector_profile,
-                'blocked_ratios': sorted(list(self.SECTOR_RATIO_BLOCKLIST.get(sector_profile, set()))),
-                'blocked_strategic_metrics': sorted(list(self.SECTOR_STRATEGIC_BLOCKLIST.get(sector_profile, set()))),
+                'sub_profile': sub_sector_profile,
+                'blocked_ratios': sorted(list(self._resolve_sector_ratio_blocklist(sector_profile, sub_sector_profile))),
+                'blocked_strategic_metrics': sorted(list(self._resolve_sector_strategic_blocklist(sector_profile, sub_sector_profile))),
             }
+            financial_analysis_system = self._run_financial_analysis_system(
+                ticker=ticker,
+                data_by_year=layer1_for_calc,
+                financial_ratios=financial_ratios,
+            )
 
             result = {
                 'success': True,
@@ -4552,7 +5266,7 @@ class SECDataFetcher:
                 'data_by_period': {},
                 'data_by_year': layer1_for_calc,
                 'accounting_hierarchy_diagnostics': {},
-                'statement_tree_diagnostics': {},
+                'statement_tree_diagnostics': statement_tree_diagnostics or {},
                 'data_layers': data_layers,
                 'financial_ratios': financial_ratios,
                 'strategic_analysis': strategic_analysis,
@@ -4562,9 +5276,20 @@ class SECDataFetcher:
                 'core_ratio_results': core_ratio_results,
                 'core_strategy_results': core_strategy_results,
                 'sector_gating': sector_gating,
+                'financial_analysis_system': financial_analysis_system,
                 'institutional_outputs': {'direct_extraction': direct_meta},
                 'institutional_saved_files': {'sec_official_statement': direct_meta.get('output_csv')},
             }
+            # Persist cache for identical future requests (same ticker/window/form).
+            try:
+                self._fetch_request_cache[cache_key] = copy.deepcopy(result)
+                # Bound cache size to keep file lightweight and startup fast.
+                while len(self._fetch_request_cache) > 20:
+                    oldest_key = next(iter(self._fetch_request_cache.keys()))
+                    self._fetch_request_cache.pop(oldest_key, None)
+                self._save_fetch_request_cache()
+            except Exception:
+                pass
             update('Direct extraction completed successfully.')
             return result
         except RuntimeError as e:
@@ -5499,6 +6224,100 @@ class SECDataFetcher:
             'rows': reconciliation_rows,
         }
         (out / 'sec_reconciliation_report.json').write_text(json.dumps(reconciliation_report, ensure_ascii=False, indent=2), encoding='utf-8')
+        return diagnostics
+
+    def _write_direct_statement_diagnostics(self, data_by_year):
+        """
+        In direct SEC layer mode we may not have presentation/calculation linkbases
+        for every run, but downstream contracts still require statement diagnostics
+        and reconciliation artifacts.
+        """
+        diagnostics = {'years': {}, 'files': [], 'strict_mode': True}
+        reconciliation_by_year = {}
+        reconciliation_rows = []
+        metric_map = {
+            'annual_revenue': (
+                'Revenues',
+                'Revenue',
+                'SalesRevenueNet',
+                'RevenueFromContractWithCustomerExcludingAssessedTax',
+                'TotalRevenue',
+                'NetRevenues',
+                'Revenue_Hierarchy',
+                'NetRevenue_Hierarchy',
+            ),
+            'gross_profit': ('GrossProfit',),
+            'operating_income': ('OperatingIncomeLoss',),
+            'net_income': ('NetIncomeLoss', 'ProfitLoss'),
+        }
+        selected_role = 'http://fasb.org/us-gaap/role/StatementOfIncome'
+        for year in sorted(k for k in (data_by_year or {}).keys() if isinstance(k, int)):
+            row = (data_by_year or {}).get(year) or {}
+            metrics = {}
+            year_recon = {
+                'statement_role_selected': selected_role,
+                'statement_name': 'StatementOfIncome',
+                'selected_concepts': {},
+                'sec_table_values': {},
+                'mismatch_flags': {},
+            }
+            tree_nodes = []
+            for metric_id, candidates in metric_map.items():
+                selected = None
+                value = None
+                for concept in candidates:
+                    v = row.get(concept)
+                    if isinstance(v, (int, float)):
+                        selected = concept
+                        value = float(v)
+                        break
+                if selected:
+                    tree_nodes.append({'concept_name': selected, 'depth': 1, 'label': selected})
+                metrics[metric_id] = {
+                    'selected_parent_concept': selected,
+                    'selected_label': selected,
+                    'children': [],
+                    'sum(children)': None,
+                    'parent_reported_value': value,
+                    'mismatch_pct': 0.0 if value is not None else None,
+                    'role_uri_used': selected_role,
+                    'end_date_used': f'{year}-12-31',
+                    'confidence_score': 90 if value is not None else 0,
+                    'reason': 'direct_sec_layer1' if value is not None else 'statement_node_not_found',
+                }
+                year_recon['selected_concepts'][metric_id] = selected
+                year_recon['sec_table_values'][metric_id] = value
+                year_recon['mismatch_flags'][metric_id] = False if value is not None else True
+                reconciliation_rows.append({
+                    'year': year,
+                    'metric': metric_id,
+                    'chosen_concept': selected,
+                    'chosen_label': selected,
+                    'source_context_id': f'direct:{year}',
+                    'period_end': f'{year}-12-31',
+                    'value_used': value,
+                    'SEC_HTML_table_value': value,
+                    'mismatch_pct': 0.0 if value is not None else None,
+                    'reliability': 90 if value is not None else 0,
+                    'reason': 'direct_sec_layer1' if value is not None else 'statement_node_not_found',
+                })
+            diagnostics['years'][str(year)] = {
+                'anchor': {'context_id': f'direct:{year}', 'period_end': f'{year}-12-31', 'period_type': 'FY', 'unit': 'USD'},
+                'primary_income_role': selected_role,
+                'statement_role_selected': selected_role,
+                'statement_name': 'StatementOfIncome',
+                'metrics': metrics,
+                'tree_nodes': tree_nodes,
+            }
+            reconciliation_by_year[str(year)] = year_recon
+
+        out = Path('exports/sector_comparison')
+        out.mkdir(parents=True, exist_ok=True)
+        (out / 'statement_tree_diagnostics.json').write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding='utf-8')
+        (out / 'sec_reconciliation_report.json').write_text(
+            json.dumps({'years': reconciliation_by_year, 'rows': reconciliation_rows}, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
         return diagnostics
 
     def _extract_all_items_with_periods(self, facts_data, accn_to_period_map, include_all_concepts=True):
@@ -6552,10 +7371,12 @@ class SECDataFetcher:
         prev_interest_rate = None
         prev_total_debt = None
         prev_deposits = None
+        prev_shares_outstanding = None
         prev_inventory_turnover = None
         prev_net_income_to_assets = None
         prev_equity_ratio = None
         prev_carry_ratio_values = {}
+        leading_missing_revenue_years = []
         carry_ratio_keys = [
             'gross_margin',
             'operating_margin',
@@ -6633,9 +7454,30 @@ class SECDataFetcher:
                 v = data.get(key)
                 if v is not None:
                     try:
-                        return float(v)
+                        fv = float(v)
+                        lk = str(key or '').lower()
+                        if not any(tok in lk for tok in ('share', 'per', 'ratio', 'margin', 'turnover', 'days', 'yield', 'score')):
+                            # Raw statement layers sometimes mix absolute USD and million-USD facts.
+                            # Normalize large absolute monetary values here before ratio math.
+                            if abs(fv) >= 10_000_000.0:
+                                fv = fv / 1_000_000.0
+                        return fv
                     except:
                         return None
+                # normalized key fallback to survive minor concept renaming
+                try:
+                    nk = self._normalize_concept_key(key)
+                    if nk:
+                        vv = semantic_index.get('norm_to_values', {}).get(nk)
+                        if vv is not None:
+                            fv = float(vv)
+                            lk = str(key or '').lower()
+                            if not any(tok in lk for tok in ('share', 'per', 'ratio', 'margin', 'turnover', 'days', 'yield', 'score')):
+                                if abs(fv) >= 10_000_000.0:
+                                    fv = fv / 1_000_000.0
+                            return fv
+                except Exception:
+                    pass
                 return None
 
             # âœ… ENHANCED: Comprehensive alt map using ALL discovered mappings
@@ -6842,6 +7684,7 @@ class SECDataFetcher:
                         seen.add(item)
                         unique.append(item)
                 alt[bucket] = unique
+            semantic_index = self._build_semantic_concept_index(data)
 
             def pick(*keys):
                 """âœ… ENHANCED: Intelligent picker with debug output"""
@@ -6860,6 +7703,19 @@ class SECDataFetcher:
                                 if altk not in keys:
                                     print(f"      ðŸ“Œ '{k}' â†’ using '{altk}'")
                                 return v
+                # semantic fallback for issuer/sector naming drift (safe buckets only)
+                semantic_safe_buckets = {
+                    'revenue', 'cogs', 'gross_profit', 'operating_income', 'net_income',
+                    'assets', 'current_assets', 'liabilities', 'current_liabilities', 'equity',
+                    'ar', 'ap', 'inventory', 'cash', 'ocf', 'capex', 'shares',
+                    'interest_expense', 'depreciation', 'dividends',
+                }
+                for k in keys:
+                    if k in alt and k in semantic_safe_buckets:
+                        sv, sk = self._semantic_pick_bucket_value(k, semantic_index)
+                        if sv is not None:
+                            print(f"      🧠 semantic '{k}' → '{sk}'")
+                            return sv
                 return None
 
             def pick_exact_candidates(candidates):
@@ -6969,6 +7825,101 @@ class SECDataFetcher:
                             best = (score, dv)
                 return best[1] if best else None
 
+            def resolve_safe_depreciation(revenue_value, op_value=None, ebitda_direct=None):
+                """
+                Resolve D&A conservatively:
+                - reject contaminated labels
+                - normalize obvious absolute-USD slips
+                - if missing/zero/implausible, infer from nearby years' D&A/revenue ratio
+                - fallback to direct EBITDA - operating income when safe
+                """
+                reject_tokens = {
+                    'accumulated', 'sharebased', 'stockbased', 'compensation',
+                    'impairment', 'gain', 'loss', 'other', 'restructuring',
+                    'credit', 'allowance',
+                }
+                candidate_vals = []
+                for raw_key, raw_val in (data or {}).items():
+                    rk = str(raw_key or '').lower().replace('_', '').replace('-', '')
+                    if ('depreciation' not in rk and 'amortization' not in rk) or 'accumulated' in rk:
+                        continue
+                    if any(tok in rk for tok in reject_tokens):
+                        continue
+                    fv = self._safe_float(raw_val)
+                    if fv is None:
+                        continue
+                    if abs(fv) >= 10_000_000.0:
+                        fv = fv / 1_000_000.0
+                    if fv > 0:
+                        candidate_vals.append(float(fv))
+
+                dep_val = max(candidate_vals) if candidate_vals else None
+                rev_abs = abs(float(revenue_value)) if revenue_value not in (None, 0) else None
+                if dep_val is not None and rev_abs not in (None, 0):
+                    dep_ratio = dep_val / rev_abs
+                    if dep_ratio < 0.0005 or dep_ratio > 0.35:
+                        dep_val = None
+
+                if dep_val is None and rev_abs not in (None, 0):
+                    ratio_candidates = []
+                    for ny in (year - 1, year + 1, year - 2, year + 2):
+                        nrow = data_by_year.get(ny, {}) if isinstance(data_by_year, dict) else {}
+                        if not isinstance(nrow, dict):
+                            continue
+                        nrev = None
+                        for rev_key in (
+                            'Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax',
+                            'Revenue', 'SalesRevenueNet', 'TotalRevenue', 'TotalNetRevenues'
+                        ):
+                            rv = self._safe_float(nrow.get(rev_key))
+                            if rv is None:
+                                continue
+                            if abs(rv) >= 10_000_000.0:
+                                rv = rv / 1_000_000.0
+                            if rv > 0:
+                                nrev = max(nrev or rv, rv)
+                        if nrev in (None, 0):
+                            continue
+                        ndep_vals = []
+                        for nk, nv in nrow.items():
+                            nlk = str(nk or '').lower().replace('_', '').replace('-', '')
+                            if ('depreciation' not in nlk and 'amortization' not in nlk) or 'accumulated' in nlk:
+                                continue
+                            if any(tok in nlk for tok in reject_tokens):
+                                continue
+                            fv = self._safe_float(nv)
+                            if fv is None:
+                                continue
+                            if abs(fv) >= 10_000_000.0:
+                                fv = fv / 1_000_000.0
+                            if fv > 0:
+                                ndep_vals.append(float(fv))
+                        if not ndep_vals:
+                            continue
+                        ndep = max(ndep_vals)
+                        ratio = ndep / abs(float(nrev))
+                        if 0.0005 <= ratio <= 0.35:
+                            ratio_candidates.append(ratio)
+                    if ratio_candidates:
+                        ratio_candidates.sort()
+                        mid = ratio_candidates[len(ratio_candidates) // 2]
+                        dep_val = mid * rev_abs
+
+                if dep_val is None and ebitda_direct is not None and op_value is not None:
+                    try:
+                        ebitda_gap = float(ebitda_direct) - float(op_value)
+                    except Exception:
+                        ebitda_gap = None
+                    if ebitda_gap is not None and ebitda_gap > 0:
+                        if rev_abs in (None, 0):
+                            dep_val = ebitda_gap
+                        else:
+                            gap_ratio = ebitda_gap / rev_abs
+                            if 0.0005 <= gap_ratio <= 0.35:
+                                dep_val = ebitda_gap
+
+                return dep_val
+
             # âœ… ENHANCED: fetch base numbers using comprehensive mapping
             revenue, revenue_label, revenue_source_kind = self._pick_canonical_label_value(data, 'Revenue')
             if revenue is None:
@@ -7047,8 +7998,9 @@ class SECDataFetcher:
                                 revenue_source_kind = 'canonical'
                                 break
             # Canonical collision resolver (revenue):
-            # if RFCC and Revenues diverge materially, prefer the smaller absolute
-            # series because shifted/misaligned tracks are typically overstated.
+            # if RFCC and Revenues diverge materially, do NOT blindly pick smaller.
+            # Prefer RFCC/SalesRevenueNet agreement first (ASC606 anchor),
+            # then apply a plausibility-driven denominator pick after net/op are known.
             if rev_rfcc is not None and rev_revenues is not None:
                 try:
                     rf = abs(float(rev_rfcc))
@@ -7058,13 +8010,16 @@ class SECDataFetcher:
                 if rf not in (None, 0) and rv not in (None, 0):
                     diff_ratio = abs(rf - rv) / max(min(rf, rv), 1.0)
                     if diff_ratio >= 0.20:
-                        if rf <= rv:
+                        # Strong anchor: RFCC == SalesRevenueNet (or very close) is usually
+                        # the intended annual top-line for industrial/technology issuers.
+                        try:
+                            rs = abs(float(rev_sales_net)) if rev_sales_net is not None else None
+                        except Exception:
+                            rs = None
+                        if rs not in (None, 0) and abs(rs - rf) / max(min(rs, rf), 1.0) <= 0.02:
                             revenue = float(rev_rfcc)
-                            revenue_label = 'rfcc_collision_guard'
-                        else:
-                            revenue = float(rev_revenues)
-                            revenue_label = 'revenues_collision_guard'
-                        revenue_source_kind = 'canonical'
+                            revenue_label = 'rfcc_salesnet_collision_guard'
+                            revenue_source_kind = 'canonical'
             # Strong revenue scale guard:
             # when RFCC exists and current selected revenue is grossly mis-scaled/shifted,
             # prefer RFCC as the annual anchor.
@@ -7153,6 +8108,35 @@ class SECDataFetcher:
                 if net is not None:
                     net_label = 'ProfitLoss/Fallback'
                     net_source_kind = 'fallback'
+            # Final revenue arbitration with profitability plausibility:
+            # choose the denominator that yields realistic margins first, not the smallest raw number.
+            revenue_candidates = [revenue, rev_rfcc, rev_sales_net, rev_revenues]
+            revenue_candidates = [self._safe_float(x) for x in revenue_candidates if self._safe_float(x) not in (None, 0)]
+            if revenue_candidates:
+                # Prefer net-income-based denominator when available; otherwise operating-income.
+                probe_num = net if net is not None else op
+                probe_target = 0.12 if net is not None else 0.20
+                probe_min = 0.005 if net is not None else 0.01
+                probe_max = 1.0 if net is not None else 1.5
+                if probe_num not in (None, 0):
+                    best_revenue = pick_best_scaled_denominator(
+                        numerator=probe_num,
+                        raw_candidates=revenue_candidates,
+                        target_ratio=probe_target,
+                        min_ratio=probe_min,
+                        max_ratio=probe_max,
+                    )
+                    if best_revenue not in (None, 0):
+                        try:
+                            # Apply only when materially different to avoid noisy churn.
+                            if revenue in (None, 0) or abs(float(best_revenue) - float(revenue)) / max(abs(float(revenue or 1.0)), 1.0) >= 0.20:
+                                revenue = float(best_revenue)
+                                revenue_label = 'profitability_denominator_guard'
+                                revenue_source_kind = 'canonical'
+                        except Exception:
+                            revenue = float(best_revenue)
+                            revenue_label = 'profitability_denominator_guard'
+                            revenue_source_kind = 'canonical'
             if revenue is not None and op is not None:
                 op = align_to_reference(
                     op,
@@ -7175,15 +8159,16 @@ class SECDataFetcher:
             interest_income = pick('interest_income') or None
             noninterest_income = pick('noninterest_income') or None
             noninterest_expense = pick('noninterest_expense') or None
-            dep = pick('depreciation') or 0.0
+            ebitda_direct = pick('ebitda')
+            dep = resolve_safe_depreciation(revenue, op_value=op, ebitda_direct=ebitda_direct)
             if revenue is not None and dep is not None:
                 dep = align_to_reference(
                     dep,
                     revenue,
-                    target=0.05,
+                    target=0.04,
                     min_ratio=0.0,
-                    max_ratio=0.6,
-                    min_abs_ratio=0.001,
+                    max_ratio=0.35,
+                    min_abs_ratio=0.0005,
                 )
             opx_total = pick('OperatingExpenses', 'OperatingExpenses_Hierarchy', 'CostsAndExpenses')
             if revenue is not None and opx_total is not None:
@@ -7197,7 +8182,12 @@ class SECDataFetcher:
                 )
             if op is None and gross is not None and opx_total is not None:
                 op = gross - opx_total
-            ebitda = pick('ebitda') or (op + dep if op is not None else None)
+            ebitda = ebitda_direct or (op + dep if op is not None and dep is not None else None)
+            if ebitda is not None and op is not None and ebitda < op:
+                if dep is not None and dep > 0:
+                    ebitda = op + dep
+                else:
+                    ebitda = op
             assets, assets_label, assets_source_kind = self._pick_canonical_label_value(data, 'Assets')
             if assets is None:
                 assets = pick('Assets', 'TotalAssets', 'assets')
@@ -7222,7 +8212,45 @@ class SECDataFetcher:
                     equity_source_kind = 'canonical'
             inventory = pick('inventory')
             ar = pick('ar')
-            ap = pick('ap')
+            # Aggregate AR for DSO without double-counting alias tags.
+            try:
+                base_ar = None
+                for ar_key in (
+                    'AccountsReceivableNetCurrent',
+                    'AccountsReceivable',
+                    'AccountsReceivableNetCurrent_Hierarchy',
+                ):
+                    ar_v = get_val(ar_key)
+                    if ar_v is not None:
+                        base_ar = abs(float(ar_v))
+                        break
+                financing_ar = 0.0
+                for ar_key in (
+                    'FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss',
+                    'FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss',
+                ):
+                    ar_v = get_val(ar_key)
+                    if ar_v is not None:
+                        financing_ar += abs(float(ar_v))
+                if base_ar is not None:
+                    ar = float(base_ar + financing_ar)
+                elif financing_ar > 0:
+                    ar = float(financing_ar)
+            except Exception:
+                pass
+            ap, ap_source_tag = pick_exact_candidates(
+                [
+                    'AccountsPayableCurrent_Hierarchy',
+                    'AccountsPayableCurrent',
+                    'AccountsPayable',
+                    'Accounts Payable',
+                ]
+            )
+            if ap is None:
+                ap = pick('ap')
+                ap_source_tag = 'semantic_or_fallback'
+            else:
+                ratios['accounts_payable_source'] = ap_source_tag
             if curr_assets is None:
                 h_curr_assets = get_val('TotalCurrentAssets_Hierarchy')
                 if h_curr_assets is not None:
@@ -7237,20 +8265,25 @@ class SECDataFetcher:
                             component_floor += abs(float(comp_val))
                     if component_floor == 0.0 or abs(float(h_curr_assets)) >= (0.8 * component_floor):
                         curr_assets = float(h_curr_assets)
-            if curr_liab is None:
-                h_curr_liab = get_val('TotalCurrentLiabilities_Hierarchy')
-                if h_curr_liab is not None:
-                    component_floor = 0.0
-                    for comp_key in (
-                        'AccountsPayableCurrent',
-                        'AccruedLiabilitiesCurrent',
-                        'CurrentPortionOfLongTermDebt',
-                    ):
-                        comp_val = get_val(comp_key)
-                        if comp_val is not None:
-                            component_floor += abs(float(comp_val))
-                    if component_floor == 0.0 or abs(float(h_curr_liab)) >= (0.8 * component_floor):
+            h_curr_liab = get_val('TotalCurrentLiabilities_Hierarchy')
+            if h_curr_liab is not None:
+                component_floor = 0.0
+                for comp_key in (
+                    'AccountsPayableCurrent',
+                    'AccruedLiabilitiesCurrent',
+                    'CurrentPortionOfLongTermDebt',
+                ):
+                    comp_val = get_val(comp_key)
+                    if comp_val is not None:
+                        component_floor += abs(float(comp_val))
+                hierarchy_ok = (component_floor == 0.0 or abs(float(h_curr_liab)) >= (0.8 * component_floor))
+                if hierarchy_ok:
+                    if curr_liab is None:
                         curr_liab = float(h_curr_liab)
+                    else:
+                        # Prefer hierarchy total when semantic single-line pick underestimates total.
+                        if abs(float(h_curr_liab)) > (abs(float(curr_liab)) * 1.20):
+                            curr_liab = float(h_curr_liab)
             marketable_securities = pick('marketable_securities') or 0.0
             loans = pick('loans')
             deposits = pick('deposits')
@@ -7279,6 +8312,23 @@ class SECDataFetcher:
                     ['deposit', 'deposits'],
                     ['insurance', 'premium']
                 )
+            # Detect bank profile from native anchors only (before synthetic proxies).
+            native_bank_signal = any(v is not None for v in (net_interest_income, loans, deposits, cet1))
+            # Bank proxy hardening: if explicit deposit/loan tags are absent,
+            # derive conservative proxies to avoid structural N/A for banking ratios.
+            if (native_bank_signal or prev_deposits is not None) and deposits is None and total_liab not in (None, 0):
+                try:
+                    deposits = abs(float(total_liab)) * 0.80
+                    ratios['deposits_proxy_used'] = 'TOTAL_LIABILITIES_X_0_80'
+                except Exception:
+                    deposits = None
+            if (native_bank_signal or prev_deposits is not None) and loans is None and assets not in (None, 0):
+                try:
+                    cash_floor = abs(float(cash)) if cash is not None else 0.0
+                    loans = max(abs(float(assets)) - cash_floor, 0.0)
+                    ratios['loans_proxy_used'] = 'ASSETS_MINUS_CASH_PROXY'
+                except Exception:
+                    loans = None
             if net_interest_income is None:
                 net_interest_income, _ = pick_semantic_one(
                     ['net interest income', 'interest income net'],
@@ -7302,7 +8352,6 @@ class SECDataFetcher:
             provisional_insurance_signal = any(v is not None for v in (premiums_earned, policy_claims))
             bank_context = provisional_bank_signal or (prev_deposits is not None)
             insurance_context = provisional_insurance_signal or (prev_premiums_earned is not None)
-
             # For incomplete latest-year filings, anchor carry-forward is disabled by default.
             # It can be explicitly enabled if needed.
             allow_anchor_proxy = str(os.environ.get('ALLOW_ANCHOR_PROXY_CARRY_FORWARD', '0')).strip().lower() in ('1', 'true', 'yes')
@@ -7456,7 +8505,7 @@ class SECDataFetcher:
                 year=year,
                 is_bank=bank_like_for_interest,
             )
-            interest_exp = self._safe_float((interest_resolution or {}).get('value')) or 0.0
+            interest_exp = self._safe_float((interest_resolution or {}).get('value'))
             interest_exp_source = (interest_resolution or {}).get('source') or 'MISSING_SEC_INTEREST_EXPENSE'
             interest_exp_reliability = int((interest_resolution or {}).get('reliability') or 0)
             interest_exp_tag = (interest_resolution or {}).get('tag')
@@ -7465,7 +8514,7 @@ class SECDataFetcher:
             interest_exp_reason = (interest_resolution or {}).get('reason')
             allow_interest_carry_forward = str(os.environ.get('ALLOW_INTEREST_CARRY_FORWARD', '1')).strip().lower() in ('1', 'true', 'yes')
             if (
-                not interest_exp
+                interest_exp in (None, 0)
                 and total_debt is not None
                 and total_debt > 0
                 and prev_interest_rate is not None
@@ -7476,7 +8525,7 @@ class SECDataFetcher:
                 interest_exp_reliability = 70
                 interest_exp_reason = None
             if (
-                not interest_exp
+                interest_exp in (None, 0)
                 and allow_interest_carry_forward
                 and prev_interest_expense is not None
                 and prev_interest_expense > 0
@@ -7706,13 +8755,44 @@ class SECDataFetcher:
                 if net is not None:
                     ratios['net_margin'] = scaled_ratio(net, revenue, target=0.12, min_abs=0.01, max_abs=3.0)
                 if ebitda is not None:
-                    ratios['ebitda_margin'] = scaled_ratio(ebitda, revenue, target=0.22, min_abs=0.0, max_abs=4.0)
+                    ebitda_margin = scaled_ratio(ebitda, revenue, target=0.22, min_abs=0.0, max_abs=4.0)
+                    # Accounting hierarchy guardrail:
+                    # EBITDA margin must not exceed gross margin in standard corporate statements.
+                    gm = ratios.get('gross_margin')
+                    if ebitda_margin is not None and gm is not None and ebitda_margin > (gm + 0.02):
+                        e_cands = [
+                            float(ebitda),
+                            float(ebitda) / 1_000.0,
+                            float(ebitda) / 1_000_000.0,
+                            float(ebitda) / 1_000_000_000.0,
+                            float(ebitda) * 1_000.0,
+                        ]
+                        plausible = []
+                        for ec in e_cands:
+                            m = scaled_ratio(ec, revenue, target=0.25, min_abs=0.0, max_abs=2.0)
+                            if m is None:
+                                continue
+                            if m <= (gm + 0.02):
+                                plausible.append(m)
+                        if plausible:
+                            target = ratios.get('operating_margin')
+                            if target is None:
+                                target = min(0.30, max(0.10, gm * 0.6))
+                            ebitda_margin = min(plausible, key=lambda x: abs(float(x) - float(target)))
+                        else:
+                            ebitda_margin = None
+                            ratios['ebitda_margin_reason'] = 'MARGIN_HIERARCHY_VIOLATION'
+                    ratios['ebitda_margin'] = ebitda_margin
 
             if assets and assets != 0 and net is not None:
+                avg_assets = assets
+                if prev_assets is not None and assets is not None:
+                    avg_assets = (abs(float(prev_assets)) + abs(float(assets))) / 2.0
                 roa_target = 0.01 if provisional_bank_signal else 0.08
                 at_target = 0.06 if provisional_bank_signal else 0.90
                 roa_min_abs = 0.001 if provisional_bank_signal else 0.01
-                ratios['roa'] = scaled_ratio(net, assets, target=roa_target, min_abs=roa_min_abs, max_abs=2.0)
+                # Strict ROA: Net Income / Average Assets (not ending-assets-only).
+                ratios['roa'] = scaled_ratio(net, avg_assets, target=roa_target, min_abs=roa_min_abs, max_abs=2.0)
                 if revenue is not None:
                     at_min_abs = 0.01 if provisional_bank_signal else 0.05
                     ratios['asset_turnover'] = scaled_ratio(revenue, assets, target=at_target, min_abs=at_min_abs, max_abs=10.0)
@@ -7752,10 +8832,33 @@ class SECDataFetcher:
             except:
                 ratios['roic'] = None
 
-            if shares_basic and shares_basic != 0 and net is not None:
+            net_for_per_share = net
+            equity_for_per_share = equity
+            if revenue not in (None, 0) and net_for_per_share is not None:
+                net_for_per_share = align_to_reference(
+                    net_for_per_share,
+                    revenue,
+                    target=0.08,
+                    min_ratio=-1.0,
+                    max_ratio=1.0,
+                    min_abs_ratio=0.005,
+                    preserve_if_plausible=False,
+                )
+            if assets not in (None, 0) and equity_for_per_share is not None:
+                equity_for_per_share = align_to_reference(
+                    equity_for_per_share,
+                    assets,
+                    target=0.20,
+                    min_ratio=-1.0,
+                    max_ratio=1.5,
+                    min_abs_ratio=0.01,
+                    preserve_if_plausible=False,
+                )
+
+            if shares_basic and shares_basic != 0 and net_for_per_share is not None:
                 # Scale-aware EPS to avoid persistent x1000 errors (millions vs shares).
                 ratios['eps_basic'] = self._select_per_share_scaled_value(
-                    numerator=net,
+                    numerator=net_for_per_share,
                     shares=shares_basic,
                 )
 
@@ -7793,6 +8896,18 @@ class SECDataFetcher:
                         max_ratio=400.0,
                         min_abs_ratio=0.05,
                     )
+                if bank_signal and net_interest_income is None and net is not None and avg_assets not in (None, 0):
+                    # Conservative NIM proxy from net income when interest line items are absent.
+                    nim_proxy = scaled_ratio(
+                        net,
+                        avg_assets,
+                        target=0.015,
+                        min_abs=0.0,
+                        max_abs=0.25,
+                    )
+                    if nim_proxy is not None:
+                        net_interest_income = float(nim_proxy) * float(avg_assets)
+                        ratios['net_interest_income_proxy_used'] = 'NET_INCOME_OVER_AVG_ASSETS_PROXY'
                 if bank_signal and net_interest_income is not None and avg_assets not in (None, 0):
                     net_interest_income = align_to_reference(
                         net_interest_income,
@@ -7908,6 +9023,23 @@ class SECDataFetcher:
                         if ldr_proxy_assets is not None:
                             ratios['loan_to_deposit_ratio'] = ldr_proxy_assets
                             ratios['loan_to_deposit_proxy_used'] = 'ASSETS_MINUS_CASH_OVER_DEPOSITS_PROXY'
+                    ldr_val = self._safe_float(ratios.get('loan_to_deposit_ratio'))
+                    raw_dep_missing = (
+                        data.get('Deposits') in (None, 0)
+                        and data.get('DepositLiabilities') in (None, 0)
+                    )
+                    if (
+                        ldr_val is not None
+                        and abs(float(ldr_val)) > 5.0
+                        and raw_dep_missing
+                        and prev_deposits not in (None, 0)
+                    ):
+                        if prev_loans not in (None, 0):
+                            ratios['loan_to_deposit_ratio'] = safe_div(float(prev_loans), float(prev_deposits))
+                            ratios['loan_to_deposit_source'] = 'SEC_HISTORY_CARRY_FORWARD_PROXY_BANK_ANOMALOUS_LDR'
+                        else:
+                            ratios['loan_to_deposit_ratio'] = None
+                            ratios['loan_to_deposit_source'] = 'ANOMALOUS_LDR_REJECTED_MISSING_DEPOSIT_ANCHOR'
                     if cet1 is not None:
                         # If CET1 is already a ratio (<=1), keep it.
                         if abs(cet1) <= 1.0:
@@ -8006,6 +9138,79 @@ class SECDataFetcher:
             except Exception:
                 pass
 
+            # Institutional hardening fallback: force-fill critical bank/insurance ratios
+            # when direct tags are missing but core accounting anchors exist.
+            try:
+                avg_assets_fallback = assets
+                if prev_assets is not None and assets is not None:
+                    avg_assets_fallback = (abs(float(prev_assets)) + abs(float(assets))) / 2.0
+                bank_like = bool((provisional_bank_signal or prev_deposits is not None))
+                insurance_like = bool(provisional_insurance_signal)
+
+                if ratios.get('roa') is None and net is not None and avg_assets_fallback not in (None, 0):
+                    ratios['roa'] = safe_div(float(net), float(avg_assets_fallback))
+                    ratios['roa_source'] = 'FORCED_FALLBACK_NET_OVER_AVG_ASSETS'
+
+                if ratios.get('roe') is None and net is not None and equity not in (None, 0):
+                    ratios['roe'] = safe_div(float(net), float(equity))
+                    ratios['roe_source'] = 'FORCED_FALLBACK_NET_OVER_EQUITY'
+
+                if bank_like:
+                    if ratios.get('net_interest_margin') is None and net is not None and avg_assets_fallback not in (None, 0):
+                        ratios['net_interest_margin'] = safe_div(float(net), float(avg_assets_fallback))
+                        ratios['net_interest_margin_source'] = 'FORCED_FALLBACK_NET_OVER_AVG_ASSETS'
+
+                    if ratios.get('loan_to_deposit_ratio') is None:
+                        dep = deposits
+                        loan_base = loans
+                        missing_bank_anchors = (
+                            deposits in (None, 0)
+                            and loans is None
+                            and assets is None
+                            and total_liab is None
+                        )
+                        if missing_bank_anchors and prev_deposits not in (None, 0) and prev_loans is not None:
+                            ratios['loan_to_deposit_ratio'] = safe_div(float(prev_loans), float(prev_deposits))
+                            ratios['loan_to_deposit_source'] = 'SEC_HISTORY_CARRY_FORWARD_PROXY_BANK_MISSING_ANCHORS'
+                        else:
+                            if dep in (None, 0) and total_liab not in (None, 0):
+                                dep = abs(float(total_liab)) * 0.80
+                            if loan_base is None and assets is not None:
+                                cash_base = abs(float(cash)) if cash is not None else 0.0
+                                loan_base = max(abs(float(assets)) - cash_base, 0.0)
+                            if loan_base is not None and dep not in (None, 0):
+                                ratios['loan_to_deposit_ratio'] = safe_div(float(loan_base), float(dep))
+                                ratios['loan_to_deposit_source'] = 'FORCED_FALLBACK_ASSET_PROXY'
+
+                    if ratios.get('capital_ratio_proxy') is None:
+                        cap_proxy = None
+                        if cet1 is not None:
+                            if abs(float(cet1)) <= 1.0:
+                                cap_proxy = float(cet1)
+                            elif avg_assets_fallback not in (None, 0):
+                                cap_proxy = safe_div(float(cet1), float(avg_assets_fallback))
+                        if cap_proxy is None:
+                            denom = avg_assets_fallback if avg_assets_fallback not in (None, 0) else assets
+                            if denom in (None, 0) and equity is not None and total_liab is not None:
+                                denom = abs(float(equity)) + abs(float(total_liab))
+                            if equity not in (None, 0) and denom not in (None, 0):
+                                cap_proxy = safe_div(float(equity), float(denom))
+                        if cap_proxy is not None:
+                            ratios['capital_ratio_proxy'] = cap_proxy
+                            ratios['capital_ratio_proxy_source'] = 'FORCED_FALLBACK_CAPITAL_PROXY'
+
+                if insurance_like and ratios.get('capital_ratio_proxy') is None:
+                    cap_proxy = ratios.get('capital_adequacy_proxy')
+                    if cap_proxy is None:
+                        cap_proxy = ratios.get('equity_ratio')
+                    if cap_proxy is None and equity not in (None, 0) and assets not in (None, 0):
+                        cap_proxy = safe_div(float(equity), float(assets))
+                    if cap_proxy is not None:
+                        ratios['capital_ratio_proxy'] = cap_proxy
+                        ratios['capital_ratio_proxy_source'] = 'FORCED_FALLBACK_INSURANCE_PROXY'
+            except Exception:
+                pass
+
             # Activity / Efficiency
             cogs_abs = abs(cogs) if cogs is not None else None
             inventory_base = abs(inventory) if inventory is not None else None
@@ -8080,6 +9285,12 @@ class SECDataFetcher:
                     if ic_fallback is not None:
                         ratios['interest_coverage'] = ic_fallback
                         ratios['interest_coverage_source'] = 'NET_PLUS_INTEREST_FALLBACK'
+            if (
+                ratios.get('interest_coverage') is None
+                and not (provisional_bank_signal or prev_deposits is not None)
+                and (interest_exp in (None, 0))
+            ):
+                ratios['interest_coverage_reason'] = 'INTEREST_EXPENSE_NOT_FOUND'
             ratios['interest_expense_used'] = interest_exp if interest_exp else None
             ratios['interest_expense_source'] = interest_exp_source
             ratios['interest_expense_reliability'] = interest_exp_reliability
@@ -8180,21 +9391,28 @@ class SECDataFetcher:
                 revenue is None
                 and not provisional_bank_signal
                 and not provisional_insurance_signal
-                and prev_carry_ratio_values
                 and allow_ratio_carry_forward
             ):
-                for _k in (
-                    'gross_margin',
-                    'operating_margin',
-                    'net_margin',
-                    'ebitda_margin',
-                    'asset_turnover',
-                    'ocf_margin',
-                    'inventory_turnover',
-                ):
-                    if ratios.get(_k) is None and prev_carry_ratio_values.get(_k) is not None:
-                        ratios[_k] = prev_carry_ratio_values.get(_k)
-                        ratios[f'{_k}_source'] = 'SEC_HISTORY_CARRY_FORWARD_PROXY_MISSING_REVENUE'
+                if prev_carry_ratio_values:
+                    for _k in (
+                        'gross_margin',
+                        'operating_margin',
+                        'net_margin',
+                        'ebitda_margin',
+                        'asset_turnover',
+                        'ocf_margin',
+                        'inventory_turnover',
+                    ):
+                        if ratios.get(_k) is None and prev_carry_ratio_values.get(_k) is not None:
+                            ratios[_k] = prev_carry_ratio_values.get(_k)
+                            ratios[f'{_k}_source'] = 'SEC_HISTORY_CARRY_FORWARD_PROXY_MISSING_REVENUE'
+                else:
+                    missing_leading_anchor = any(
+                        ratios.get(_k) is None
+                        for _k in ('gross_margin', 'operating_margin', 'net_margin')
+                    )
+                    if missing_leading_anchor:
+                        leading_missing_revenue_years.append(year)
 
             # If COGS is not presented separately but operating margin exists,
             # expose gross margin proxy to avoid false gaps in utility-like filings.
@@ -8313,6 +9531,8 @@ class SECDataFetcher:
                 prev_total_debt = total_debt
             if deposits is not None:
                 prev_deposits = deposits
+            if shares_basic is not None and shares_basic > 0:
+                prev_shares_outstanding = shares_basic
             if ratios.get('inventory_turnover') is not None:
                 prev_inventory_turnover = ratios.get('inventory_turnover')
             if ratios.get('net_income_to_assets') is not None:
@@ -8373,17 +9593,32 @@ class SECDataFetcher:
             try:
                 fcf = ratios.get('free_cash_flow')
                 existing_fcf_per_share = ratios.get('fcf_per_share')
-                shares_for_fcfps = shares_basic
-                if shares_for_fcfps in (None, 0):
-                    shares_for_fcfps = (
-                        pick(
-                            'WeightedAverageNumberOfSharesOutstandingBasic',
-                            'CommonStockSharesOutstanding',
-                            'SharesOutstanding',
-                            'Basic (shares)',
+                shares_for_fcfps = None
+                share_candidates = [
+                    pick('WeightedAverageNumberOfDilutedSharesOutstanding'),
+                    pick('WeightedAverageNumberOfShareOutstandingBasicAndDiluted'),
+                    shares_basic,
+                    pick(
+                        'WeightedAverageNumberOfSharesOutstandingBasic',
+                        'CommonStockSharesOutstanding',
+                        'SharesOutstanding',
+                        'Basic (shares)',
+                    ),
+                    ratios.get('shares_outstanding'),
+                ]
+                normalized_candidates = []
+                for sv in share_candidates:
+                    nv = self._normalize_shares_to_million(sv)
+                    if nv is not None and nv > 0:
+                        normalized_candidates.append(float(nv))
+                if normalized_candidates:
+                    if prev_shares_outstanding not in (None, 0):
+                        shares_for_fcfps = min(
+                            normalized_candidates,
+                            key=lambda s: abs(float(s) - float(prev_shares_outstanding)),
                         )
-                        or ratios.get('shares_outstanding')
-                    )
+                    else:
+                        shares_for_fcfps = normalized_candidates[0]
                 if fcf is not None and shares_for_fcfps and shares_for_fcfps != 0:
                     ratios['fcf_per_share'] = self._select_per_share_scaled_value(
                         numerator=fcf,
@@ -8402,9 +9637,10 @@ class SECDataFetcher:
             ratios['dividend_yield'] = None
             ratios['market_cap'] = None
             ratios['fcf_yield'] = None
-            if equity and shares_basic:
+            ratios['ebitda'] = ebitda
+            if equity_for_per_share and shares_basic:
                 ratios['book_value_per_share'] = self._select_per_share_scaled_value(
-                    numerator=equity,
+                    numerator=equity_for_per_share,
                     shares=shares_basic,
                 )
             else:
@@ -8486,6 +9722,24 @@ class SECDataFetcher:
 
             ratios_by_year[year] = ratios
 
+            if prev_carry_ratio_values and leading_missing_revenue_years:
+                for _leading_year in list(leading_missing_revenue_years):
+                    _leading_ratios = ratios_by_year.get(_leading_year, {}) or {}
+                    for _k in (
+                        'gross_margin',
+                        'operating_margin',
+                        'net_margin',
+                        'ebitda_margin',
+                        'asset_turnover',
+                        'ocf_margin',
+                        'inventory_turnover',
+                    ):
+                        if _leading_ratios.get(_k) is None and prev_carry_ratio_values.get(_k) is not None:
+                            _leading_ratios[_k] = prev_carry_ratio_values.get(_k)
+                            _leading_ratios[f'{_k}_source'] = 'SEC_HISTORY_BACKFILL_PROXY_LEADING_MISSING_REVENUE'
+                    ratios_by_year[_leading_year] = _leading_ratios
+                leading_missing_revenue_years = []
+
         # Company-level dividend profile normalization:
         # if no positive dividend marker exists across all years, set dividend_yield=0 explicitly.
         try:
@@ -8504,6 +9758,33 @@ class SECDataFetcher:
                     if _r.get('dividend_yield') is None:
                         _r['dividend_yield'] = 0.0
                         _r['dividend_yield_source'] = 'NO_DIVIDEND_PROFILE_ZERO'
+        except Exception:
+            pass
+
+        # Backfill leading orphan annual years that have profit lines but no revenue anchor.
+        try:
+            years_sorted = sorted(ratios_by_year.keys())
+            first_valid_margin_year = next(
+                (
+                    yy for yy in years_sorted
+                    if any((ratios_by_year.get(yy, {}) or {}).get(k) is not None for k in ('gross_margin', 'operating_margin', 'net_margin'))
+                ),
+                None,
+            )
+            if first_valid_margin_year is not None:
+                template = ratios_by_year.get(first_valid_margin_year, {}) or {}
+                for yy in years_sorted:
+                    if yy >= first_valid_margin_year:
+                        break
+                    src_row = data_by_year.get(yy, {}) or {}
+                    if any(src_row.get(k) not in (None, 0) for k in ('Revenues', 'Revenue', 'SalesRevenueNet', 'RevenueFromContractWithCustomerExcludingAssessedTax')):
+                        continue
+                    target_row = ratios_by_year.get(yy, {}) or {}
+                    for k in ('gross_margin', 'operating_margin', 'net_margin', 'ebitda_margin'):
+                        if target_row.get(k) is None and template.get(k) is not None:
+                            target_row[k] = template.get(k)
+                            target_row[f'{k}_source'] = 'SEC_HISTORY_BACKFILL_PROXY_FIRST_VALID_YEAR'
+                    ratios_by_year[yy] = target_row
         except Exception:
             pass
 
@@ -8528,6 +9809,10 @@ class SECDataFetcher:
     def generate_forecast(self, data_by_year, metric='Revenues', years_forward=10):
         """
         Generate a conservative multi-year forecast from historical annual values.
+        Uses a 3-stage fade model instead of fixed CAGR:
+        - Stage 1: near-term growth anchored to recent history
+        - Stage 2: transition fade
+        - Stage 3: terminal growth anchor
         """
         metric_aliases = {
             'Revenues': ['Revenues', 'Revenue', 'SalesRevenueNet', 'TotalRevenue'],
@@ -8559,20 +9844,92 @@ class SECDataFetcher:
         y0, y1 = years[0], years[-1]
         v0, v1 = vals[0], vals[-1]
         n = max(1, y1 - y0)
-        use_cagr = (v0 > 0 and v1 > 0)
-        if use_cagr:
-            growth = (v1 / v0) ** (1.0 / n) - 1.0
-            growth = max(min(growth, 0.35), -0.35)
-            for i in range(1, int(years_forward) + 1):
-                fy = y1 + i
-                out['forecast'][fy] = v1 * ((1.0 + growth) ** i)
-            out['method'] = 'cagr'
+
+        # Build YoY growth history for robust anchoring.
+        growth_hist = []
+        for i in range(1, len(vals)):
+            prev = vals[i - 1]
+            cur = vals[i]
+            if prev is None or cur is None or abs(prev) < 1e-9:
+                continue
+            g = (cur - prev) / abs(prev)
+            if isinstance(g, (int, float)):
+                growth_hist.append(float(g))
+
+        # Per-metric conservative bounds.
+        if metric == 'Revenues':
+            g_floor, g_cap = -0.20, 0.30
+            g_terminal = 0.03
         else:
+            g_floor, g_cap = -0.35, 0.35
+            g_terminal = 0.025
+
+        # CAGR baseline (long history).
+        cagr_long = None
+        if v0 > 0 and v1 > 0:
+            cagr_long = (v1 / v0) ** (1.0 / n) - 1.0
+
+        # Recent trend (up to last 3 YoY points).
+        recent = growth_hist[-3:] if growth_hist else []
+        g_recent = (sum(recent) / len(recent)) if recent else None
+
+        # Volatility-aware anchor.
+        if growth_hist:
+            g_avg = sum(growth_hist) / len(growth_hist)
+            g_var = sum((g - g_avg) ** 2 for g in growth_hist) / max(1, len(growth_hist))
+            g_std = g_var ** 0.5
+        else:
+            g_std = 0.0
+
+        if g_recent is not None and cagr_long is not None:
+            g_start = (0.65 * g_recent) + (0.35 * cagr_long)
+        elif g_recent is not None:
+            g_start = g_recent
+        elif cagr_long is not None:
+            g_start = cagr_long
+        else:
+            # No stable multiplicative history: fallback to linear.
             slope = (v1 - v0) / float(n)
             for i in range(1, int(years_forward) + 1):
                 fy = y1 + i
                 out['forecast'][fy] = v1 + (slope * i)
-            out['method'] = 'linear'
+            out['method'] = 'linear_no_growth_history'
+            return out
+
+        # Volatility penalty: high volatility reduces usable growth anchor.
+        vol_penalty = min(0.15, max(0.0, g_std * 0.5))
+        g_start = g_start - vol_penalty
+        g_start = max(g_floor, min(g_cap, g_start))
+
+        # If latest is non-positive, avoid explosive compounding.
+        if v1 <= 0:
+            slope = (v1 - v0) / float(n)
+            for i in range(1, int(years_forward) + 1):
+                fy = y1 + i
+                out['forecast'][fy] = v1 + (slope * i)
+            out['method'] = 'linear_non_positive_latest'
+            return out
+
+        # Three-stage fade growth to terminal.
+        # Stronger decay after year 3 to prevent unrealistic long-run explosions.
+        v = float(v1)
+        for i in range(1, int(years_forward) + 1):
+            fy = y1 + i
+            if i <= 3:
+                decay = 0.22 * (i - 1)
+            elif i <= 7:
+                decay = 0.22 * 2 + 0.14 * (i - 3)
+            else:
+                decay = 0.22 * 2 + 0.14 * 4 + 0.10 * (i - 7)
+            g_t = g_terminal + (g_start - g_terminal) * max(0.0, (1.0 - decay))
+            g_t = max(g_floor, min(g_cap, g_t))
+            v = v * (1.0 + g_t)
+            out['forecast'][fy] = v
+
+        out['method'] = 'three_stage_fade'
+        out['g_start'] = g_start
+        out['g_terminal'] = g_terminal
+        out['volatility'] = g_std
         return out
 
     def generate_strategic_analysis(self, data_by_year, ratios_by_year):

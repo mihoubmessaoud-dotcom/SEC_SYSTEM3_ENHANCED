@@ -428,6 +428,8 @@ class InstitutionalFinancialIntelligenceEngine:
             'mapping': mapping_df,
             'mapping_versions': mapping_versions_df,
             'mapping_confidence_detail': mapping_confidence_df,
+            # Backward-compatible contract key expected by tests/API clients.
+            'normalized_financial_statements': normalized_statements_df,
             'sector_ratio_dashboard': ratio_dashboard_df,
             'ratio_explanations': ratio_explanations_df,
             'risk_integrity_dashboard': risk_dashboard_df,

@@ -1,0 +1,182 @@
+{
+  "timestamp": "2026-02-17T17:04:47.161633",
+  "summary": {
+    "total": 21,
+    "pass": 14,
+    "fail": 7
+  },
+  "results": [
+    {
+      "ticker": "AAPL",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "MSFT",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "GOOGL",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "AMZN",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "META",
+      "status": "FAIL",
+      "issues": 2,
+      "issues_list": [
+        "2021:balance",
+        "2022:balance"
+      ],
+      "error": null
+    },
+    {
+      "ticker": "NVDA",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "TSLA",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "NFLX",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "AMD",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "INTC",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "ORCL",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "IBM",
+      "status": "FAIL",
+      "issues": 1,
+      "issues_list": [
+        "2025:balance"
+      ],
+      "error": null
+    },
+    {
+      "ticker": "ADBE",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "CRM",
+      "status": "FAIL",
+      "issues": 6,
+      "issues_list": [
+        "2021:balance",
+        "2022:balance",
+        "2022:pe",
+        "2023:pb",
+        "2024:pb",
+        "2025:pb"
+      ],
+      "error": null
+    },
+    {
+      "ticker": "QCOM",
+      "status": "FAIL",
+      "issues": 1,
+      "issues_list": [
+        "2025:balance"
+      ],
+      "error": null
+    },
+    {
+      "ticker": "AVGO",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "CSCO",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "TXN",
+      "status": "PASS",
+      "issues": 0,
+      "issues_list": [],
+      "error": null
+    },
+    {
+      "ticker": "MU",
+      "status": "FAIL",
+      "issues": 1,
+      "issues_list": [
+        "2025:balance"
+      ],
+      "error": null
+    },
+    {
+      "ticker": "KO",
+      "status": "FAIL",
+      "issues": 4,
+      "issues_list": [
+        "2021:balance",
+        "2022:balance",
+        "2024:balance",
+        "2025:balance"
+      ],
+      "error": null
+    },
+    {
+      "ticker": "JPM",
+      "status": "FAIL",
+      "issues": 3,
+      "issues_list": [
+        "2021:balance",
+        "2022:balance",
+        "2025:balance"
+      ],
+      "error": null
+    }
+  ]
+}

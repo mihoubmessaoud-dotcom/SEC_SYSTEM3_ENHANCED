@@ -1,0 +1,432 @@
+{
+  "timestamp": "2026-02-17T16:51:08.375019",
+  "summary": {
+    "total": 25,
+    "pass": 11,
+    "fail": 14
+  },
+  "results": [
+    {
+      "ticker": "AAPL",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 13
+    },
+    {
+      "ticker": "MSFT",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 21
+    },
+    {
+      "ticker": "GOOGL",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2020: balance identity"
+      ],
+      "gate_issue_count": 14
+    },
+    {
+      "ticker": "AMZN",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 16
+    },
+    {
+      "ticker": "META",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2020: balance identity",
+        "2021: balance identity",
+        "2022: balance identity"
+      ],
+      "gate_issue_count": 15
+    },
+    {
+      "ticker": "NVDA",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 24
+    },
+    {
+      "ticker": "TSLA",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2020: balance identity"
+      ],
+      "gate_issue_count": 13
+    },
+    {
+      "ticker": "NFLX",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2020: balance identity"
+      ],
+      "gate_issue_count": 18
+    },
+    {
+      "ticker": "AMD",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 16
+    },
+    {
+      "ticker": "INTC",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2020: balance identity"
+      ],
+      "gate_issue_count": 11
+    },
+    {
+      "ticker": "ORCL",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 12
+    },
+    {
+      "ticker": "IBM",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2025: balance identity"
+      ],
+      "gate_issue_count": 22
+    },
+    {
+      "ticker": "ADBE",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 15
+    },
+    {
+      "ticker": "CRM",
+      "status": "FAIL",
+      "issues": 3,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": false,
+        "pb_consistency": false,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2020: balance identity",
+        "2020: pe mismatch",
+        "2021: balance identity",
+        "2022: balance identity",
+        "2022: pe mismatch",
+        "2023: pb mismatch",
+        "2024: pb mismatch",
+        "2025: pb mismatch"
+      ],
+      "gate_issue_count": 13
+    },
+    {
+      "ticker": "QCOM",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2025: balance identity"
+      ],
+      "gate_issue_count": 15
+    },
+    {
+      "ticker": "AVGO",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": false,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2020: pb mismatch"
+      ],
+      "gate_issue_count": 10
+    },
+    {
+      "ticker": "CSCO",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 18
+    },
+    {
+      "ticker": "TXN",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 25
+    },
+    {
+      "ticker": "MU",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2025: balance identity"
+      ],
+      "gate_issue_count": 16
+    },
+    {
+      "ticker": "PYPL",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 16
+    },
+    {
+      "ticker": "COST",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": false,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2022: pb mismatch",
+        "2023: pb mismatch",
+        "2024: pb mismatch",
+        "2025: pb mismatch"
+      ],
+      "gate_issue_count": 12
+    },
+    {
+      "ticker": "WMT",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {
+        "balance_identity": false,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [
+        "2020: balance identity",
+        "2021: balance identity",
+        "2022: balance identity"
+      ],
+      "gate_issue_count": 18
+    },
+    {
+      "ticker": "KO",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {},
+      "error": "Unexpected error: [Errno 32] Broken pipe",
+      "issues_list": []
+    },
+    {
+      "ticker": "PEP",
+      "status": "PASS",
+      "issues": 0,
+      "checks": {
+        "balance_identity": true,
+        "pe_consistency": true,
+        "pb_consistency": true,
+        "wacc_sync": true,
+        "layer2_timeseries": true,
+        "total_debt_not_constant": true
+      },
+      "error": null,
+      "issues_list": [],
+      "gate_issue_count": 18
+    },
+    {
+      "ticker": "JPM",
+      "status": "FAIL",
+      "issues": 1,
+      "checks": {},
+      "error": "Unexpected error: [Errno 22] Invalid argument",
+      "issues_list": []
+    }
+  ]
+}

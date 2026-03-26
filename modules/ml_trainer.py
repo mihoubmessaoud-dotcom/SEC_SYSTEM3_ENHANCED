@@ -541,16 +541,51 @@ class AITrainingSystem:
         thresholds = model['thresholds']
         score = 0.0
         
-        accruals = abs(features.get('accruals_ratio', 0)) if features.get('accruals_ratio') else 0
-        if accruals > thresholds.get('accruals_high', 0.08):
-            score += 0.35 * (accruals / thresholds['accruals_high'])
+        try:
+            accruals_raw = features.get('accruals_ratio', 0)
+            accruals = abs(float(accruals_raw)) if accruals_raw is not None else 0.0
+        except Exception:
+            accruals = 0.0
+        accruals_high = thresholds.get('accruals_high', 0.08)
+        try:
+            accruals_high = float(accruals_high) if accruals_high is not None else 0.08
+        except Exception:
+            accruals_high = 0.08
+        if accruals_high <= 0:
+            accruals_high = 0.08
+        if accruals > accruals_high:
+            score += 0.35 * (accruals / accruals_high)
         
-        margin_divergence = features.get('net_margin', 0) - features.get('ocf_margin', 0)
-        if margin_divergence > thresholds.get('margin_net_divergence', 10):
+        net_margin = features.get('net_margin', 0)
+        ocf_margin = features.get('ocf_margin', 0)
+        try:
+            net_margin = 0.0 if net_margin is None else float(net_margin)
+        except Exception:
+            net_margin = 0.0
+        try:
+            ocf_margin = 0.0 if ocf_margin is None else float(ocf_margin)
+        except Exception:
+            ocf_margin = 0.0
+        margin_divergence = net_margin - ocf_margin
+        margin_net_divergence = thresholds.get('margin_net_divergence', 10)
+        try:
+            margin_net_divergence = float(margin_net_divergence) if margin_net_divergence is not None else 10.0
+        except Exception:
+            margin_net_divergence = 10.0
+        if margin_divergence > margin_net_divergence:
             score += 0.25
         
         z_score = features.get('altman_z_score', 3)
-        if z_score < thresholds.get('z_score_low', 2):
+        try:
+            z_score = 3.0 if z_score is None else float(z_score)
+        except Exception:
+            z_score = 3.0
+        z_score_low = thresholds.get('z_score_low', 2)
+        try:
+            z_score_low = float(z_score_low) if z_score_low is not None else 2.0
+        except Exception:
+            z_score_low = 2.0
+        if z_score < z_score_low:
             score += 0.20
         
         return min(score, 0.95)

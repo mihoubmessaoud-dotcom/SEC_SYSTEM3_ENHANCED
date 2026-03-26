@@ -1,0 +1,135 @@
+{
+  "start_year": 2023,
+  "end_year": 2025,
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "TSLA",
+    "JPM",
+    "BAC",
+    "WFC",
+    "GS",
+    "PGR",
+    "TRV"
+  ],
+  "summary": {
+    "AAPL": {
+      "sector": "industrial",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [],
+      "elapsed_sec": 118.4
+    },
+    "MSFT": {
+      "sector": "industrial",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [],
+      "elapsed_sec": 118.3
+    },
+    "TSLA": {
+      "sector": "industrial",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [],
+      "elapsed_sec": 129.9
+    },
+    "JPM": {
+      "sector": "bank",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "JPM 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 106.4
+    },
+    "BAC": {
+      "sector": "bank",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "BAC 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 100.5
+    },
+    "WFC": {
+      "sector": "bank",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "WFC 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 116.4
+    },
+    "GS": {
+      "sector": "bank",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "GS 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 109.9
+    },
+    "PGR": {
+      "sector": "insurance",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [
+        {
+          "year": 2025,
+          "code": "MISSING_BALANCE_SHEET_ANCHOR",
+          "message": "PGR 2025: Balance Sheet anchor(s) unavailable (Assets, Liabilities, Equity). Balance-based ratios may be N/A.",
+          "missing_fields": [
+            "Assets",
+            "Liabilities",
+            "Equity"
+          ]
+        }
+      ],
+      "elapsed_sec": 112.8
+    },
+    "TRV": {
+      "sector": "insurance",
+      "score_pct": 100.0,
+      "missing_by_year": {},
+      "warnings": [],
+      "elapsed_sec": 121.7
+    }
+  }
+}

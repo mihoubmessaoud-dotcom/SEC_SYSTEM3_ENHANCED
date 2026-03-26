@@ -1,0 +1,30 @@
+{
+  "version": "2026-03-04",
+  "quality": {
+    "min_effective_pass_pct": 99.5,
+    "max_fail_pct": 0.5,
+    "max_review_pct": 0.5,
+    "require_no_na": true
+  },
+  "governance": {
+    "required_docs": [
+      "docs/LEGAL_DISCLAIMER.md",
+      "docs/MODEL_RISK_POLICY.md",
+      "docs/DATA_SOURCES_POLICY.md"
+    ]
+  },
+  "operations": {
+    "required_docs": [
+      "docs/SLA_SLO_POLICY.md"
+    ],
+    "max_p95_elapsed_sec": 420.0,
+    "min_success_rate_pct": 99.0
+  },
+  "auditability": {
+    "required_docs": [
+      "docs/METHODOLOGY_AUDIT_TRAIL.md"
+    ],
+    "min_avg_provenance_pct": 95.0
+  }
+}
+

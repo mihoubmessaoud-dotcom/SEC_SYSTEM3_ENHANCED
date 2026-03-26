@@ -1,0 +1,228 @@
+{
+  "run_at": "2026-02-20T15:43:50.290311Z",
+  "start_year": 2023,
+  "end_year": 2025,
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "TSLA",
+    "XOM",
+    "PEP",
+    "UNH",
+    "BA",
+    "JPM",
+    "BAC",
+    "WFC",
+    "AIG",
+    "PGR"
+  ],
+  "details": {
+    "AAPL": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "MSFT": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 95.45454545454545,
+      "coverage_any_pct": 95.45454545454545,
+      "missing_latest": [
+        "net_margin"
+      ],
+      "missing_any": [
+        "net_margin"
+      ],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "TSLA": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "XOM": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 95.45454545454545,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [
+        "inventory_turnover"
+      ],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "PEP": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "UNH": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 81.81818181818181,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [
+        "net_income_to_assets",
+        "equity_ratio"
+      ],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "BA": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "JPM": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "BAC": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 91.66666666666667,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [
+        "net_income_to_assets"
+      ],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "WFC": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 91.66666666666667,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [
+        "net_income_to_assets"
+      ],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "AIG": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    },
+    "PGR": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest": 2025,
+      "coverage_latest_pct": 90.9090909090909,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [
+        "net_income_to_assets"
+      ],
+      "missing_any": [],
+      "filing_grade": "IN_RANGE_ANNUAL",
+      "out_of_range": false
+    }
+  }
+}

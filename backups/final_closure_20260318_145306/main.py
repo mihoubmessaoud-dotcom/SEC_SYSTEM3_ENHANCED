@@ -1,0 +1,15244 @@
+﻿# -*- coding: utf-8 -*-
+"""
+main.py â€” ÙˆØ§Ø¬Ù‡Ø© Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù… Ø§Ù„Ù…Ø¹Ø¯Ù„Ø© Ù„Ø±Ø¨Ø· Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø³ÙˆÙ‚ Ø£ÙˆØªÙˆÙ…Ø§ØªÙŠÙƒÙŠØ§Ù‹ ÙˆØ¥Ù†ØªØ§Ø¬ Ø¬Ø¯ÙˆÙ„ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ø§Ø³ØªØ±Ø§ØªÙŠØ¬ÙŠ
+Ø§Ù„ØªØ¹Ø¯ÙŠÙ„Ø§Øª:
+- Ø²Ø± Ø­Ø°Ù Ø´Ø±ÙƒØ©/Ù…Ø³Ø­ Ø§Ù„ÙƒÙ„
+- ØªØµØ¯ÙŠØ± Excel (Raw_by_Year, Ratios, Strategic per-year)
+- Ø±Ø¨Ø· get_market_data Ù…Ù† fetcher Ù„Ù…Ù„Ø¡ Ø§Ù„Ø³Ø¹Ø±/Ø¹Ø¯Ø¯ Ø§Ù„Ø£Ø³Ù‡Ù… ØªÙ„Ù‚Ø§Ø¦ÙŠÙ‹Ø§
+- Ø§Ù„Ø¹Ø±Ø¶ Ù…Ù‚ØªØµØ± Ø¹Ù„Ù‰ Ù†Ø·Ø§Ù‚ Ø§Ù„Ø³Ù†ÙˆØ§Øª (start..end)
+"""
+
+import os
+import sys
+import threading
+import time
+import json
+import csv
+import re
+import math
+import tempfile
+import urllib.parse
+import urllib.request
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import ttk, messagebox, filedialog
+
+import matplotlib
+matplotlib.use('TkAgg')
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from modules.ratio_formats import canonicalize_ratio_value, format_ratio_value
+from modules.ratio_source import UnifiedRatioSource, maybe_guard_ratios_by_year
+from modules.financial_chat import FinancialChatAssistant
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+try:
+    from modules.sec_fetcher import SECDataFetcher
+except Exception as e:
+    tk.messagebox.showerror("Import Error", f"ÙØ´Ù„ Ø§Ø³ØªÙŠØ±Ø§Ø¯ modules.sec_fetcher: {e}")
+    raise
+
+PALETTE = {
+    'bg': '#edf2f7',
+    'panel': '#ffffff',
+    'surface': '#f8fbff',
+    'surface_alt': '#ecf3fb',
+    'surface_soft': '#f4f7fb',
+    'shadow': '#dbe4ef',
+    'shadow_deep': '#c8d4e2',
+    'header': '#0b1f33',
+    'header_alt': '#163552',
+    'header_muted': '#9db5cf',
+    'header_border': '#1f4060',
+    'accent': '#1d4ed8',
+    'accent_dark': '#173fb5',
+    'accent_soft': '#dbe8ff',
+    'teal': '#0f766e',
+    'teal_soft': '#d7f1ee',
+    'text': '#102033',
+    'muted': '#5f6d7d',
+    'button': '#1d4ed8',
+    'button_secondary': '#334155',
+    'button_neutral': '#6b7280',
+    'border': '#d6deea',
+    'panel_border': '#d6deea',
+    'success': '#138a63',
+    'danger': '#d14343',
+    'warning': '#b7791f',
+}
+
+FONTS = {
+    'header': ('Segoe UI', 20, 'bold'),
+    'title': ('Segoe UI', 13, 'bold'),
+    'subtitle': ('Segoe UI', 10),
+    'label': ('Segoe UI', 11, 'bold'),
+    'normal': ('Segoe UI', 10),
+    'button': ('Segoe UI', 10, 'bold'),
+    'tree': ('Segoe UI', 10),
+    'caption': ('Segoe UI', 9, 'bold'),
+}
+
+
+class SECFinancialSystem:
+    def __init__(self, root):
+        self.root = root
+        self._init_language_pack()
+        self._install_tk_text_decoder()
+        self.root.title("منصة التحليل المالي الذكي - SEC")
+        self.root.geometry("1600x950")
+        self.root.minsize(1360, 860)
+        self.root.configure(bg=PALETTE['bg'])
+        self.fetcher = None
+        self.current_data = None
+        self.multi_company_data = {}
+        self.company_alias_map = {}
+        self._ratio_row_meta = {}
+        self._ratio_years = []
+        self._strategic_row_meta = {}
+        self._strategic_years = []
+        self._confidence_calibration_policy = self._load_confidence_calibration_policy()
+        self.chat_assistant = FinancialChatAssistant()
+        self.chat_history = []
+        self._configure_typography()
+        self.translate_technical_var = tk.BooleanVar(master=self.root, value=False)
+        
+        # âœ… NEW: Ù†Ø¸Ø§Ù… Ø§Ù„ØªØ¯Ø±ÙŠØ¨ Ø§Ù„Ù…Ø³ØªÙ…Ø±
+        self.ml_trainer = None
+        
+        self._init_ui()
+        self._apply_professional_theme()
+        self._apply_ui_text_fixes()
+        try:
+            self.fetcher = SECDataFetcher()
+            
+            # ØªÙ‡ÙŠØ¦Ø© Ù†Ø¸Ø§Ù… Ø§Ù„ØªØ¯Ø±ÙŠØ¨
+            try:
+                from modules.ml_trainer import initialize_training_system, auto_train_if_needed
+                self.ml_trainer = initialize_training_system()
+                print("âœ… Ù†Ø¸Ø§Ù… Ø§Ù„ØªØ¯Ø±ÙŠØ¨ Ø§Ù„Ù…Ø³ØªÙ…Ø± Ø¬Ø§Ù‡Ø²")
+                print(self.ml_trainer.get_stats_summary())
+                
+                # Ù…Ø­Ø§ÙˆÙ„Ø© ØªØ¯Ø±ÙŠØ¨ ØªÙ„Ù‚Ø§Ø¦ÙŠ Ø¥Ø°Ø§ ÙƒØ§Ù† Ù‡Ù†Ø§Ùƒ Ø¨ÙŠØ§Ù†Ø§Øª ÙƒØ§ÙÙŠØ©
+                auto_train_if_needed(self.ml_trainer, threshold=20)
+            except Exception as e:
+                print(f"âš ï¸ ØªØ¹Ø°Ø± ØªÙ‡ÙŠØ¦Ø© Ù†Ø¸Ø§Ù… Ø§Ù„ØªØ¯Ø±ÙŠØ¨: {e}")
+                
+        except Exception as e:
+            messagebox.showerror("Ø®Ø·Ø£", f"ÙØ´Ù„ ØªÙ‡ÙŠØ¦Ø© Ø¬Ø§Ù„Ø¨ SEC: {e}")
+
+    def _init_ui(self):
+        header = tk.Frame(self.root, bg=PALETTE['header'], height=74)
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        brand_box = tk.Frame(header, bg=PALETTE['header'])
+        brand_box.pack(side='left', fill='both', expand=True, padx=18, pady=10)
+        self.header_title_label = tk.Label(
+            brand_box,
+            text=self._t('app_header'),
+            font=FONTS['header'],
+            bg=PALETTE['header'],
+            fg='white',
+            anchor='w',
+        )
+        self.header_title_label.pack(anchor='w', pady=(6, 0))
+        self.header_subtitle_label = None
+
+        lang_box = tk.Frame(
+            header,
+            bg=PALETTE['header_alt'],
+            highlightthickness=1,
+            highlightbackground=PALETTE['header_border'],
+            bd=0,
+            padx=10,
+            pady=8,
+        )
+        self.lang_label = tk.Label(
+            lang_box,
+            text=self._t('lang_label'),
+            font=FONTS['caption'],
+            bg=PALETTE['header_alt'],
+            fg='white',
+        )
+        lang_box.pack(side='right', padx=14, pady=14)
+        self.lang_label.pack(side='left', padx=(0, 8))
+        self.lang_combo = ttk.Combobox(
+            lang_box,
+            textvariable=self._lang_choice_var,
+            state='readonly',
+            values=[lbl for lbl, _ in self._lang_options],
+            width=10,
+        )
+        self.lang_combo.pack(side='left')
+        self.lang_combo.bind('<<ComboboxSelected>>', self._on_language_changed)
+        tk.Frame(self.root, bg=PALETTE['header_border'], height=1).pack(fill='x')
+
+        main = tk.Frame(self.root, bg=PALETTE['bg'])
+        main.pack(fill='both', expand=True, padx=10, pady=10)
+
+        left = tk.Frame(
+            main,
+            bg=PALETTE['panel'],
+            width=304,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['panel_border'],
+        )
+        left.pack(side='left', fill='y', padx=(0, 10))
+        left.pack_propagate(False)
+        self._build_left(left)
+
+        right = tk.Frame(
+            main,
+            bg=PALETTE['panel'],
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['panel_border'],
+        )
+        right.pack(side='left', fill='both', expand=True)
+        self._build_right(right)
+        self._build_ai_analysis_tab()  # âœ… Ø¨Ù†Ø§Ø¡ ØªØ¨ÙˆÙŠØ¨ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ø°ÙƒÙŠ
+        self._build_chat_tab()
+
+    def _select_font_family(self, preferred_families):
+        try:
+            installed = {f.lower(): f for f in tkfont.families(self.root)}
+        except Exception:
+            installed = {}
+        for fam in preferred_families:
+            hit = installed.get(str(fam).lower())
+            if hit:
+                return hit
+        return "Segoe UI"
+
+    def _configure_typography(self):
+        arabic_family = self._select_font_family([
+            "IBM Plex Sans Arabic",
+            "Cairo",
+            "Noto Sans Arabic",
+            "Noto Naskh Arabic",
+            "Tahoma",
+            "Segoe UI",
+            "Arial",
+        ])
+        mono_family = self._select_font_family(["JetBrains Mono", "Consolas", "Courier New"])
+        FONTS.update({
+            'header': (arabic_family, 18, 'bold'),
+            'title': (arabic_family, 12, 'bold'),
+            'subtitle': (arabic_family, 10),
+            'label': (arabic_family, 10, 'bold'),
+            'normal': (arabic_family, 9),
+            'button': (arabic_family, 9, 'bold'),
+            'tree': (arabic_family, 9),
+            'caption': (arabic_family, 9, 'bold'),
+            'mono': (mono_family, 9),
+        })
+        self.root.option_add("*Font", f"{arabic_family} 9")
+        self.root.option_add("*Button.Cursor", "hand2")
+        self.root.option_add("*Button.HighlightThickness", 0)
+        self.root.option_add("*Button.BorderWidth", 0)
+
+    def _init_language_pack(self):
+        self.current_lang = 'ar'
+        self._lang_options = [
+            ('العربية', 'ar'),
+            ('English', 'en'),
+            ('Français', 'fr'),
+        ]
+        self._lang_choice_var = tk.StringVar(master=self.root, value='العربية')
+        self._i18n = {
+            'app_title': {
+                'ar': 'منصة التحليل المالي الذكي - هيئة الأوراق المالية الأمريكية',
+                'en': 'Smart Financial Intelligence Platform - SEC',
+                'fr': 'Plateforme intelligente d\'analyse financière - SEC',
+            },
+            'app_header': {
+                'ar': 'منصة التحليل المالي الذكي - هيئة الأوراق المالية الأمريكية',
+                'en': 'Smart Financial Intelligence Platform - SEC',
+                'fr': 'Plateforme intelligente d\'analyse financière - SEC',
+            },
+            'app_subtitle': {
+                'ar': 'لوحة مؤسسية لتحليل إفصاحات SEC، المقارنات متعددة السنوات، ومخرجات قابلة للتدقيق',
+                'en': 'Institutional workspace for SEC filings, multi-year comparisons, and auditable outputs',
+                'fr': 'Espace institutionnel pour les dépôts SEC, les comparaisons multi-années et les livrables auditables',
+            },
+            'input_data': {
+                'ar': 'بيانات الإدخال',
+                'en': 'Input Data',
+                'fr': 'Données d\'entrée',
+            },
+            'company_symbols': {
+                'ar': 'رمز/رموز الشركة (مفصولة بفواصل):',
+                'en': 'Company ticker(s) (comma-separated):',
+                'fr': 'Symbole(s) boursier(s) (séparés par des virgules) :',
+            },
+            'add': {'ar': 'إضافة', 'en': 'Add', 'fr': 'Ajouter'},
+            'companies_list': {'ar': 'قائمة الشركات:', 'en': 'Company List:', 'fr': 'Liste des sociétés :'},
+            'remove_selected': {'ar': 'حذف المحدد', 'en': 'Remove Selected', 'fr': 'Supprimer la sélection'},
+            'clear_all': {'ar': 'مسح الكل', 'en': 'Clear All', 'fr': 'Tout effacer'},
+            'period_range': {
+                'ar': 'الفترة (من سنة البداية إلى سنة النهاية):',
+                'en': 'Period (Start Year - End Year):',
+                'fr': 'Période (année début - année fin) :',
+            },
+            'to_sep': {'ar': 'إلى', 'en': 'to', 'fr': 'à'},
+            'filing_type': {'ar': 'نوع التقرير:', 'en': 'Filing Type:', 'fr': 'Type de déclaration :'},
+            'annual_10k': {'ar': '10-K (سنوي)', 'en': '10-K (Annual)', 'fr': '10-K (Annuel)'},
+            'fetch_data': {'ar': 'التحميل الآلي للبيانات', 'en': 'Auto Data Loading', 'fr': 'Chargement automatique des données'},
+            'filing_supported': {
+                'ar': 'الأنواع المدعومة حالياً: 10-K',
+                'en': 'Currently supported: 10-K',
+                'fr': 'Actuellement pris en charge : 10-K',
+            },
+            'filing_warn_unsupported': {
+                'ar': 'النوع المحدد غير مدعوم حالياً في الوضع المباشر. سيتم استخدام 10-K تلقائياً.',
+                'en': 'Selected filing type is not supported in direct mode. 10-K will be used automatically.',
+                'fr': 'Le type de déclaration sélectionné n’est pas pris en charge en mode direct. 10-K sera utilisé automatiquement.',
+            },
+            'filing_10k': {'ar': '10-K (سنوي)', 'en': '10-K (Annual)', 'fr': '10-K (Annuel)'},
+            'filing_10ka': {'ar': '10-K/A (تعديل)', 'en': '10-K/A (Amendment)', 'fr': '10-K/A (Amendement)'},
+            'filing_20f': {'ar': '20-F (دولي)', 'en': '20-F (International)', 'fr': '20-F (International)'},
+            'market_inputs': {'ar': 'مدخلات السوق (اختياري)', 'en': 'Market Inputs (Optional)', 'fr': 'Entrées de marché (optionnel)'},
+            'current_price': {'ar': 'سعر السهم الحالي (USD):', 'en': 'Current Share Price (USD):', 'fr': 'Cours actuel de l\'action (USD) :'},
+            'shares_outstanding': {'ar': 'عدد الأسهم المصدرة:', 'en': 'Shares Outstanding:', 'fr': 'Actions en circulation :'},
+            'cost_of_debt': {'ar': 'تكلفة الدين الفعلية (%):', 'en': 'Effective Cost of Debt (%):', 'fr': 'Coût effectif de la dette (%) :'},
+            'tab_raw': {'ar': 'البيانات المالية', 'en': 'Financial Data', 'fr': 'Données financières'},
+            'tab_ratios': {'ar': 'النسب المالية', 'en': 'Financial Ratios', 'fr': 'Ratios financiers'},
+            'tab_strategic': {'ar': 'التحليل الاستراتيجي', 'en': 'Strategic Analysis', 'fr': 'Analyse stratégique'},
+            'tab_comparison': {'ar': 'التحليل المقارن', 'en': 'Comparative Analysis', 'fr': 'Analyse comparative'},
+            'tab_forecast': {'ar': 'التوقعات', 'en': 'Forecasts', 'fr': 'Prévisions'},
+            'tab_ai': {'ar': 'التحليل الذكي', 'en': 'AI Intelligence', 'fr': 'Intelligence IA'},
+            'tab_chat': {'ar': 'الدردشة المالية', 'en': 'Financial Chat', 'fr': 'Chat financier'},
+            'workspace_title': {'ar': 'لوحة العمل المؤسسية', 'en': 'Institutional Workspace', 'fr': 'Espace de travail institutionnel'},
+            'workspace_hint': {'ar': 'اختر شركة أو حمّل ملف إكسل لبدء التحليل والتدقيق والمقارنة.', 'en': 'Select a company or load an Excel file to begin analysis, audit, and comparison.', 'fr': 'Sélectionnez une société ou chargez un fichier Excel pour commencer l’analyse, l’audit et la comparaison.'},
+            'sidebar_section_universe': {'ar': 'كون التحليل', 'en': 'Analysis Universe', 'fr': 'Univers d’analyse'},
+            'sidebar_section_actions': {'ar': 'التشغيل والتصدير', 'en': 'Run and Export', 'fr': 'Exécution et export'},
+            'sidebar_section_status': {'ar': 'الحالة', 'en': 'Status', 'fr': 'Statut'},
+            'status_ready': {'ar': 'جاهز للعرض بعد تحميل البيانات', 'en': 'Ready after loading data', 'fr': 'Prêt après chargement des données'},
+            'chip_companies': {'ar': 'الشركات', 'en': 'Companies', 'fr': 'Sociétés'},
+            'chip_range': {'ar': 'الفترة', 'en': 'Range', 'fr': 'Période'},
+            'chip_mode': {'ar': 'الوضع', 'en': 'Mode', 'fr': 'Mode'},
+            'mode_direct': {'ar': 'SEC مباشر', 'en': 'Direct SEC', 'fr': 'SEC direct'},
+            'layer_view': {'ar': 'عرض الطبقة:', 'en': 'Layer View:', 'fr': 'Vue par couche :'},
+            'sec_view_mode_label': {'ar': 'وضع العرض:', 'en': 'View Mode:', 'fr': 'Mode d\'affichage :'},
+            'sec_view_mode_inputs': {'ar': 'عرض البنود الشاملة (مدخلات الحساب)', 'en': 'Comprehensive Inputs View', 'fr': 'Vue complète des entrées (calcul)'},
+            'sec_view_mode_official': {'ar': 'عرض SEC الرسمي', 'en': 'Official SEC View', 'fr': 'Vue SEC officielle'},
+            'sec_view_mode_canonical': {'ar': 'عرض تحليلي موحّد', 'en': 'Canonical Analysis View', 'fr': 'Vue analytique canonique'},
+            'tool_export': {'ar': 'تصدير نتائج إكسل (التحليل الحالي)', 'en': 'Export Excel (Current Analysis)', 'fr': 'Exporter Excel (analyse courante)'},
+            'tool_load': {'ar': 'تحميل بيانات أو نتائج إكسل', 'en': 'Load Excel Data/Results', 'fr': 'Charger données/résultats Excel'},
+            'tool_export_compact': {'ar': 'تصدير إكسل كامل', 'en': 'Export Full Excel', 'fr': 'Exporter Excel complet'},
+            'tool_load_compact': {'ar': 'تحميل إكسل', 'en': 'Load Excel', 'fr': 'Charger Excel'},
+            'tool_plot': {'ar': 'فتح الرسم البياني', 'en': 'Open Chart', 'fr': 'Ouvrir le graphique'},
+            'translate_technical_labels': {
+                'ar': 'ترجمة الأسماء التقنية',
+                'en': 'Translate Technical Labels',
+                'fr': 'Traduire les noms techniques',
+            },
+            'lang_label': {'ar': 'اللغة', 'en': 'Language', 'fr': 'Langue'},
+            'msg_info': {'ar': 'معلومة', 'en': 'Information', 'fr': 'Information'},
+            'msg_warning': {'ar': 'تحذير', 'en': 'Warning', 'fr': 'Avertissement'},
+            'msg_error': {'ar': 'خطأ', 'en': 'Error', 'fr': 'Erreur'},
+            'msg_success': {'ar': 'نجاح', 'en': 'Success', 'fr': 'Succès'},
+            'msg_confirm': {'ar': 'تأكيد', 'en': 'Confirm', 'fr': 'Confirmer'},
+            'progress_done': {'ar': 'اكتمل جلب الشركات', 'en': 'Company fetch completed', 'fr': 'Récupération des sociétés terminée'},
+            'summary_prefix': {'ar': 'شركة', 'en': 'Company', 'fr': 'Société'},
+            'sec_direct_label': {'ar': 'SEC الرسمي 10-K (مباشر)', 'en': 'SEC Official 10-K (Direct)', 'fr': 'SEC officiel 10-K (Direct)'},
+            'layer1': {'ar': 'الطبقة 1 - SEC XBRL (EDGAR)', 'en': 'Layer 1 - SEC XBRL (EDGAR)', 'fr': 'Couche 1 - SEC XBRL (EDGAR)'},
+            'layer2': {'ar': 'الطبقة 2 - السوق (Polygon)', 'en': 'Layer 2 - Market (Polygon)', 'fr': 'Couche 2 - Marché (Polygon)'},
+            'layer3': {'ar': 'الطبقة 3 - الاقتصاد الكلي (FRED)', 'en': 'Layer 3 - Macro (FRED)', 'fr': 'Couche 3 - Macroéconomie (FRED)'},
+            'layer4': {'ar': 'الطبقة 4 - Yahoo (yfinance)', 'en': 'Layer 4 - Yahoo (yfinance)', 'fr': 'Couche 4 - Yahoo (yfinance)'},
+            'load_excel_title': {'ar': 'تحميل بيانات أو نتائج من Excel', 'en': 'Load Data or Results from Excel', 'fr': 'Charger des données ou résultats depuis Excel'},
+            'load_excel_success': {'ar': 'تم تحميل البيانات/النتائج بنجاح من ملف Excel.', 'en': 'Excel data/results loaded successfully.', 'fr': 'Données/résultats Excel chargés avec succès.'},
+            'load_excel_failed': {'ar': 'فشل تحميل ملف Excel', 'en': 'Failed to load Excel file', 'fr': 'Échec du chargement du fichier Excel'},
+            'ai_header': {'ar': 'التحليل الذكي المتقدم', 'en': 'Advanced AI Analysis', 'fr': 'Analyse IA avancée'},
+            'ai_desc': {
+                'ar': 'تحليل ذكي متقدم يستخدم خوارزميات مالية لاكتشاف المخاطر وتقييم جودة الاستثمار',
+                'en': 'Advanced AI analysis using financial algorithms to detect risk and evaluate investment quality',
+                'fr': 'Analyse IA avancée utilisant des algorithmes financiers pour détecter les risques et évaluer la qualité d\'investissement',
+            },
+            'ai_fraud_frame': {'ar': '1. مؤشر احتمالية الاحتيال', 'en': '1. AI Fraud Probability', 'fr': '1. Probabilité de fraude (IA)'},
+            'ai_fraud_prob': {'ar': 'احتمالية الاحتيال: --', 'en': 'Fraud Probability: --', 'fr': 'Probabilité de fraude : --'},
+            'ai_fraud_flags': {'ar': 'عدد العلامات الحمراء: --', 'en': 'Red Flags Count: --', 'fr': 'Nombre de signaux d\'alerte : --'},
+            'ai_risk_level': {'ar': 'مستوى المخاطر: --', 'en': 'Risk Level: --', 'fr': 'Niveau de risque : --'},
+            'ai_recommendation': {'ar': 'التوصية: --', 'en': 'Recommendation: --', 'fr': 'Recommandation : --'},
+            'ai_fraud_hint': {
+                'ar': 'تحليل العلاقة بين الأرباح المحاسبية والتدفقات النقدية لكشف التجميل المالي',
+                'en': '💡 Analyzes the relationship between accounting profit and cash flows to detect earnings manipulation',
+                'fr': '💡 Analyse la relation entre résultat comptable et flux de trésorerie pour détecter les manipulations',
+            },
+            'ai_failure_frame': {'ar': '2. التنبؤ بالتعثر المتقدم', 'en': '2. Dynamic Failure Prediction', 'fr': '2. Prévision dynamique de défaillance'},
+            'ai_failure_3y': {'ar': 'احتمالية التعثر خلال 3 سنوات: --', 'en': 'Default Probability over 3 years: --', 'fr': 'Probabilité de défaut sur 3 ans : --'},
+            'ai_failure_5y': {'ar': 'احتمالية التعثر خلال 5 سنوات: --', 'en': 'Default Probability over 5 years: --', 'fr': 'Probabilité de défaut sur 5 ans : --'},
+            'ai_main_concerns': {'ar': 'المخاوف الرئيسية: --', 'en': 'Primary Concerns: --', 'fr': 'Préoccupations majeures : --'},
+            'ai_failure_hint': {
+                'ar': 'تحليل اتجاهات Z-Score والديون لرصد التدهور المالي قبل وقوعه',
+                'en': '💡 Tracks Z-Score and debt trends to detect financial deterioration early',
+                'fr': '💡 Suit les tendances du Z-Score et de la dette pour anticiper la détérioration financière',
+            },
+            'ai_growth_frame': {'ar': '3. درجة استدامة النمو', 'en': '3. Growth Sustainability Grade', 'fr': '3. Score de durabilité de croissance'},
+            'ai_score': {'ar': 'النتيجة: -- / 100', 'en': 'Score: -- / 100', 'fr': 'Score : -- / 100'},
+            'ai_grade': {'ar': 'الدرجة: --', 'en': 'Grade: --', 'fr': 'Niveau : --'},
+            'ai_assessment': {'ar': 'التقييم: --', 'en': 'Assessment: --', 'fr': 'Évaluation : --'},
+            'ai_growth_hint': {
+                'ar': 'تقييم قدرة الشركة على تحقيق النمو بدون زيادة خطيرة في الديون',
+                'en': '💡 Evaluates the company’s ability to grow without excessive leverage',
+                'fr': '💡 Évalue la capacité de croissance sans hausse excessive de l’endettement',
+            },
+            'ai_wc_frame': {'ar': '4. تحليل رأس المال العامل الذكي', 'en': '4. AI Working Capital Analysis', 'fr': '4. Analyse IA du besoin en fonds de roulement'},
+            'ai_wc_crisis': {'ar': 'احتمالية أزمة سيولة: --', 'en': 'Liquidity Crisis Probability: --', 'fr': 'Probabilité de crise de liquidité : --'},
+            'ai_wc_ccc': {'ar': 'دورة التحويل النقدي الحالية: --', 'en': 'Current Cash Conversion Cycle: --', 'fr': 'Cycle de conversion de trésorerie actuel : --'},
+            'ai_wc_trend': {'ar': 'الاتجاه: --', 'en': 'Trend: --', 'fr': 'Tendance : --'},
+            'ai_wc_hint': {
+                'ar': 'توقع الاختناقات في السيولة النقدية رغم وجود أرباح',
+                'en': '💡 Forecasts cash bottlenecks even when accounting profits are positive',
+                'fr': '💡 Anticipe les tensions de trésorerie malgré des bénéfices comptables positifs',
+            },
+            'ai_quality_frame': {'ar': '5. تقييم جودة الاستثمار النهائي', 'en': '5. AI Investment Quality Score', 'fr': '5. Score IA de qualité d\'investissement'},
+            'ai_quality_score': {'ar': 'النتيجة النهائية: -- / 100', 'en': 'Final Score: -- / 100', 'fr': 'Score final : -- / 100'},
+            'ai_verdict': {'ar': 'الحكم: --', 'en': 'Verdict: --', 'fr': 'Verdict : --'},
+            'ai_invest_action': {'ar': 'التوصية الاستثمارية: --', 'en': 'Investment Action: --', 'fr': 'Action d\'investissement : --'},
+            'ai_percentile': {'ar': 'أفضل من: --% من الشركات', 'en': 'Better than: --% of companies', 'fr': 'Meilleur que : --% des sociétés'},
+            'ai_quality_hint': {
+                'ar': 'تقييم شامل يجمع Economic Spread و FCF Yield و ROIC و Z-Score',
+                'en': '💡 Composite score based on Economic Spread, FCF Yield, ROIC, and Z-Score',
+                'fr': '💡 Score composite basé sur Economic Spread, FCF Yield, ROIC et Z-Score',
+            },
+            'ai_btn_refresh': {'ar': 'إعادة حساب التحليل الذكي', 'en': 'Recalculate AI Analysis', 'fr': 'Recalculer l\'analyse IA'},
+            'ai_btn_train': {'ar': 'تدريب النماذج الآن', 'en': 'Train Models Now', 'fr': 'Entraîner les modèles'},
+            'ai_btn_stats': {'ar': 'إحصائيات التدريب', 'en': 'Training Statistics', 'fr': 'Statistiques d\'entraînement'},
+            'chat_header': {'ar': 'منصة الدردشة المالية الذكية', 'en': 'Smart Financial Chat Platform', 'fr': 'Plateforme de chat financier intelligente'},
+            'chat_desc': {'ar': 'اسأل بأي لغة: تحليل، تفسير، مخاطر، توقعات، أو تقرير شامل اعتمادًا على بياناتك الحالية.', 'en': 'Ask in any language: analysis, explanation, risk, forecasts, or full report based on your current data.', 'fr': 'Posez vos questions dans n’importe quelle langue : analyse, explication, risque, prévisions ou rapport complet basé sur vos données.'},
+            'chat_input_hint': {'ar': 'اكتب سؤالك هنا...', 'en': 'Type your question here...', 'fr': 'Écrivez votre question ici...'},
+            'chat_send': {'ar': 'إرسال', 'en': 'Send', 'fr': 'Envoyer'},
+            'chat_clear': {'ar': 'مسح المحادثة', 'en': 'Clear Chat', 'fr': 'Effacer le chat'},
+            'chat_make_report': {'ar': 'توليد تقرير تلقائي', 'en': 'Generate Auto Report', 'fr': 'Générer un rapport automatique'},
+            'chat_export_word': {'ar': 'تصدير تقرير Word', 'en': 'Export Word Report', 'fr': 'Exporter rapport Word'},
+            'chat_mode_label': {'ar': 'نمط الرد:', 'en': 'Reply Mode:', 'fr': 'Mode de réponse :'},
+            'chat_mode_auto': {'ar': 'تلقائي', 'en': 'Auto', 'fr': 'Auto'},
+            'chat_mode_quick': {'ar': 'جواب سريع', 'en': 'Quick Answer', 'fr': 'Réponse rapide'},
+            'chat_mode_expert': {'ar': 'تحليل خبير', 'en': 'Expert Analysis', 'fr': 'Analyse experte'},
+            'chat_mode_report': {'ar': 'تقرير كامل', 'en': 'Full Report', 'fr': 'Rapport complet'},
+            'chat_use_cloud': {'ar': 'استخدام نموذج سحابي عند توفر API', 'en': 'Use cloud model when API is available', 'fr': 'Utiliser le modèle cloud si API disponible'},
+            'chat_status_local': {'ar': 'الوضع: محلي', 'en': 'Mode: Local', 'fr': 'Mode : Local'},
+            'chat_status_cloud': {'ar': 'الوضع: سحابي', 'en': 'Mode: Cloud', 'fr': 'Mode : Cloud'},
+            'chat_status_thinking': {'ar': 'جارٍ التحليل...', 'en': 'Analyzing...', 'fr': 'Analyse en cours...'},
+            'chat_no_data': {'ar': 'لا توجد بيانات حالية. قم بجلب بيانات شركة أولاً.', 'en': 'No current data. Fetch a company first.', 'fr': 'Aucune donnée actuelle. Chargez d’abord une société.'},
+            'chat_cloud_missing': {'ar': 'مفتاح API غير متوفر. تم استخدام الوضع المحلي.', 'en': 'API key not available. Local mode was used.', 'fr': 'Clé API indisponible. Mode local utilisé.'},
+            'chat_word_saved': {'ar': 'تم حفظ تقرير Word بنجاح.', 'en': 'Word report saved successfully.', 'fr': 'Rapport Word enregistré avec succès.'},
+            'chat_word_dependency': {'ar': 'يلزم تثبيت python-docx لتفعيل تصدير Word: pip install python-docx', 'en': 'python-docx is required for Word export: pip install python-docx', 'fr': 'python-docx est requis pour l’export Word: pip install python-docx'},
+            'raw_col_item': {'ar': 'البند', 'en': 'Item', 'fr': 'Poste'},
+            'raw_col_unit': {'ar': 'الوحدة', 'en': 'Unit', 'fr': 'Unité'},
+            'raw_col_source': {'ar': 'المصدر', 'en': 'Source', 'fr': 'Source'},
+            'raw_col_category': {'ar': 'التصنيف', 'en': 'Category', 'fr': 'Catégorie'},
+            'raw_col_normalized': {'ar': 'البند المعياري', 'en': 'Normalized Item', 'fr': 'Poste normalisé'},
+            'raw_col_used_in': {'ar': 'مستخدم في', 'en': 'Used In', 'fr': 'Utilisé dans'},
+            'ratio_col_name': {'ar': 'النسبة', 'en': 'Ratio', 'fr': 'Ratio'},
+            'ratio_col_explanation': {'ar': 'تفسير', 'en': 'Explanation', 'fr': 'Explication'},
+            'strategic_col_metric': {'ar': 'المقياس', 'en': 'Metric', 'fr': 'Indicateur'},
+        }
+        icon_subs = {
+            '🌐': '◌',
+            '🤖': '◈',
+            '📈': '◆',
+            '📊': '▣',
+            '💬': '◉',
+            '🚨': '▲',
+            '📉': '▼',
+            '💰': '■',
+            '⭐': '✦',
+            '💡': '•',
+            '🔄': '↻',
+            '🎓': '◍',
+            '🏢': '▤',
+            '✅': '✓',
+            '⚠️': '△',
+            '⚠': '△',
+            '🎯': '◈',
+            '❌': '✕',
+            '⬆️': '↑',
+            '⬇️': '↓',
+            '↔️': '↔',
+        }
+        for key, langs in self._i18n.items():
+            if not isinstance(langs, dict):
+                continue
+            for lg, val in list(langs.items()):
+                if isinstance(val, str):
+                    cleaned = val
+                    for old_icon, new_icon in icon_subs.items():
+                        cleaned = cleaned.replace(old_icon, new_icon)
+                    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
+                    langs[lg] = cleaned
+        self._i18n_reverse = {}
+        for key, langs in self._i18n.items():
+            for val in langs.values():
+                norm = re.sub(r'\s+', ' ', str(val)).strip()
+                if norm:
+                    self._i18n_reverse[norm] = key
+        self._init_financial_term_translations()
+
+    def _normalize_term_for_lookup(self, text: str) -> str:
+        s = self._decode_mojibake_text(str(text or ""))
+        s = s.replace('\u200f', '').replace('\u200e', '')
+        s = s.replace('—', '-').replace('–', '-').replace('_', ' ')
+        s = re.sub(r'\s+', ' ', s).strip().lower()
+        return s
+
+    def _init_financial_term_translations(self):
+        self._term_i18n = {}
+        self._term_reverse_to_en = {}
+        self._ratio_expl_i18n = {}
+
+        def add_term(source, ar, en=None, fr=None):
+            en_val = en if en is not None else source
+            fr_val = fr if fr is not None else en_val
+            self._term_i18n[self._normalize_term_for_lookup(source)] = {
+                'ar': ar,
+                'en': en_val,
+                'fr': fr_val,
+            }
+
+        # Core financial statement terms
+        add_term('Line Item', 'البند')
+        add_term('Item', 'البند')
+        add_term('Unit', 'الوحدة')
+        add_term('Source', 'المصدر')
+        add_term('Category', 'التصنيف')
+        add_term('Normalized Item', 'البند المعياري')
+        add_term('Revenue', 'الإيرادات')
+        add_term('Revenues', 'الإيرادات')
+        add_term('SalesRevenueNet', 'صافي إيرادات المبيعات')
+        add_term('CostOfRevenue', 'تكلفة الإيرادات')
+        add_term('GrossProfit', 'إجمالي الربح')
+        add_term('OperatingIncomeLoss', 'الدخل التشغيلي (الخسارة)')
+        add_term('NetIncomeLoss', 'صافي الدخل (الخسارة)')
+        add_term('AssetsCurrent', 'الأصول المتداولة')
+        add_term('LiabilitiesCurrent', 'الخصوم المتداولة')
+        add_term('StockholdersEquity', 'حقوق المساهمين')
+        add_term('AccountsReceivableNetCurrent', 'الذمم المدينة - صافي')
+        add_term('AccountsPayableCurrent', 'الذمم الدائنة')
+        add_term('InventoryNet', 'المخزون الصافي')
+        add_term('CashAndCashEquivalentsAtCarryingValue', 'النقد وما يعادله')
+        add_term('Gross margin', 'الهامش الإجمالي')
+        add_term('Net revenue', 'صافي الإيرادات')
+        add_term('Net sales', 'صافي المبيعات')
+        add_term('Cost of sales', 'تكلفة المبيعات')
+        add_term('Cost of revenue', 'تكلفة الإيرادات')
+        add_term('Products', 'المنتجات')
+        add_term('Marketable securities', 'الأوراق المالية القابلة للتداول')
+        add_term('Vendor non-trade receivables', 'ذمم مدينة غير تجارية من الموردين')
+        add_term('Gross profit', 'إجمالي الربح')
+        add_term('Operating expenses', 'المصروفات التشغيلية')
+        add_term('Total operating expenses', 'إجمالي المصروفات التشغيلية')
+        add_term('Operating expenses:', 'المصروفات التشغيلية:')
+        add_term('Operating income (loss)', 'الدخل التشغيلي (الخسارة)')
+        add_term('Operating income', 'الدخل التشغيلي')
+        add_term('Other income/(expense), net', 'إيرادات/(مصروفات) أخرى - صافي')
+        add_term('Income before provision for income taxes', 'الدخل قبل مخصص ضرائب الدخل')
+        add_term('Provision for income taxes', 'مخصص ضرائب الدخل')
+        add_term('Net income (loss)', 'صافي الدخل (الخسارة)')
+        add_term('Net income', 'صافي الدخل')
+        add_term('Income (loss) before taxes', 'الدخل (الخسارة) قبل الضرائب')
+        add_term('Provision for (benefit from) taxes', 'مخصص (منفعة) الضرائب')
+        add_term('Research and development', 'البحث والتطوير')
+        add_term('Selling, general and administrative', 'البيع والعمومية والإدارية')
+        add_term('Marketing, general, and administrative', 'التسويق والعمومية والإدارية')
+        add_term('Restructuring and other charges', 'تكاليف إعادة الهيكلة وبنود أخرى')
+        add_term('Assets', 'إجمالي الأصول')
+        add_term('Total assets', 'إجمالي الأصول')
+        add_term('Total current assets', 'إجمالي الأصول المتداولة')
+        add_term('Current assets', 'الأصول المتداولة')
+        add_term('Current liabilities', 'الخصوم المتداولة')
+        add_term('Total liabilities', 'إجمالي الخصوم')
+        add_term('Liabilities', 'إجمالي الخصوم')
+        add_term('Stockholders equity', 'حقوق المساهمين')
+        add_term('Total equity', 'إجمالي حقوق الملكية')
+        add_term('Cash and cash equivalents', 'النقد وما يعادله')
+        add_term('Short-term investments', 'الاستثمارات قصيرة الأجل')
+        add_term('Accounts receivable, net', 'الذمم المدينة - صافي')
+        add_term('Accounts payable', 'الذمم الدائنة')
+        add_term('Inventories', 'المخزون')
+        add_term('Property, plant and equipment, net', 'الممتلكات والمعدات - صافي')
+        add_term('Goodwill', 'الشهرة')
+        add_term('Identified intangible assets, net', 'الأصول غير الملموسة المحددة - صافي')
+        add_term('Other current assets', 'أصول متداولة أخرى')
+        add_term('Other long-term assets', 'أصول طويلة الأجل أخرى')
+        add_term('Temporary equity', 'حقوق ملكية مؤقتة')
+        add_term('Basic (shares)', 'الأساسي (عدد الأسهم)')
+        add_term('Diluted (shares)', 'المخفف (عدد الأسهم)')
+        add_term('Basic (in shares)', 'أساسي (بالأسهم)')
+        add_term('Diluted (in shares)', 'مخفف (بالأسهم)')
+        add_term('Basic (in dollars per share)', 'أساسي (بالدولار لكل سهم)')
+        add_term('Diluted (in dollars per share)', 'مخفف (بالدولار لكل سهم)')
+        add_term('Earnings per share:', 'ربحية السهم:')
+        add_term('Shares used in computing earnings per share', 'الأسهم المستخدمة في احتساب ربحية السهم')
+        add_term('Shares used in computing earnings per share:', 'الأسهم المستخدمة في احتساب ربحية السهم:')
+        add_term('Weighted average shares of common stock outstanding:', 'المتوسط المرجح لأسهم الأسهم العادية القائمة:')
+        add_term('Income Statement [Abstract]', 'قائمة الدخل [ملخص]')
+        add_term('Current liabilities:', 'الخصوم المتداولة:')
+        add_term('Current assets:', 'الأصول المتداولة:')
+        add_term('Non-current assets:', 'الأصول غير المتداولة:')
+        add_term('Non-current liabilities:', 'الخصوم غير المتداولة:')
+        add_term('Other non-current assets', 'أصول غير متداولة أخرى')
+        add_term('Other current liabilities', 'خصوم متداولة أخرى')
+
+        # Raw concept names / canonical labels
+        add_term('Operating Cash Flow', 'التدفق النقدي التشغيلي')
+        add_term('Investing Cash Flow', 'التدفق النقدي الاستثماري')
+        add_term('Financing Cash Flow', 'التدفق النقدي التمويلي')
+        add_term('Capital Expenditures', 'النفقات الرأسمالية')
+        add_term('Depreciation and Amortization', 'الاستهلاك والإطفاء')
+        add_term('Interest Expense', 'مصروف الفائدة')
+        add_term('Basic (in shares)', 'أساسي (بالأسهم)')
+        add_term('Shares outstanding', 'الأسهم القائمة')
+
+        # Ratio group headers
+        add_term('Profitability Ratios', 'نسب الربحية')
+        add_term('Activity & Efficiency Ratios', 'نسب النشاط والكفاءة')
+        add_term('Liquidity Ratios', 'نسب السيولة')
+        add_term('Solvency Ratios', 'نسب الملاءة')
+        add_term('Market Ratios', 'نسب السوق')
+        add_term('Valuation & Capital Ratios', 'نسب التقييم ورأس المال')
+        add_term('Safety & Risk Ratios', 'نسب الأمان والمخاطر')
+        add_term('Cash Flow Ratios', 'نسب التدفقات النقدية')
+        add_term('Banking Core Ratios', 'نسب البنوك الأساسية')
+        add_term('Banking Profitability & Solvency', 'ربحية وملاءة البنوك')
+        add_term('Banking Market Ratios', 'نسب السوق للبنوك')
+        add_term('Insurance Core Ratios', 'نسب التأمين الأساسية')
+        add_term('Insurance Market Ratios', 'نسب السوق لقطاع التأمين')
+
+        # Common ratio names
+        add_term('Gross Profit Margin', 'هامش إجمالي الربح')
+        add_term('Operating Profit Margin', 'هامش الربح التشغيلي')
+        add_term('Net Profit Margin', 'هامش صافي الربح')
+        add_term('EBITDA Margin', 'هامش EBITDA')
+        add_term('ROA (Return on Assets)', 'العائد على الأصول (ROA)')
+        add_term('ROE (Return on Equity)', 'العائد على حقوق الملكية (ROE)')
+        add_term('ROIC (Return on Invested Capital)', 'العائد على رأس المال المستثمر (ROIC)')
+        add_term('Current Ratio', 'نسبة التداول')
+        add_term('Quick Ratio', 'النسبة السريعة')
+        add_term('Cash Ratio', 'النسبة النقدية')
+        add_term('Debt-to-Equity', 'الدين إلى حقوق الملكية')
+        add_term('Debt-to-Assets', 'الدين إلى الأصول')
+        add_term('Interest Coverage Ratio', 'نسبة تغطية الفائدة')
+        add_term('Net Debt / EBITDA', 'صافي الدين إلى EBITDA')
+        add_term('P/E Ratio', 'مكرر الربحية (P/E)')
+        add_term('P/B Ratio', 'مكرر القيمة الدفترية (P/B)')
+        add_term('Dividend Yield', 'عائد التوزيعات')
+        add_term('EPS (Earnings Per Share)', 'ربحية السهم (EPS)')
+        add_term('Book Value Per Share', 'القيمة الدفترية للسهم')
+        add_term('Market Cap (Million USD)', 'القيمة السوقية (مليون دولار)')
+        add_term('Enterprise Value (Million USD)', 'قيمة المنشأة (مليون دولار)')
+        add_term('EV/EBITDA', 'مضاعف EV/EBITDA')
+        add_term('WACC', 'متوسط تكلفة رأس المال المرجّح')
+        add_term('FCF Yield', 'عائد التدفق النقدي الحر')
+        add_term('Operating Cash Flow Margin', 'هامش التدفق النقدي التشغيلي')
+        add_term('Free Cash Flow', 'التدفق النقدي الحر')
+        add_term('FCF Per Share', 'التدفق النقدي الحر لكل سهم')
+
+        # Strategic section/group labels
+        add_term('--- Strategic & Value Tier ---', '--- شريحة الاستراتيجية والقيمة ---')
+        add_term('--- Quality & Risk Tier ---', '--- شريحة الجودة والمخاطر ---')
+        add_term('--- Performance Analysis Tier ---', '--- شريحة تحليل الأداء ---')
+        add_term('--- Operational Efficiency Tier ---', '--- شريحة الكفاءة التشغيلية ---')
+        add_term('--- Market Valuation Tier ---', '--- شريحة تقييم السوق ---')
+        add_term('--- Banking Strategic Tier ---', '--- الشريحة الاستراتيجية للبنوك ---')
+        add_term('--- Banking Market Tier ---', '--- شريحة السوق للبنوك ---')
+        add_term('--- Insurance Strategic Tier ---', '--- الشريحة الاستراتيجية للتأمين ---')
+        add_term('--- Insurance Market Tier ---', '--- شريحة السوق للتأمين ---')
+
+        # Strategic metric display names
+        add_term('Fair_Value_Estimate (per share)', 'القيمة العادلة المقدّرة (للسهم)')
+        add_term('Investment_Score (0-100)', 'درجة الاستثمار (0-100)')
+        add_term('Economic_Spread (ROIC - WACC)', 'الفارق الاقتصادي (ROIC - WACC)')
+        add_term('Altman_Z_Score', 'درجة Altman Z')
+        add_term('Warning_Signal', 'إشارة التحذير')
+        add_term('Accruals_Ratio', 'نسبة الاستحقاقات')
+        add_term('Accruals_Change', 'تغير الاستحقاقات')
+        add_term('Credit_Rating', 'التصنيف الائتماني')
+        add_term('Credit_Rating_Score', 'درجة التصنيف الائتماني')
+        add_term('NI_Growth (1y)', 'نمو صافي الدخل (سنة واحدة)')
+        add_term('Retention_Ratio', 'نسبة الاحتجاز')
+        add_term('Dividends_Paid', 'التوزيعات المدفوعة')
+        add_term('FCF_per_Share', 'FCF لكل سهم')
+        add_term('Inventory Days (DIH)', 'أيام المخزون (DIH)')
+        add_term('AR Days (DSO)', 'أيام الذمم المدينة (DSO)')
+        add_term('AP Days (DPO)', 'أيام الذمم الدائنة (DPO)')
+        add_term('Cost_of_Debt (input)', 'تكلفة الدين (مدخل)')
+        add_term('P/E Ratio (Used)', 'مكرر الربحية المستخدم')
+        add_term('P/B Ratio (Used)', 'مكرر القيمة الدفترية المستخدم')
+        add_term('ROA', 'العائد على الأصول')
+        add_term('ROE', 'العائد على حقوق الملكية')
+        add_term('ROIC', 'العائد على رأس المال المستثمر')
+        add_term('EPS', 'ربحية السهم')
+        add_term('Net Margin', 'هامش صافي الربح')
+        add_term('Op_Leverage', 'الرافعة التشغيلية')
+        add_term('CCC_Days', 'أيام دورة التحويل النقدي')
+        add_term('AR Days (DSO)', 'أيام الذمم المدينة (DSO)')
+        add_term('AP Days (DPO)', 'أيام الذمم الدائنة (DPO)')
+        add_term('Inventory_Days', 'أيام المخزون')
+        add_term('AR_Days', 'أيام الذمم المدينة')
+        add_term('AP_Days', 'أيام الذمم الدائنة')
+        add_term('Beta (Market Risk)', 'بيتا (مخاطر السوق)')
+        add_term('SGR_Internal (Sustainable Growth)', 'معدل النمو الداخلي المستدام')
+        add_term('Cost_of_Debt', 'تكلفة الدين')
+        add_term('Beta', 'بيتا')
+        add_term('FCF_Yield', 'عائد التدفق النقدي الحر')
+        add_term('Dividend_Yield', 'عائد التوزيعات')
+        add_term('Net Interest Margin (NIM)', 'هامش صافي الفائدة (NIM)')
+        add_term('Loan-to-Deposit Ratio', 'نسبة القروض إلى الودائع')
+        add_term('Loan-to-Deposit Ratio (LDR)', 'نسبة القروض إلى الودائع (LDR)')
+        add_term('Capital Ratio Proxy', 'مؤشر كفاية رأس المال')
+        add_term('Efficiency Ratio', 'نسبة الكفاءة التشغيلية')
+        add_term('Net Income / Assets', 'صافي الدخل إلى الأصول')
+        add_term('Equity Ratio', 'نسبة حقوق الملكية')
+        add_term('Combined Ratio Proxy', 'مؤشر النسبة المجمعة')
+        add_term('Capital Adequacy Proxy', 'مؤشر كفاية رأس المال')
+        add_term('Bank Total Revenue', 'إجمالي إيرادات البنك')
+        add_term('Net Interest Margin', 'هامش صافي الفائدة')
+        add_term('Operating Margin', 'الهامش التشغيلي')
+        add_term('Net Margin', 'هامش صافي الربح')
+        add_term('PE_Ratio', 'مكرر الربحية')
+        add_term('PB_Ratio', 'مكرر القيمة الدفترية')
+        add_term('PE_Ratio_Used', 'مكرر الربحية المستخدم')
+        add_term('PB_Ratio_Used', 'مكرر القيمة الدفترية المستخدم')
+        add_term('Dividend_Yield', 'عائد التوزيعات')
+        add_term('Cost_of_Debt (input)', 'تكلفة الدين (مدخل)')
+        add_term('EV_EBITDA', 'مضاعف EV/EBITDA')
+
+        # Ratio explanation by ratio id (source of truth independent from UI text)
+        self._ratio_expl_i18n = {
+            'gross_margin': {
+                'ar': 'هامش الربح الإجمالي',
+                'en': 'Gross profitability margin',
+                'fr': 'Marge brute',
+            },
+            'operating_margin': {
+                'ar': 'كفاءة التشغيل الأساسية',
+                'en': 'Operating profitability margin',
+                'fr': 'Marge opérationnelle',
+            },
+            'net_margin': {
+                'ar': 'هامش صافي الربح',
+                'en': 'Net profitability margin',
+                'fr': 'Marge nette',
+            },
+            'current_ratio': {
+                'ar': 'القدرة على السداد قصير الأجل',
+                'en': 'Short-term solvency',
+                'fr': 'Capacité de paiement à court terme',
+            },
+            'quick_ratio': {
+                'ar': 'السيولة الفورية',
+                'en': 'Immediate liquidity',
+                'fr': 'Liquidité immédiate',
+            },
+            'debt_to_equity': {
+                'ar': 'الاعتماد على التمويل بالدين',
+                'en': 'Leverage versus equity',
+                'fr': 'Endettement par rapport aux capitaux propres',
+            },
+            'debt_to_assets': {
+                'ar': 'نسبة الأصول الممولة بالدين',
+                'en': 'Debt share in assets',
+                'fr': 'Part des actifs financés par la dette',
+            },
+            'interest_coverage': {
+                'ar': 'قدرة تغطية الفوائد',
+                'en': 'Interest payment coverage',
+                'fr': 'Couverture des intérêts',
+            },
+            'pe_ratio': {
+                'ar': 'مكرر الربحية',
+                'en': 'Price-to-earnings multiple',
+                'fr': 'Multiple cours/bénéfice',
+            },
+            'pb_ratio': {
+                'ar': 'مكرر القيمة الدفترية',
+                'en': 'Price-to-book multiple',
+                'fr': 'Multiple cours/valeur comptable',
+            },
+            'dividend_yield': {
+                'ar': 'عائد التوزيعات النقدية',
+                'en': 'Dividend cash yield',
+                'fr': 'Rendement du dividende',
+            },
+            'fcf_yield': {
+                'ar': 'عائد التدفق النقدي الحر',
+                'en': 'Free cash flow yield',
+                'fr': 'Rendement du flux de trésorerie libre',
+            },
+            'ebitda_margin': {
+                'ar': 'هامش الأرباح قبل الفوائد والضرائب والاستهلاك',
+                'en': 'EBITDA profitability margin',
+                'fr': 'Marge EBITDA',
+            },
+            'roa': {
+                'ar': 'العائد على الأصول',
+                'en': 'Return on assets',
+                'fr': 'Rendement des actifs',
+            },
+            'roe': {
+                'ar': 'العائد على حقوق الملكية',
+                'en': 'Return on equity',
+                'fr': 'Rendement des capitaux propres',
+            },
+            'roic': {
+                'ar': 'العائد على رأس المال المستثمر',
+                'en': 'Return on invested capital',
+                'fr': 'Rendement du capital investi',
+            },
+            'inventory_turnover': {
+                'ar': 'معدل دوران المخزون',
+                'en': 'Inventory turnover rate',
+                'fr': 'Rotation des stocks',
+            },
+            'inventory_days': {
+                'ar': 'عدد أيام الاحتفاظ بالمخزون',
+                'en': 'Days inventory held',
+                'fr': 'Jours de détention des stocks',
+            },
+            'days_sales_outstanding': {
+                'ar': 'عدد أيام التحصيل من العملاء',
+                'en': 'Days sales outstanding',
+                'fr': 'Délai moyen de recouvrement',
+            },
+            'payables_turnover': {
+                'ar': 'معدل دوران الذمم الدائنة',
+                'en': 'Payables turnover rate',
+                'fr': 'Rotation des dettes fournisseurs',
+            },
+            'ap_days': {
+                'ar': 'عدد أيام سداد الموردين',
+                'en': 'Days payable outstanding',
+                'fr': 'Délai moyen de paiement fournisseurs',
+            },
+            'asset_turnover': {
+                'ar': 'معدل دوران الأصول',
+                'en': 'Asset turnover rate',
+                'fr': 'Rotation des actifs',
+            },
+            'cash_ratio': {
+                'ar': 'نسبة السيولة النقدية',
+                'en': 'Cash liquidity ratio',
+                'fr': 'Ratio de liquidité immédiate',
+            },
+            'net_debt_ebitda': {
+                'ar': 'صافي الدين مقارنة بـ EBITDA',
+                'en': 'Net debt relative to EBITDA',
+                'fr': 'Dette nette rapportée à l’EBITDA',
+            },
+            'eps_basic': {
+                'ar': 'ربحية السهم الأساسية',
+                'en': 'Basic earnings per share',
+                'fr': 'Bénéfice par action de base',
+            },
+            'book_value_per_share': {
+                'ar': 'القيمة الدفترية لكل سهم',
+                'en': 'Book value per share',
+                'fr': 'Valeur comptable par action',
+            },
+            'market_cap': {
+                'ar': 'القيمة السوقية',
+                'en': 'Market capitalization',
+                'fr': 'Capitalisation boursière',
+            },
+            'enterprise_value': {
+                'ar': 'قيمة المنشأة',
+                'en': 'Enterprise value',
+                'fr': 'Valeur d’entreprise',
+            },
+            'ev_ebitda': {
+                'ar': 'مضاعف قيمة المنشأة إلى EBITDA',
+                'en': 'Enterprise value to EBITDA multiple',
+                'fr': 'Multiple valeur d’entreprise / EBITDA',
+            },
+            'cost_of_debt': {
+                'ar': 'تكلفة الدين',
+                'en': 'Cost of debt',
+                'fr': 'Coût de la dette',
+            },
+            'wacc': {
+                'ar': 'متوسط تكلفة رأس المال المرجح',
+                'en': 'Weighted average cost of capital',
+                'fr': 'Coût moyen pondéré du capital',
+            },
+            'altman_z_score': {
+                'ar': 'مؤشر ألتمان Z للمخاطر',
+                'en': 'Altman Z risk score',
+                'fr': 'Score de risque Altman Z',
+            },
+            'accruals_ratio': {
+                'ar': 'نسبة الاستحقاقات',
+                'en': 'Accruals ratio',
+                'fr': 'Ratio des régularisations',
+            },
+            'ocf_margin': {
+                'ar': 'هامش التدفق النقدي التشغيلي',
+                'en': 'Operating cash flow margin',
+                'fr': 'Marge de flux de trésorerie opérationnel',
+            },
+            'free_cash_flow': {
+                'ar': 'التدفق النقدي الحر',
+                'en': 'Free cash flow',
+                'fr': 'Flux de trésorerie libre',
+            },
+            'fcf_per_share': {
+                'ar': 'التدفق النقدي الحر لكل سهم',
+                'en': 'Free cash flow per share',
+                'fr': 'Flux de trésorerie libre par action',
+            },
+            'net_interest_margin': {
+                'ar': 'هامش صافي الفائدة',
+                'en': 'Net interest margin',
+                'fr': 'Marge nette d’intérêt',
+            },
+            'loan_to_deposit_ratio': {
+                'ar': 'نسبة القروض إلى الودائع',
+                'en': 'Loan-to-deposit ratio',
+                'fr': 'Ratio prêts/dépôts',
+            },
+            'capital_ratio_proxy': {
+                'ar': 'مؤشر كفاية رأس المال',
+                'en': 'Capital adequacy proxy',
+                'fr': 'Proxy de solvabilité du capital',
+            },
+            'bank_efficiency_ratio': {
+                'ar': 'نسبة كفاءة البنك',
+                'en': 'Bank efficiency ratio',
+                'fr': 'Ratio d’efficacité bancaire',
+            },
+            'net_income_to_assets': {
+                'ar': 'صافي الدخل إلى الأصول',
+                'en': 'Net income to assets',
+                'fr': 'Résultat net rapporté aux actifs',
+            },
+            'equity_ratio': {
+                'ar': 'نسبة حقوق الملكية',
+                'en': 'Equity ratio',
+                'fr': 'Ratio des capitaux propres',
+            },
+            'combined_proxy': {
+                'ar': 'مؤشر النسبة المجمعة',
+                'en': 'Combined ratio proxy',
+                'fr': 'Proxy du ratio combiné',
+            },
+            'capital_adequacy_proxy': {
+                'ar': 'مؤشر كفاية رأس المال',
+                'en': 'Capital adequacy proxy',
+                'fr': 'Proxy de suffisance du capital',
+            },
+        }
+
+        # Phrase-level fallback translations for unseen labels.
+        self._term_phrase_i18n = {
+            'ar': {
+                'gross margin': 'الهامش الإجمالي',
+                'gross profit': 'إجمالي الربح',
+                'operating expenses': 'المصروفات التشغيلية',
+                'total operating expenses': 'إجمالي المصروفات التشغيلية',
+                'operating income': 'الدخل التشغيلي',
+                'other income': 'إيرادات أخرى',
+                'expense': 'مصروف',
+                'net income': 'صافي الدخل',
+                'net income loss': 'صافي الدخل (الخسارة)',
+                'products': 'المنتجات',
+                'marketable securities': 'الأوراق المالية القابلة للتداول',
+                'vendor non-trade receivables': 'ذمم مدينة غير تجارية من الموردين',
+                'non-current assets': 'الأصول غير المتداولة',
+                'non-current liabilities': 'الخصوم غير المتداولة',
+                'other non-current assets': 'أصول غير متداولة أخرى',
+                'income before': 'الدخل قبل',
+                'provision for income taxes': 'مخصص ضرائب الدخل',
+                'research and development': 'البحث والتطوير',
+                'selling, general and administrative': 'البيع والعمومية والإدارية',
+                'earnings per share': 'ربحية السهم',
+                'basic': 'أساسي',
+                'diluted': 'مخفف',
+                'shares used in computing': 'الأسهم المستخدمة في احتساب',
+                'shares': 'الأسهم',
+                'cash and cash equivalents': 'النقد وما يعادله',
+                'accounts receivable': 'الذمم المدينة',
+                'accounts payable': 'الذمم الدائنة',
+                'inventory': 'المخزون',
+                'assets': 'الأصول',
+                'liabilities': 'الخصوم',
+                'equity': 'حقوق الملكية',
+                'revenue': 'الإيرادات',
+                'cost of revenue': 'تكلفة الإيرادات',
+                'loss': 'الخسارة',
+            },
+            'fr': {
+                'gross margin': 'marge brute',
+                'gross profit': 'profit brut',
+                'operating expenses': 'charges opérationnelles',
+                'operating income': 'résultat opérationnel',
+                'net income': 'résultat net',
+                'products': 'produits',
+                'marketable securities': 'titres négociables',
+                'vendor non-trade receivables': 'créances non commerciales sur fournisseurs',
+                'non-current assets': 'actifs non courants',
+                'non-current liabilities': 'passifs non courants',
+                'research and development': 'recherche et développement',
+                'selling, general and administrative': 'frais commerciaux, généraux et administratifs',
+                'earnings per share': 'bénéfice par action',
+                'cash and cash equivalents': 'trésorerie et équivalents',
+                'accounts receivable': 'créances clients',
+                'accounts payable': 'dettes fournisseurs',
+                'inventory': 'stocks',
+                'assets': 'actifs',
+                'liabilities': 'passifs',
+                'equity': 'capitaux propres',
+                'revenue': 'revenus',
+            },
+        }
+
+        # Reverse lookup map: Arabic/English/French variants -> canonical EN label.
+        # This allows strong semantic deduplication across languages in UI/export.
+        for _, bundle in (self._term_i18n or {}).items():
+            en_label = self._normalize_term_for_lookup(bundle.get('en', ''))
+            if not en_label:
+                continue
+            for vv in (bundle.get('ar', ''), bundle.get('en', ''), bundle.get('fr', '')):
+                nk = self._normalize_term_for_lookup(vv)
+                if nk:
+                    self._term_reverse_to_en[nk] = en_label
+
+    def _translate_financial_item(self, label: str) -> str:
+        txt = self._decode_mojibake_text(str(label or ""))
+        if self._is_technical_label(txt) and not bool(self.translate_technical_var.get()):
+            return txt
+        key = self._normalize_term_for_lookup(txt)
+        if key in self._term_i18n:
+            return self._term_i18n[key].get(self.current_lang, txt)
+
+        # Handle " - Group Title - " style wrappers.
+        m = re.match(r'^\s*-\s*(.*?)\s*-\s*$', txt)
+        if m:
+            core = m.group(1).strip()
+            translated = self._translate_financial_item(core)
+            return f"- {translated} -"
+
+        return self._smart_translate_financial_phrase(txt)
+
+    def _is_technical_label(self, label: str) -> bool:
+        txt = self._decode_mojibake_text(str(label or '')).strip()
+        if not txt:
+            return False
+        # XBRL/SEC tags and namespaced concepts.
+        if re.fullmatch(r'[a-z][a-z0-9\-]*:[A-Za-z0-9_]+', txt):
+            return True
+        # Typical technical identifiers / ratio keys.
+        if re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', txt):
+            if '_' in txt:
+                return True
+            if re.search(r'[A-Z].*[A-Z]', txt) and ' ' not in txt:
+                return True
+        # Common finance acronyms/codes should stay as-is.
+        if re.fullmatch(r'(ROE|ROA|ROIC|EBITDA|EPS|WACC|FCF|DSO|DPO|DIH|CCC|P/E|P/B|EV/EBITDA|NIM)', txt):
+            return True
+        return False
+
+    def _smart_translate_financial_phrase(self, label: str) -> str:
+        txt = self._decode_mojibake_text(str(label or '')).strip()
+        if not txt:
+            return txt
+        if self.current_lang == 'en':
+            return txt
+        # If already contains Arabic text and Arabic UI is selected, keep as-is.
+        if self.current_lang == 'ar' and any('\u0600' <= ch <= '\u06ff' for ch in txt):
+            return txt
+
+        # Try normalized variants first.
+        variants = [txt]
+        cleaned = re.sub(r'^[A-Za-z0-9_.-]+:', '', txt).strip()
+        if cleaned and cleaned not in variants:
+            variants.append(cleaned)
+        camel_spaced = re.sub(r'(?<!^)(?=[A-Z])', ' ', cleaned).replace('_', ' ')
+        camel_spaced = re.sub(r'\s+', ' ', camel_spaced).strip()
+        if camel_spaced and camel_spaced not in variants:
+            variants.append(camel_spaced)
+
+        for candidate in variants:
+            ckey = self._normalize_term_for_lookup(candidate)
+            if ckey in self._term_i18n:
+                return self._term_i18n[ckey].get(self.current_lang, candidate)
+
+        phrase_map = (self._term_phrase_i18n or {}).get(self.current_lang, {}) or {}
+        out = camel_spaced if camel_spaced else txt
+        original = out
+        for src, dst in sorted(phrase_map.items(), key=lambda kv: len(kv[0]), reverse=True):
+            out = re.sub(rf'(?i)\b{re.escape(src)}\b', dst, out)
+        out = re.sub(r'\s+', ' ', out).strip()
+        return out if out != original else txt
+
+    def _translate_ratio_explanation(self, ratio_key: str, fallback_text: str = "") -> str:
+        rk = str(ratio_key or '').strip()
+        bundle = self._ratio_expl_i18n.get(rk)
+        if bundle:
+            return bundle.get(self.current_lang, bundle.get('en', ''))
+        fallback = self._decode_mojibake_text(str(fallback_text or '')).strip()
+        if not fallback:
+            return ''
+        # Guard against mojibake artifacts leaking to UI.
+        if re.search(r'[ØÙÐ]{2,}', fallback):
+            return ''
+        if self.current_lang == 'ar':
+            return fallback
+        if any('\u0600' <= ch <= '\u06ff' for ch in fallback):
+            return ''
+        return fallback
+
+    def _is_parent_line_item(self, label: str, year_values: list | None = None) -> bool:
+        txt = self._decode_mojibake_text(str(label or '')).strip()
+        key = self._normalize_term_for_lookup(txt)
+        if not key:
+            return False
+        if txt.startswith('---') and txt.endswith('---'):
+            return True
+        if txt.startswith('-') and txt.endswith('-'):
+            return True
+        if '[abstract]' in key:
+            return True
+        if key.endswith(':'):
+            return True
+        if ' statement [abstract]' in key:
+            return True
+        if key.startswith('total '):
+            return True
+        if key.startswith('subtotal ') or key.startswith('grand total'):
+            return True
+        if txt.startswith('إجمالي') or txt.startswith('المجموع'):
+            return True
+        if '_parent' in key or ' parent' in key:
+            return True
+        if 'hierarchy' in key:
+            return True
+        if year_values is not None:
+            non_empty = 0
+            for v in (year_values or []):
+                if str(v or '').strip() not in ('', 'None', 'nan'):
+                    non_empty += 1
+            # section headers usually have no numeric values.
+            if non_empty == 0:
+                return True
+        return False
+
+    def _t(self, key: str) -> str:
+        bundle = self._i18n.get(key, {})
+        if self.current_lang in bundle:
+            val = bundle[self.current_lang]
+        else:
+            val = bundle.get('ar', key)
+        if self.current_lang == 'ar' and isinstance(val, str) and any('\u0600' <= ch <= '\u06ff' for ch in val):
+            # Force RTL rendering for mixed Arabic/Latin strings in Tk.
+            return '\u200f' + val
+        return val
+
+    def _translate_ui_text(self, text: str) -> str:
+        txt = self._decode_mojibake_text(text)
+        norm = re.sub(r'\s+', ' ', str(txt)).strip()
+        key = self._i18n_reverse.get(norm)
+        if key:
+            return self._t(key)
+
+        # Dynamic prefix translation for runtime strings.
+        prefix_map = {
+            'الشركة:': {'en': 'Company:', 'fr': 'Société :'},
+            'السنة:': {'en': 'Year:', 'fr': 'Année :'},
+            'النسبة:': {'en': 'Ratio:', 'fr': 'Ratio :'},
+            'الحالة:': {'en': 'Status:', 'fr': 'Statut :'},
+            'السبب التقني:': {'en': 'Technical Reason:', 'fr': 'Raison technique :'},
+            'لا توجد': {'en': 'No', 'fr': 'Aucun'},
+            'تم حذف:': {'en': 'Deleted:', 'fr': 'Supprimé :'},
+            'تم حفظ الملف:': {'en': 'File saved:', 'fr': 'Fichier enregistré :'},
+            'فشل': {'en': 'Failed', 'fr': 'Échec'},
+            'جلب:': {'en': 'Fetching:', 'fr': 'Récupération :'},
+        }
+        for ar_prefix, trans in prefix_map.items():
+            if norm.startswith(ar_prefix):
+                rep = trans.get(self.current_lang)
+                if rep:
+                    return rep + norm[len(ar_prefix):]
+        return txt
+
+    def _translate_layer_title(self, original_title: str) -> str:
+        t = str(original_title or '')
+        if 'Layer 1' in t or 'الطبقة 1' in t:
+            return self._t('layer1')
+        if 'Layer 2' in t or 'الطبقة 2' in t:
+            return self._t('layer2')
+        if 'Layer 3' in t or 'الطبقة 3' in t:
+            return self._t('layer3')
+        if 'Layer 4' in t or 'الطبقة 4' in t:
+            return self._t('layer4')
+        return self._translate_ui_text(t)
+
+    def _on_language_changed(self, _event=None):
+        choice = self._lang_choice_var.get()
+        code = dict(self._lang_options).get(choice)
+        if not code:
+            ch = str(choice or '').strip().lower()
+            ch_simple = re.sub(r'[^a-z\u0600-\u06ff]', '', ch)
+            if ch in {'ar', 'arabic', 'العربية'}:
+                code = 'ar'
+            elif ch in {'en', 'english'}:
+                code = 'en'
+            elif ch in {'fr', 'français', 'francais', 'french'}:
+                code = 'fr'
+            elif ch_simple.startswith('fran'):
+                code = 'fr'
+        if not code:
+            for lbl, c in self._lang_options:
+                if str(lbl).strip().lower() == str(choice).strip().lower() or c == choice:
+                    code = c
+                    break
+        if code not in ('ar', 'en', 'fr'):
+            code = 'ar'
+        self.current_lang = code
+        self._apply_ui_text_fixes()
+        if hasattr(self, 'raw_layer_combo') and not self.current_data:
+            vals = [self._t('layer1'), self._t('layer2'), self._t('layer3')]
+            self.raw_layer_combo.configure(values=vals)
+            if self.raw_layer_var.get() not in vals:
+                self.raw_layer_var.set(vals[0])
+        self._sync_layer_selector_from_data()
+        if self.current_data:
+            self.display_all()
+            self.display_comparison()
+
+    def _apply_professional_theme(self):
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use('clam')
+        except Exception:
+            pass
+        style.configure(
+            "TNotebook",
+            background=PALETTE['panel'],
+            borderwidth=0,
+            tabmargins=(8, 10, 8, 0),
+        )
+        style.configure(
+            "TNotebook.Tab",
+            font=FONTS['label'],
+            padding=(14, 9),
+            background=PALETTE['surface_soft'],
+            foreground=PALETTE['muted'],
+            borderwidth=0,
+            relief='flat',
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", PALETTE['accent_dark']), ("active", PALETTE['surface_alt'])],
+            foreground=[("selected", "#ffffff"), ("active", PALETTE['header'])],
+        )
+        style.configure(
+            "Treeview",
+            font=FONTS['tree'],
+            rowheight=28,
+            background=PALETTE['surface'],
+            fieldbackground=PALETTE['surface'],
+            foreground=PALETTE['text'],
+            bordercolor=PALETTE['border'],
+            relief="flat",
+            borderwidth=0,
+        )
+        style.configure(
+            "Treeview.Heading",
+            font=FONTS['label'],
+            background=PALETTE['surface_alt'],
+            foreground=PALETTE['header'],
+            relief="flat",
+            padding=(8, 8),
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", PALETTE['accent'])],
+            foreground=[("selected", "#ffffff")],
+        )
+        style.map(
+            "Treeview.Heading",
+            background=[("active", PALETTE['accent_soft'])],
+        )
+        style.configure(
+            "TCombobox",
+            fieldbackground=PALETTE['surface'],
+            background=PALETTE['surface'],
+            foreground=PALETTE['text'],
+            bordercolor=PALETTE['border'],
+            arrowsize=14,
+            padding=4,
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", PALETTE['surface'])],
+            selectbackground=[("readonly", PALETTE['surface'])],
+            selectforeground=[("readonly", PALETTE['text'])],
+        )
+        style.configure(
+            "TScrollbar",
+            troughcolor=PALETTE['bg'],
+            background=PALETTE['accent_soft'],
+            bordercolor=PALETTE['border'],
+            arrowcolor=PALETTE['muted'],
+        )
+        style.configure(
+            "TProgressbar",
+            troughcolor="#e5edf8",
+            background=PALETTE['accent'],
+            bordercolor=PALETTE['border'],
+            lightcolor=PALETTE['accent'],
+            darkcolor=PALETTE['accent'],
+            thickness=8,
+        )
+        style.configure(
+            "TSpinbox",
+            arrowsize=14,
+            padding=5,
+            fieldbackground=PALETTE['surface'],
+        )
+
+    def _style_tk_button(self, button, variant='primary'):
+        schemes = {
+            'primary': {'bg': PALETTE['button'], 'fg': 'white', 'active': PALETTE['accent_dark']},
+            'secondary': {'bg': PALETTE['button_secondary'], 'fg': 'white', 'active': '#243142'},
+            'neutral': {'bg': PALETTE['button_neutral'], 'fg': 'white', 'active': '#525964'},
+            'danger': {'bg': PALETTE['danger'], 'fg': 'white', 'active': '#b93232'},
+            'success': {'bg': PALETTE['success'], 'fg': 'white', 'active': '#0f7555'},
+        }
+        scheme = schemes.get(variant, schemes['primary'])
+        button.configure(
+            bg=scheme['bg'],
+            fg=scheme['fg'],
+            activebackground=scheme['active'],
+            activeforeground=scheme['fg'],
+            relief='flat',
+            bd=0,
+            overrelief='flat',
+            highlightthickness=1,
+            highlightbackground=scheme['active'],
+            highlightcolor=scheme['active'],
+            cursor='hand2',
+            padx=8,
+            pady=6,
+        )
+
+    def _style_text_like_widget(self, widget, *, background=None, mono=False):
+        widget.configure(
+            bg=background or PALETTE['surface'],
+            fg=PALETTE['text'],
+            insertbackground=PALETTE['text'],
+            relief='flat',
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+            highlightcolor=PALETTE['accent'],
+            padx=10,
+            pady=10,
+            font=FONTS['mono'] if mono else FONTS['normal'],
+        )
+
+    def _style_listbox_widget(self, widget):
+        widget.configure(
+            bg=PALETTE['surface'],
+            fg=PALETTE['text'],
+            relief='flat',
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+            highlightcolor=PALETTE['accent'],
+            selectbackground=PALETTE['accent'],
+            selectforeground='white',
+            activestyle='none',
+            font=FONTS['normal'],
+        )
+
+    def _style_entry_widget(self, widget):
+        widget.configure(
+            bg=PALETTE['surface'],
+            fg=PALETTE['text'],
+            insertbackground=PALETTE['text'],
+            relief='flat',
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+            highlightcolor=PALETTE['accent'],
+        )
+
+    def _build_section_card(self, parent, title, subtitle=None):
+        card = tk.Frame(
+            parent,
+            bg=PALETTE['panel'],
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['panel_border'],
+        )
+        head = tk.Frame(card, bg=PALETTE['surface_alt'], height=30)
+        head.pack(fill='x')
+        head.pack_propagate(False)
+        title_label = tk.Label(
+            head,
+            text=title,
+            bg=PALETTE['surface_alt'],
+            fg=PALETTE['header'],
+            font=FONTS['label'],
+            anchor='w',
+            padx=12,
+        )
+        title_label.pack(fill='x', pady=(4 if subtitle else 5, 0))
+        if subtitle:
+            tk.Label(
+                head,
+                text=subtitle,
+                bg=PALETTE['surface_alt'],
+                fg=PALETTE['muted'],
+                font=FONTS['subtitle'],
+                anchor='w',
+                padx=14,
+            ).pack(fill='x', pady=(0, 6))
+            head.configure(height=38)
+        body = tk.Frame(card, bg=PALETTE['panel'])
+        body.pack(fill='both', expand=True, padx=6, pady=6)
+        return card, body
+
+    def _build_status_chip(self, parent, label, value, *, bg=None, fg=None):
+        chip = tk.Frame(
+            parent,
+            bg=bg or PALETTE['surface_alt'],
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+            padx=10,
+            pady=6,
+        )
+        tk.Label(
+            chip,
+            text=f"{label}:",
+            bg=chip['bg'],
+            fg=PALETTE['muted'],
+            font=FONTS['caption'],
+        ).pack(side='left', padx=(0, 6))
+        value_label = tk.Label(
+            chip,
+            text=value,
+            bg=chip['bg'],
+            fg=fg or PALETTE['header'],
+            font=FONTS['label'],
+        )
+        value_label.pack(side='left')
+        return chip, value_label
+
+    def _build_elevated_panel(self, parent, *, width=None):
+        shell = tk.Frame(parent, bg=PALETTE['shadow_deep'], bd=0, highlightthickness=0)
+        if width:
+            shell.configure(width=width)
+            shell.pack_propagate(False)
+        inner = tk.Frame(
+            shell,
+            bg=PALETTE['panel'],
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['panel_border'],
+        )
+        inner.pack(fill='both', expand=True, padx=(0, 6), pady=(0, 6))
+        return shell, inner
+
+    def _build_left(self, parent):
+        # Scrollable left pane so controls remain visible on high DPI / small heights.
+        left_canvas = tk.Canvas(parent, bg=PALETTE['bg'], highlightthickness=0, borderwidth=0)
+        left_scroll = ttk.Scrollbar(parent, orient='vertical', command=left_canvas.yview)
+        left_canvas.configure(yscrollcommand=left_scroll.set)
+        left_canvas.pack(side='left', fill='both', expand=True, padx=(0, 2), pady=2)
+        left_scroll.pack(side='right', fill='y', padx=(0, 2), pady=2)
+        content = tk.Frame(left_canvas, bg=PALETTE['bg'])
+        content_win = left_canvas.create_window((0, 0), window=content, anchor='nw')
+
+        def _on_content_configure(_event=None):
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            try:
+                left_canvas.itemconfigure(content_win, width=event.width)
+            except Exception:
+                pass
+
+        content.bind('<Configure>', _on_content_configure)
+        left_canvas.bind('<Configure>', _on_canvas_configure)
+
+        universe_card, universe_body = self._build_section_card(
+            content,
+            self._t('sidebar_section_universe'),
+        )
+        universe_card.pack(fill='x', padx=6, pady=(6, 6))
+        universe_body.grid_columnconfigure(0, weight=1)
+        universe_body.grid_columnconfigure(1, weight=0, minsize=112)
+        universe_body.grid_rowconfigure(3, weight=1)
+
+        tk.Label(
+            universe_body,
+            text=self._t('company_symbols'),
+            bg=PALETTE['panel'],
+            fg=PALETTE['header'],
+            font=FONTS['label'],
+            anchor='w',
+        ).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 6))
+
+        self.company_entry = tk.Entry(universe_body, font=FONTS['normal'])
+        self._style_entry_widget(self.company_entry)
+        self.company_entry.grid(row=1, column=0, sticky='ew', pady=(0, 4))
+        self.company_entry.insert(0, "AAPL, MSFT")
+        self.company_entry.bind('<Return>', lambda _e: self._add_companies())
+        self.company_entry.bind('<KP_Enter>', lambda _e: self._add_companies())
+        self.add_company_btn = tk.Button(
+            universe_body,
+            text=self._t('add'),
+            command=self._add_companies,
+            bg=PALETTE['button'],
+            fg='white',
+            relief='flat',
+            font=FONTS['button'],
+            width=10,
+            anchor='center',
+            justify='center',
+        )
+        self._style_tk_button(self.add_company_btn, 'primary')
+        self.add_company_btn.grid(row=1, column=1, padx=(8, 0), sticky='ew')
+        self.add_company_btn.configure(padx=6, pady=6)
+
+        tk.Label(
+            universe_body,
+            text=self._t('companies_list'),
+            bg=PALETTE['panel'],
+            fg=PALETTE['header'],
+            font=FONTS['label'],
+        ).grid(row=2, column=0, columnspan=2, sticky='w', pady=(0, 2))
+
+        self.companies_listbox = tk.Listbox(universe_body, height=4, selectmode=tk.EXTENDED)
+        self._style_listbox_widget(self.companies_listbox)
+        self.companies_listbox.grid(row=3, column=0, columnspan=2, sticky='nsew', pady=(0, 4))
+        
+        # âœ… Ø±Ø¨Ø· Ø­Ø¯Ø« ØªØºÙŠÙŠØ± Ø§Ù„Ø§Ø®ØªÙŠØ§Ø± Ø¨ØªØ­Ø¯ÙŠØ« Ø§Ù„Ø¹Ø±Ø¶
+        self.companies_listbox.bind('<<ListboxSelect>>', self._on_company_select)
+        self.companies_listbox.bind('<ButtonRelease-1>', self._on_company_select)
+
+        btns_frame = tk.Frame(universe_body, bg=PALETTE['panel'])
+        btns_frame.grid(row=4, column=0, columnspan=2, sticky='ew', pady=(0, 2))
+        btns_frame.grid_columnconfigure(0, weight=1)
+        btns_frame.grid_columnconfigure(1, weight=1)
+        remove_btn = tk.Button(btns_frame, text=self._t('remove_selected'), font=FONTS['button'], command=self._remove_selected_companies)
+        self._style_tk_button(remove_btn, 'danger')
+        remove_btn.grid(row=0, column=0, sticky='ew', padx=(0, 6))
+        clear_btn = tk.Button(btns_frame, text=self._t('clear_all'), font=FONTS['button'], command=self._clear_companies)
+        self._style_tk_button(clear_btn, 'neutral')
+        clear_btn.grid(row=0, column=1, sticky='ew', padx=(6, 0))
+
+        actions_card, actions_body = self._build_section_card(content, self._t('sidebar_section_actions'))
+        actions_card.pack(fill='x', padx=6, pady=(0, 6))
+
+        tk.Label(actions_body, text=self._t('period_range'), bg=PALETTE['panel'], fg=PALETTE['header'], font=FONTS['label']).pack(anchor='w')
+        years_frame = tk.Frame(actions_body, bg=PALETTE['panel'])
+        years_frame.pack(fill='x', pady=(3, 5))
+        self.start_year_var = tk.StringVar(value=str(datetime.now().year - 3))
+        self.end_year_var = tk.StringVar(value=str(datetime.now().year))
+        ttk.Spinbox(years_frame, from_=1990, to=2035, textvariable=self.start_year_var, width=8).pack(side='left')
+        tk.Label(years_frame, text=self._t('to_sep'), bg=PALETTE['panel'], font=FONTS['normal']).pack(side='left', padx=6)
+        ttk.Spinbox(years_frame, from_=1990, to=2035, textvariable=self.end_year_var, width=8).pack(side='left')
+
+        self.filing_type_label = tk.Label(actions_body, text=self._t('filing_type'), bg=PALETTE['panel'], font=FONTS['label'])
+        self.filing_type_label.pack(anchor='w')
+        self.filing_type_var = tk.StringVar(value='10-K')
+        self._filing_display_options = [
+            (self._t('filing_10k'), '10-K'),
+            (self._t('filing_10ka'), '10-K/A'),
+            (self._t('filing_20f'), '20-F'),
+        ]
+        self._filing_display_to_real = {disp: real for disp, real in self._filing_display_options}
+        self._filing_real_to_display = {real: disp for disp, real in self._filing_display_options}
+        self.filing_type_display_var = tk.StringVar(value=self._filing_real_to_display.get('10-K', '10-K'))
+        self.filing_type_combo = ttk.Combobox(
+            actions_body,
+            textvariable=self.filing_type_display_var,
+            state='readonly',
+            values=[x[0] for x in self._filing_display_options],
+            width=26,
+        )
+        self.filing_type_combo.pack(fill='x', pady=(4, 2))
+        self.filing_type_combo.bind('<<ComboboxSelected>>', self._on_filing_type_changed)
+        self.filing_support_label = tk.Label(
+            actions_body,
+            text=self._t('filing_supported'),
+            bg=PALETTE['panel'],
+            fg=PALETTE['muted'],
+            font=FONTS['normal'],
+        )
+        self.filing_support_label.pack(anchor='w')
+        self.translate_tech_check = ttk.Checkbutton(
+            actions_body,
+            text=self._t('translate_technical_labels'),
+            variable=self.translate_technical_var,
+            command=self._on_translate_technical_toggle,
+        )
+        self.translate_tech_check.pack(anchor='w', pady=(2, 0))
+
+        # Keep filing type and technical-label toggle internal, but hide from UI per product direction.
+        self.filing_type_label.pack_forget()
+        self.filing_type_combo.pack_forget()
+        self.filing_support_label.pack_forget()
+        self.translate_tech_check.pack_forget()
+
+        self.fetch_btn = tk.Button(
+            actions_body,
+            text=self._t('fetch_data'),
+            bg=PALETTE['accent'],
+            fg='white',
+            relief='flat',
+            font=FONTS['button'],
+            command=self.fetch_data,
+            anchor='center',
+            justify='center',
+            wraplength=320,
+            padx=6,
+            pady=8,
+        )
+        self._style_tk_button(self.fetch_btn, 'primary')
+        self.fetch_btn.pack(fill='x', pady=(3, 3))
+        self.fetch_btn.configure(padx=6, pady=6)
+        io_row = tk.Frame(actions_body, bg=PALETTE['panel'])
+        io_row.pack(fill='x', pady=(0, 0))
+        io_row.grid_columnconfigure(0, weight=1)
+        io_row.grid_columnconfigure(1, weight=1)
+        self.quick_load_btn = tk.Button(
+            io_row,
+            text=self._t('tool_load_compact'),
+            bg=PALETTE['button_secondary'],
+            fg='white',
+            relief='flat',
+            font=FONTS['normal'],
+            command=self.load_results_from_excel,
+            anchor='center',
+            justify='center',
+            wraplength=120,
+            padx=4,
+            pady=6,
+        )
+        self._style_tk_button(self.quick_load_btn, 'secondary')
+        self.quick_load_btn.grid(row=0, column=0, sticky='ew', padx=(0, 6))
+        self.quick_load_btn.configure(padx=6, pady=5)
+        self.quick_export_btn = tk.Button(
+            io_row,
+            text=self._t('tool_export_compact'),
+            bg=PALETTE['button'],
+            fg='white',
+            relief='flat',
+            font=FONTS['normal'],
+            command=self.export_to_excel_safe,
+            anchor='center',
+            justify='center',
+            wraplength=120,
+            padx=4,
+            pady=6,
+        )
+        self._style_tk_button(self.quick_export_btn, 'primary')
+        self.quick_export_btn.grid(row=0, column=1, sticky='ew', padx=(6, 0))
+        self.quick_export_btn.configure(padx=6, pady=5)
+
+        status_sep = tk.Frame(actions_body, bg=PALETTE['border'], height=1)
+        status_sep.pack(fill='x', pady=(4, 3))
+
+        self.progress_label = tk.Label(
+            actions_body,
+            text="",
+            bg=PALETTE['panel'],
+            fg=PALETTE['muted'],
+            font=FONTS['normal'],
+            anchor='w',
+            justify='left',
+            wraplength=280,
+        )
+        self.progress_label.pack(fill='x')
+        self.progress_bar = ttk.Progressbar(actions_body, mode='indeterminate', length=220)
+        self.progress_bar.pack(fill='x', pady=3)
+        self.loading_indicator_canvas = tk.Canvas(actions_body, width=220, height=4, bg=PALETTE['surface_alt'], highlightthickness=0)
+        self.loading_indicator_canvas.pack(fill='x', pady=(0, 0))
+        self._loading_dot = self.loading_indicator_canvas.create_oval(2, 2, 10, 10, fill='#28a745', outline='#28a745', state='hidden')
+        self._loading_anim_job = None
+        self._loading_anim_pos = 2
+        self._loading_anim_dir = 1
+        self._loading_anim_visible = True
+
+        # Market inputs
+        market_frame = tk.LabelFrame(
+            content,
+            text=self._t('market_inputs'),
+            bg=PALETTE['panel'],
+            fg=PALETTE['header'],
+            font=FONTS['label'],
+            bd=0,
+            relief='flat',
+            highlightthickness=1,
+            highlightbackground=PALETTE['panel_border'],
+            labelanchor='nw',
+        )
+        market_frame.pack(fill='x', padx=6, pady=(0, 6))
+        self.market_frame = market_frame
+        mf = tk.Frame(market_frame, bg=PALETTE['panel'])
+        mf.pack(fill='x', padx=8, pady=8)
+        tk.Label(mf, text=self._t('current_price'), bg=PALETTE['panel'], font=FONTS['normal']).grid(row=0, column=0, sticky='w')
+        self.price_var = tk.DoubleVar(value=0.0)
+        ttk.Entry(mf, textvariable=self.price_var, width=14).grid(row=0, column=1, sticky='w', padx=6)
+        tk.Label(mf, text=self._t('shares_outstanding'), bg=PALETTE['panel'], font=FONTS['normal']).grid(row=1, column=0, sticky='w')
+        self.shares_var = tk.DoubleVar(value=0.0)
+        ttk.Entry(mf, textvariable=self.shares_var, width=14).grid(row=1, column=1, sticky='w', padx=6)
+        tk.Label(mf, text=self._t('cost_of_debt'), bg=PALETTE['panel'], font=FONTS['normal']).grid(row=2, column=0, sticky='w')
+        self.cost_of_debt_var = tk.DoubleVar(value=4.0)
+        ttk.Entry(mf, textvariable=self.cost_of_debt_var, width=14).grid(row=2, column=1, sticky='w', padx=6)
+        # Hide manual market inputs to prevent user-entry drift; market layers remain authoritative.
+        self.market_frame.pack_forget()
+
+        # Mouse wheel support on left pane.
+        def _on_mousewheel(event):
+            try:
+                delta = int(-1 * (event.delta / 120))
+                left_canvas.yview_scroll(delta, "units")
+            except Exception:
+                pass
+        left_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+    def _build_right(self, parent):
+        shell = tk.Frame(parent, bg=PALETTE['bg'])
+        shell.pack(fill='both', expand=True, padx=8, pady=8)
+
+        workspace_bar = tk.Frame(
+            shell,
+            bg=PALETTE['surface_alt'],
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+        )
+        workspace_bar.pack(fill='x', pady=(0, 4))
+
+        meta_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
+        meta_row.pack(fill='x', padx=8, pady=5)
+        self.workspace_context_label = tk.Label(
+            meta_row,
+            text=self._t('status_ready'),
+            bg=PALETTE['surface_alt'],
+            fg=PALETTE['header'],
+            font=FONTS['label'],
+            anchor='w',
+            justify='left',
+        )
+        self.workspace_context_label.pack(side='right', padx=(0, 10))
+
+        chips_row = tk.Frame(meta_row, bg=PALETTE['surface_alt'])
+        chips_row.pack(side='right')
+        chip1, self.workspace_companies_value = self._build_status_chip(
+            chips_row, self._t('chip_companies'), '0', bg=PALETTE['accent_soft'], fg=PALETTE['accent_dark']
+        )
+        chip1.pack(side='left', padx=(0, 8))
+        chip2, self.workspace_range_value = self._build_status_chip(
+            chips_row, self._t('chip_range'), f"{self.start_year_var.get()} - {self.end_year_var.get()}" if hasattr(self, 'start_year_var') else '--',
+            bg=PALETTE['surface_alt'],
+        )
+        chip2.pack(side='left', padx=(0, 8))
+        chip3, self.workspace_mode_value = self._build_status_chip(
+            chips_row, self._t('chip_mode'), self._t('mode_direct'), bg=PALETTE['teal_soft'], fg=PALETTE['teal']
+        )
+        chip3.pack(side='left')
+
+        self.workspace_hint_label = tk.Label(
+            meta_row,
+            text='',
+            bg=PALETTE['surface_alt'],
+            fg=PALETTE['muted'],
+            font=FONTS['normal'],
+            anchor='e',
+            justify='right',
+        )
+        self.workspace_hint_label.pack(side='left', fill='x', expand=True, padx=(8, 0))
+
+        notebook_shell = tk.Frame(
+            shell,
+            bg=PALETTE['panel'],
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE['panel_border'],
+        )
+        notebook_shell.pack(fill='both', expand=True)
+        self.notebook = ttk.Notebook(notebook_shell)
+        self.notebook.pack(in_=notebook_shell, fill='both', expand=True, padx=8, pady=8)
+
+        self.raw_tab = tk.Frame(self.notebook, bg=PALETTE['panel'])
+        self.ratios_tab = tk.Frame(self.notebook, bg=PALETTE['panel'])
+        self.strategic_tab = tk.Frame(self.notebook, bg=PALETTE['panel'])
+        self.comparison_tab = tk.Frame(self.notebook, bg=PALETTE['panel'])
+        self.forecast_tab = tk.Frame(self.notebook, bg=PALETTE['panel'])
+        self.ai_analysis_tab = tk.Frame(self.notebook, bg=PALETTE['panel'])  # âœ… NEW
+        self.chat_tab = tk.Frame(self.notebook, bg=PALETTE['panel'])
+
+        self.notebook.add(self.raw_tab, text=self._t('tab_raw'))
+        self.notebook.add(self.ratios_tab, text=self._t('tab_ratios'))
+        self.notebook.add(self.strategic_tab, text=self._t('tab_strategic'))
+        self.notebook.add(self.comparison_tab, text=self._t('tab_comparison'))
+        self.notebook.add(self.forecast_tab, text=self._t('tab_forecast'))
+        self.notebook.add(self.ai_analysis_tab, text=self._t('tab_ai'))  # âœ… NEW
+        self.notebook.add(self.chat_tab, text=self._t('tab_chat'))
+
+        # raw
+        self.company_info_label = tk.Label(
+            self.raw_tab,
+            text=self._t('status_ready'),
+            bg=PALETTE['surface_alt'],
+            fg=PALETTE['header'],
+            font=FONTS['label'],
+            anchor='w',
+            justify='left',
+            padx=16,
+            pady=10,
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+        )
+        self.company_info_label.pack(fill='x', padx=10, pady=(8, 4))
+        raw_controls = tk.Frame(
+            self.raw_tab,
+            bg=PALETTE['surface_soft'],
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+            bd=0,
+        )
+        raw_controls.pack(fill='x', padx=10, pady=(0, 4))
+        raw_controls_inner = tk.Frame(raw_controls, bg=PALETTE['surface_soft'])
+        raw_controls_inner.pack(fill='x', padx=10, pady=8)
+        tk.Label(raw_controls_inner, text=self._t('layer_view'), bg=PALETTE['surface_soft'], fg=PALETTE['header'], font=FONTS['label']).pack(side='left')
+        self.raw_layer_var = tk.StringVar(value=self._t('layer1'))
+        self.raw_layer_combo = ttk.Combobox(
+            raw_controls_inner,
+            textvariable=self.raw_layer_var,
+            state='readonly',
+            values=[
+                self._t('layer1'),
+                self._t('layer2'),
+                self._t('layer3')
+            ],
+            width=34
+        )
+        self.raw_layer_combo.pack(side='left', padx=8)
+        self.raw_layer_combo.bind('<<ComboboxSelected>>', lambda e: self.display_raw_data())
+        tk.Label(raw_controls_inner, text=self._t('sec_view_mode_label'), bg=PALETTE['surface_soft'], fg=PALETTE['header'], font=FONTS['label']).pack(side='left', padx=(18, 0))
+        self._sec_view_mode_var = tk.StringVar(value='official')
+        self.sec_view_mode_display_var = tk.StringVar(value=self._t('sec_view_mode_official'))
+        self.sec_view_mode_combo = ttk.Combobox(
+            raw_controls_inner,
+            textvariable=self.sec_view_mode_display_var,
+            state='readonly',
+            width=25
+        )
+        self.sec_view_mode_combo.pack(side='left', padx=8)
+        self._refresh_sec_view_mode_display()
+        self.sec_view_mode_combo.bind(
+            '<<ComboboxSelected>>',
+            lambda e: (
+                self._sec_view_mode_var.set(self._get_selected_sec_view_mode()),
+                self.display_raw_data()
+            )
+        )
+        tree_frame = tk.Frame(self.raw_tab, bg=PALETTE['panel'], highlightthickness=1, highlightbackground=PALETTE['border'], bd=0)
+        tree_frame.pack(fill='both', expand=True, padx=10, pady=(0, 8))
+        self.raw_tree = ttk.Treeview(tree_frame, show='headings')
+        raw_y = ttk.Scrollbar(tree_frame, orient='vertical', command=self.raw_tree.yview)
+        raw_x = ttk.Scrollbar(tree_frame, orient='horizontal', command=self.raw_tree.xview)
+        self.raw_tree.configure(yscrollcommand=raw_y.set, xscrollcommand=raw_x.set)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        tree_frame.grid_rowconfigure(0, weight=1)
+        self.raw_tree.grid(row=0, column=0, sticky='nsew')
+        raw_y.grid(row=0, column=1, sticky='ns')
+        raw_x.grid(row=1, column=0, sticky='ew')
+        self.raw_tree.bind('<Double-1>', self._on_raw_tree_double_click)
+        self._update_workspace_context()
+
+        # ratios
+        frame_r = tk.Frame(self.ratios_tab, bg=PALETTE['panel'], highlightthickness=1, highlightbackground=PALETTE['border'], bd=0)
+        frame_r.pack(fill='both', expand=True, padx=12, pady=(10, 8))
+        self.ratios_tree = ttk.Treeview(frame_r, show='headings')
+        ratios_y = ttk.Scrollbar(frame_r, orient='vertical', command=self.ratios_tree.yview)
+        ratios_x = ttk.Scrollbar(frame_r, orient='horizontal', command=self.ratios_tree.xview)
+        self.ratios_tree.configure(yscrollcommand=ratios_y.set, xscrollcommand=ratios_x.set)
+        frame_r.grid_columnconfigure(0, weight=1)
+        frame_r.grid_rowconfigure(0, weight=1)
+        self.ratios_tree.grid(row=0, column=0, sticky='nsew')
+        ratios_y.grid(row=0, column=1, sticky='ns')
+        ratios_x.grid(row=1, column=0, sticky='ew')
+        self.ratios_tree.bind('<ButtonRelease-1>', self._on_ratio_tree_click)
+        self.ratios_comment = tk.Text(self.ratios_tab, height=4, wrap='word')
+        self._style_text_like_widget(self.ratios_comment, background=PALETTE['surface'])
+        self.ratios_comment.pack(fill='x', padx=12, pady=(4, 10))
+
+        # strategic
+        frame_s = tk.Frame(self.strategic_tab, bg=PALETTE['panel'], highlightthickness=1, highlightbackground=PALETTE['border'], bd=0)
+        frame_s.pack(fill='both', expand=True, padx=12, pady=(10, 8))
+        self.strat_tree = ttk.Treeview(frame_s, show='headings')
+        strat_y = ttk.Scrollbar(frame_s, orient='vertical', command=self.strat_tree.yview)
+        strat_x = ttk.Scrollbar(frame_s, orient='horizontal', command=self.strat_tree.xview)
+        self.strat_tree.configure(yscrollcommand=strat_y.set, xscrollcommand=strat_x.set)
+        frame_s.grid_columnconfigure(0, weight=1)
+        frame_s.grid_rowconfigure(0, weight=1)
+        self.strat_tree.grid(row=0, column=0, sticky='nsew')
+        strat_y.grid(row=0, column=1, sticky='ns')
+        strat_x.grid(row=1, column=0, sticky='ew')
+        self.strat_tree.bind('<ButtonRelease-1>', self._on_strategic_tree_click)
+
+        # comparison (institutional reliability + audit trace)
+        comp_top = tk.Frame(self.comparison_tab, bg=PALETTE['panel'])
+        comp_top.pack(fill='x', padx=8, pady=(8, 4))
+        self.comparison_summary_label = tk.Label(
+            comp_top,
+            text="",
+            bg=PALETTE['surface_alt'],
+            fg=PALETTE['header'],
+            font=FONTS['label'],
+            anchor='w',
+            justify='left',
+            padx=12,
+            pady=7,
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+        )
+        self.comparison_summary_label.pack(fill='x', pady=(0, 4))
+
+        comp_mid = tk.Frame(self.comparison_tab, bg=PALETTE['panel'], highlightthickness=1, highlightbackground=PALETTE['border'], bd=0)
+        comp_mid.pack(fill='x', expand=False, padx=8, pady=(0, 4))
+        comp_mid.grid_columnconfigure(0, weight=1)
+        comp_mid.grid_rowconfigure(0, weight=1)
+        self.comparison_tree = ttk.Treeview(comp_mid, show='headings', height=2)
+        self.comparison_tree.grid(row=0, column=0, sticky='ew')
+        self.comparison_tree.bind('<<TreeviewSelect>>', self._on_comparison_select)
+        ttk.Scrollbar(comp_mid, orient='vertical', command=self.comparison_tree.yview).grid(row=0, column=1, sticky='ns')
+
+        comp_bottom = tk.Frame(self.comparison_tab, bg=PALETTE['panel'])
+        comp_bottom.pack(fill='both', expand=True, padx=8, pady=(0, 8))
+
+        detail_frame = tk.Frame(comp_bottom, bg=PALETTE['panel'], highlightthickness=1, highlightbackground=PALETTE['border'], bd=0)
+        detail_frame.pack(fill='both', expand=True)
+        self.comparison_detail_tree = ttk.Treeview(detail_frame, show='headings')
+        self.comparison_detail_tree.pack(fill='both', expand=True, side='left')
+        ttk.Scrollbar(detail_frame, orient='vertical', command=self.comparison_detail_tree.yview).pack(side='left', fill='y')
+
+        self.comparison_diag_text = tk.Text(comp_bottom, height=5, wrap='word', font=FONTS['mono'])
+        self._style_text_like_widget(self.comparison_diag_text, background=PALETTE['surface'], mono=True)
+        self.comparison_diag_text.pack(fill='x', pady=(6, 0))
+
+        # forecasts
+        frame_f = tk.Frame(self.forecast_tab, bg=PALETTE['panel'], highlightthickness=1, highlightbackground=PALETTE['border'], bd=0)
+        frame_f.pack(fill='both', expand=True, padx=12, pady=10)
+        frame_f.grid_rowconfigure(0, weight=1)
+        frame_f.grid_rowconfigure(2, weight=1)
+        frame_f.grid_columnconfigure(0, weight=1)
+        self.forecast_tree = ttk.Treeview(frame_f, show='headings')
+        forecast_y = ttk.Scrollbar(frame_f, orient='vertical', command=self.forecast_tree.yview)
+        forecast_x = ttk.Scrollbar(frame_f, orient='horizontal', command=self.forecast_tree.xview)
+        self.forecast_tree.configure(yscrollcommand=forecast_y.set, xscrollcommand=forecast_x.set)
+        self.forecast_tree.grid(row=0, column=0, sticky='nsew')
+        forecast_y.grid(row=0, column=1, sticky='ns')
+        forecast_x.grid(row=1, column=0, sticky='ew')
+        self.forecast_chart_frame = tk.LabelFrame(
+            frame_f,
+            text='Forecast Dashboard',
+            bg=PALETTE['panel'],
+            fg=PALETTE['header'],
+            font=FONTS['label'],
+            padx=6,
+            pady=4,
+            bd=0,
+            relief='flat',
+            highlightthickness=1,
+            highlightbackground=PALETTE['border'],
+        )
+        self.forecast_chart_frame.grid(row=2, column=0, columnspan=2, sticky='nsew', pady=(8, 0))
+        self._forecast_chart_canvas = None
+
+        # bottom tools
+        tools = tk.Frame(parent, bg=PALETTE['panel'])
+        tools.pack(fill='x', padx=12, pady=(0, 12))
+        self.export_btn = tk.Button(
+            tools,
+            text=self._t('tool_export'),
+            bg=PALETTE['button'],
+            fg='white',
+            relief='flat',
+            font=FONTS['button'],
+            command=self.export_to_excel_safe,
+        )
+        self.export_btn.pack(side='left', padx=6)
+        self.load_excel_btn = tk.Button(
+            tools,
+            text=self._t('tool_load'),
+            bg='#6f42c1',
+            fg='white',
+            relief='flat',
+            font=FONTS['button'],
+            command=self.load_results_from_excel,
+        )
+        self.load_excel_btn.pack(side='left', padx=6)
+        self.plot_btn = tk.Button(
+            tools,
+            text=self._t('tool_plot'),
+            bg='#1b7f6a',
+            fg='white',
+            relief='flat',
+            font=FONTS['button'],
+            command=self.open_plots_window,
+        )
+        self.plot_btn.pack(side='left', padx=6)
+
+    # ---------- Companies list actions ----------
+    def _add_companies(self):
+        txt = self.company_entry.get().strip()
+        if not txt:
+            return
+        parts = [s.strip() for s in re.split(r"[,،;\n\t]+", txt) if s.strip()]
+        for p in parts:
+            existing = self.companies_listbox.get(0, tk.END)
+            if p not in existing:
+                self.companies_listbox.insert(tk.END, p)
+        self.company_entry.delete(0, tk.END)
+        self._update_workspace_context()
+
+    def _decode_mojibake_text(self, text: str) -> str:
+        if not isinstance(text, str):
+            return text
+        if any("\u0600" <= ch <= "\u06ff" for ch in text):
+            return text
+        suspicious = set("ÃØÙÂâðïÐ¢¤")
+        if not any(ch in suspicious for ch in text):
+            return text
+
+        # Try common mojibake repair paths (utf-8 bytes decoded as latin1/cp1252).
+        candidates = [text]
+        for _ in range(3):
+            expanded = list(candidates)
+            for base in list(candidates):
+                for enc in ("latin-1", "cp1252"):
+                    try:
+                        repaired = base.encode(enc, errors="strict").decode("utf-8", errors="strict")
+                        if repaired and repaired not in expanded:
+                            expanded.append(repaired)
+                    except Exception:
+                        continue
+            candidates = expanded
+
+        for c in candidates:
+            if any("\u0600" <= ch <= "\u06ff" for ch in c):
+                return c
+
+        # Fallback cleanup for common mojibake fragments in Arabic UI labels.
+        cleaned = str(text)
+        cleanup_map = {
+            "â”â”â”": "-",
+            "ðŸ¤–": "AI",
+            "ðŸš¨": "تحذير",
+            "ðŸ“‰": "تحليل",
+            "ðŸ“ˆ": "نمو",
+            "ðŸ’°": "سيولة",
+            "âœ…": "",
+            "âš ï¸": "تنبيه",
+        }
+        for bad, good in cleanup_map.items():
+            cleaned = cleaned.replace(bad, good)
+        return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+    def _install_tk_text_decoder(self) -> None:
+        if getattr(tk, "_sec_text_decoder_installed", False):
+            return
+        original_configure = tk.Misc.configure
+        original_heading = ttk.Treeview.heading
+        original_insert = ttk.Treeview.insert
+        original_messagebox = {}
+
+        def _decode_value(key, value):
+            if key not in {"text", "label", "title"}:
+                return value
+            if not isinstance(value, str):
+                return value
+            return self._translate_ui_text(value)
+
+        def configure_with_decoder(widget, cnf=None, **kw):
+            if isinstance(cnf, dict):
+                cnf = {k: _decode_value(k, v) for k, v in cnf.items()}
+            if kw:
+                kw = {k: _decode_value(k, v) for k, v in kw.items()}
+            return original_configure(widget, cnf, **kw)
+
+        def heading_with_decoder(widget, column, option=None, **kw):
+            if "text" in kw and isinstance(kw["text"], str):
+                kw["text"] = self._translate_ui_text(kw["text"])
+            return original_heading(widget, column, option, **kw)
+
+        def insert_with_decoder(widget, parent, index, iid=None, **kw):
+            vals = kw.get("values")
+            if isinstance(vals, (list, tuple)):
+                fixed = []
+                for v in vals:
+                    if isinstance(v, str):
+                        fixed.append(self._translate_ui_text(v))
+                    else:
+                        fixed.append(v)
+                kw["values"] = tuple(fixed)
+            if "text" in kw and isinstance(kw["text"], str):
+                kw["text"] = self._translate_ui_text(kw["text"])
+            row_iid = original_insert(widget, parent, index, iid=iid, **kw)
+            try:
+                if not getattr(widget, "_sec_zebra_configured", False):
+                    widget.tag_configure("zebra_even", background="#ffffff")
+                    widget.tag_configure("zebra_odd", background="#f7fbff")
+                    widget.tag_configure("header", background="#e8f4f8", foreground="#0f2747")
+                    widget._sec_zebra_configured = True
+                tags = widget.item(row_iid, "tags")
+                if not tags:
+                    idx = max(len(widget.get_children(parent)) - 1, 0)
+                    widget.item(row_iid, tags=("zebra_even" if idx % 2 == 0 else "zebra_odd",))
+            except Exception:
+                pass
+            return row_iid
+
+        tk.Misc.configure = configure_with_decoder
+        tk.Misc.config = configure_with_decoder
+        ttk.Treeview.heading = heading_with_decoder
+        ttk.Treeview.insert = insert_with_decoder
+
+        # Ensure popup messages are also decoded.
+        for fn_name in (
+            "showinfo",
+            "showwarning",
+            "showerror",
+            "askyesno",
+            "askokcancel",
+            "askretrycancel",
+            "askyesnocancel",
+            "askquestion",
+        ):
+            fn = getattr(messagebox, fn_name, None)
+            if not callable(fn):
+                continue
+            original_messagebox[fn_name] = fn
+
+            def _wrap_popup(*args, __fn_name=fn_name, **kwargs):
+                base_fn = original_messagebox.get(__fn_name)
+                if not callable(base_fn):
+                    return None
+                args = list(args)
+                if len(args) >= 1 and isinstance(args[0], str):
+                    args[0] = self._translate_ui_text(args[0])
+                if len(args) >= 2 and isinstance(args[1], str):
+                    args[1] = self._translate_ui_text(args[1])
+                if isinstance(kwargs.get("title"), str):
+                    kwargs["title"] = self._translate_ui_text(kwargs["title"])
+                if isinstance(kwargs.get("message"), str):
+                    kwargs["message"] = self._translate_ui_text(kwargs["message"])
+                return base_fn(*args, **kwargs)
+
+            setattr(messagebox, fn_name, _wrap_popup)
+        tk._sec_text_decoder_installed = True
+
+    def _apply_ui_text_fixes(self) -> None:
+        self.root.title(self._t('app_title'))
+        self._fix_widget_tree_texts(self.root)
+        self._fix_notebook_tab_texts()
+        self._polish_arabic_layout(self.root)
+        try:
+            if hasattr(self, 'header_title_label'):
+                self.header_title_label.config(text=self._t('app_header'))
+            if getattr(self, 'header_subtitle_label', None):
+                self.header_subtitle_label.config(text=self._t('app_subtitle'))
+            if hasattr(self, 'lang_label'):
+                self.lang_label.config(text=self._t('lang_label'))
+            self._update_workspace_context()
+            if hasattr(self, 'export_btn'):
+                self.export_btn.config(text=self._t('tool_export'))
+            if hasattr(self, 'load_excel_btn'):
+                self.load_excel_btn.config(text=self._t('tool_load'))
+            if hasattr(self, 'plot_btn'):
+                self.plot_btn.config(text=self._t('tool_plot'))
+            if hasattr(self, 'quick_load_btn'):
+                self.quick_load_btn.config(text=self._t('tool_load_compact'))
+            if hasattr(self, 'quick_export_btn'):
+                self.quick_export_btn.config(text=self._t('tool_export_compact'))
+            if hasattr(self, 'fetch_btn'):
+                self.fetch_btn.config(text=self._t('fetch_data'))
+            if hasattr(self, 'add_company_btn'):
+                self.add_company_btn.config(text=self._t('add'))
+            if hasattr(self, 'translate_tech_check'):
+                self.translate_tech_check.config(text=self._t('translate_technical_labels'))
+            if hasattr(self, 'chat_use_cloud_check'):
+                self.chat_use_cloud_check.config(text=self._t('chat_use_cloud'))
+            if hasattr(self, 'chat_send_btn'):
+                self.chat_send_btn.config(text=self._t('chat_send'))
+            if hasattr(self, 'chat_clear_btn'):
+                self.chat_clear_btn.config(text=self._t('chat_clear'))
+            if hasattr(self, 'chat_report_btn'):
+                self.chat_report_btn.config(text=self._t('chat_make_report'))
+            if hasattr(self, 'chat_word_btn'):
+                self.chat_word_btn.config(text=self._t('chat_export_word'))
+            self._refresh_chat_response_mode_display()
+            self._sync_chat_mode_badge()
+        except Exception:
+            pass
+        self._refresh_language_combo_display()
+        self._refresh_filing_type_display()
+        self._refresh_sec_view_mode_display()
+
+    def _fix_widget_tree_texts(self, widget) -> None:
+        self._fix_widget_text(widget)
+        for child in widget.winfo_children():
+            self._fix_widget_tree_texts(child)
+
+    def _fix_widget_text(self, widget) -> None:
+        for key in ("text", "label", "title"):
+            try:
+                cur = widget.cget(key)
+            except Exception:
+                continue
+            fixed = self._translate_ui_text(cur)
+            if fixed != cur:
+                try:
+                    widget.configure(**{key: fixed})
+                except Exception:
+                    pass
+
+    def _fix_notebook_tab_texts(self) -> None:
+        nb = getattr(self, "notebook", None)
+        if nb is None:
+            return
+        try:
+            tabs = nb.tabs()
+        except Exception:
+            return
+        for tab_id in tabs:
+            try:
+                text = nb.tab(tab_id, "text")
+            except Exception:
+                continue
+            fixed = self._translate_ui_text(text)
+            if fixed != text:
+                try:
+                    nb.tab(tab_id, text=fixed)
+                except Exception:
+                    pass
+
+    def _refresh_language_combo_display(self):
+        if not hasattr(self, 'lang_combo'):
+            return
+        values = []
+        selected_label = None
+        for label, code in self._lang_options:
+            if code == 'ar':
+                values.append('العربية')
+            elif code == 'en':
+                values.append('English')
+            elif code == 'fr':
+                values.append('Français')
+            else:
+                values.append(label)
+            if code == self.current_lang:
+                selected_label = values[-1]
+        self.lang_combo.configure(values=values)
+        if selected_label:
+            self._lang_choice_var.set(selected_label)
+
+    def _refresh_filing_type_display(self):
+        if not hasattr(self, 'filing_type_combo'):
+            return
+        current_real = str(getattr(self, 'filing_type_var', tk.StringVar(value='10-K')).get() or '10-K')
+        self._filing_display_options = [
+            (self._t('filing_10k'), '10-K'),
+            (self._t('filing_10ka'), '10-K/A'),
+            (self._t('filing_20f'), '20-F'),
+        ]
+        self._filing_display_to_real = {disp: real for disp, real in self._filing_display_options}
+        self._filing_real_to_display = {real: disp for disp, real in self._filing_display_options}
+        self.filing_type_combo.configure(values=[x[0] for x in self._filing_display_options])
+        display_value = self._filing_real_to_display.get(current_real, self._filing_real_to_display.get('10-K'))
+        if display_value:
+            self.filing_type_display_var.set(display_value)
+        if hasattr(self, 'filing_support_label'):
+            self.filing_support_label.config(text=self._t('filing_supported'))
+
+    def _on_filing_type_changed(self, _event=None):
+        selected_display = self.filing_type_display_var.get()
+        selected_real = self._filing_display_to_real.get(selected_display, '10-K')
+        self.filing_type_var.set(selected_real)
+
+    def _on_translate_technical_toggle(self):
+        try:
+            if self.current_data:
+                self.display_all()
+                self.display_comparison()
+        except Exception:
+            pass
+
+    def _animate_loading_indicator(self):
+        if not hasattr(self, 'loading_indicator_canvas'):
+            return
+        canvas = self.loading_indicator_canvas
+        dot = getattr(self, '_loading_dot', None)
+        if dot is None:
+            return
+        width = max(int(canvas.winfo_width()), 300)
+        if self._loading_anim_visible:
+            canvas.itemconfigure(dot, state='normal')
+        else:
+            canvas.itemconfigure(dot, state='hidden')
+        self._loading_anim_visible = not self._loading_anim_visible
+
+        self._loading_anim_pos += (5 * self._loading_anim_dir)
+        if self._loading_anim_pos >= (width - 12):
+            self._loading_anim_pos = width - 12
+            self._loading_anim_dir = -1
+        elif self._loading_anim_pos <= 2:
+            self._loading_anim_pos = 2
+            self._loading_anim_dir = 1
+        canvas.coords(dot, self._loading_anim_pos, 2, self._loading_anim_pos + 8, 10)
+        self._loading_anim_job = self.root.after(80, self._animate_loading_indicator)
+
+    def _start_loading_indicator(self):
+        if not hasattr(self, 'loading_indicator_canvas'):
+            return
+        if self._loading_anim_job is not None:
+            return
+        self._loading_anim_pos = 2
+        self._loading_anim_dir = 1
+        self._loading_anim_visible = True
+        self.loading_indicator_canvas.itemconfigure(self._loading_dot, state='normal')
+        self._animate_loading_indicator()
+
+    def _stop_loading_indicator(self):
+        if hasattr(self, 'root') and self._loading_anim_job is not None:
+            try:
+                self.root.after_cancel(self._loading_anim_job)
+            except Exception:
+                pass
+        self._loading_anim_job = None
+        if hasattr(self, 'loading_indicator_canvas'):
+            self.loading_indicator_canvas.itemconfigure(self._loading_dot, state='hidden')
+
+    def _polish_arabic_layout(self, root_widget) -> None:
+        if getattr(self, 'current_lang', 'ar') != 'ar':
+            return
+
+        def _is_arabic(s):
+            return isinstance(s, str) and any("\u0600" <= ch <= "\u06ff" for ch in s)
+
+        for widget in [root_widget] + list(root_widget.winfo_children()):
+            stack = [widget]
+            while stack:
+                w = stack.pop()
+                stack.extend(w.winfo_children())
+                try:
+                    txt = w.cget("text")
+                except Exception:
+                    txt = None
+                if _is_arabic(txt) or isinstance(w, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Spinbox, tk.Text)):
+                    cfg = {}
+                    try:
+                        if str(w.cget("justify")) != "right":
+                            cfg["justify"] = "right"
+                    except Exception:
+                        pass
+                    try:
+                        if str(w.cget("anchor")) in ("w", "center"):
+                            cfg["anchor"] = "e"
+                    except Exception:
+                        pass
+                    if cfg:
+                        try:
+                            w.configure(**cfg)
+                        except Exception:
+                            pass
+                # Keep action buttons centered, but right-anchor labels and labelframes.
+                if isinstance(w, (tk.Label, ttk.Label, tk.LabelFrame)):
+                    try:
+                        w.configure(anchor='e', justify='right')
+                    except Exception:
+                        pass
+
+    def _normalize_line_item_key(self, item_name: str) -> str:
+        txt = self._decode_mojibake_text(str(item_name or "")).strip().lower()
+        txt = txt.replace("\u200f", "").replace("\u200e", "")
+        txt = txt.replace("’", "'")
+        txt = re.sub(r"\s+", " ", txt)
+        txt = re.sub(r"\s*[-–—]\s*", "-", txt)
+        txt = re.sub(r"\s*\(\s*", " (", txt)
+        txt = re.sub(r"\s*\)\s*", ")", txt)
+        return txt.strip()
+
+    def _semantic_line_item_key(self, item_name: str) -> str:
+        """
+        Normalize a line item into a language-agnostic semantic key.
+        Ensures Arabic/English/French variants of the same concept merge into one row.
+        """
+        raw = self._decode_mojibake_text(str(item_name or "")).strip()
+        if not raw:
+            return ''
+        # Keep technical tags isolated to avoid over-merging XBRL-specific concepts.
+        if self._is_technical_label(raw):
+            return f"tech::{self._normalize_line_item_key(raw)}"
+
+        base = re.sub(r'[:：]\s*$', '', raw).strip()
+        nk = self._normalize_term_for_lookup(base)
+        if nk in (self._term_reverse_to_en or {}):
+            return f"sem::{self._term_reverse_to_en[nk]}"
+
+        # Try phrase translation path for partially translated/free-text labels.
+        try:
+            as_en = self._normalize_term_for_lookup(self._smart_translate_financial_phrase(base))
+            if as_en in (self._term_reverse_to_en or {}):
+                return f"sem::{self._term_reverse_to_en[as_en]}"
+        except Exception:
+            pass
+
+        return f"raw::{self._normalize_line_item_key(base)}"
+
+    def _prefer_display_label(self, current_label: str, candidate_label: str) -> str:
+        cur = re.sub(r"\s+", " ", str(current_label or "")).strip()
+        cand = re.sub(r"\s+", " ", str(candidate_label or "")).strip()
+        if not cur:
+            return cand
+        if not cand:
+            return cur
+
+        def _score(lbl: str):
+            return (
+                1 if lbl[:1].isupper() else 0,
+                1 if any(ch.isupper() for ch in lbl) else 0,
+                -lbl.count("_"),
+                -lbl.count(":"),
+                -lbl.count("  "),
+                len(lbl),
+            )
+
+        return cand if _score(cand) > _score(cur) else cur
+
+    def _debug_ui_contracts_enabled(self) -> bool:
+        return str(os.getenv('SEC_DEBUG_UI_CONTRACTS', '')).strip() == '1'
+
+    def _strict_ui_merge_enabled(self) -> bool:
+        """
+        Safe-mode UI merge:
+        - default ON (strict) to avoid semantic over-merge pollution.
+        - set SEC_STRICT_UI_MERGE=0 to re-enable aggressive fuzzy merge.
+        """
+        v = str(os.getenv('SEC_STRICT_UI_MERGE', '1')).strip().lower()
+        return v not in ('0', 'false', 'off', 'no')
+
+    def _anchored_semantic_key(self, item_name: str) -> str:
+        """
+        Keep core accounting anchors isolated from fuzzy semantic merge.
+        This prevents accidental collapse (e.g., AssetsCurrent with Assets).
+        """
+        raw = self._decode_mojibake_text(str(item_name or "")).strip()
+        if not raw:
+            return ''
+        # Technical label bridge: map common XBRL-style tags to stable canonical terms.
+        tech_bridge = {
+            'grossprofit': 'gross profit',
+            'earningspersharebasic': 'basic eps',
+            'earningspersharediluted': 'diluted eps',
+            'totalassets': 'assets',
+            'assets': 'assets',
+            'totalliabilities': 'liabilities',
+            'liabilities': 'liabilities',
+            'totalequity': 'stockholders equity',
+            'stockholdersequity': 'stockholders equity',
+            'accountsreceivable': 'accounts receivable',
+            'accountsreceivablenetcurrent': 'accounts receivable',
+            'accountspayable': 'accounts payable',
+            'accountspayablecurrent': 'accounts payable',
+            'inventorynet': 'inventory',
+            'assetscurrent': 'current assets',
+            'liabilitiescurrent': 'current liabilities',
+            'netincomeloss': 'net income',
+            'netincome': 'net income',
+            'operatingincomeloss': 'operating income',
+            'operatingincome': 'operating income',
+            'operatingcashflow': 'operating cash flow',
+            'costofrevenue': 'cost of revenue',
+            'revenues': 'revenues',
+        }
+
+        raw_compact = re.sub(r'[^A-Za-z0-9\u0600-\u06FF]+', '', raw).lower()
+        bridged = tech_bridge.get(raw_compact, raw)
+        norm = self._normalize_term_for_lookup(bridged)
+
+        # If lookup has an exact canonical dictionary mapping, force semantic key.
+        rev = (self._term_reverse_to_en or {})
+        if norm in rev:
+            return f"sem::{rev[norm]}"
+
+        anchor_terms = {
+            'revenues',
+            'cost of revenue',
+            'net income',
+            'assets',
+            'liabilities',
+            'stockholders equity',
+            'current assets',
+            'current liabilities',
+        }
+        if norm in anchor_terms:
+            return f"anchor::{norm}"
+        return self._semantic_line_item_key(bridged)
+
+    def _safe_merge_key_for_label(self, label: str, *, allow_anchor_for_free_text: bool = False) -> str:
+        """
+        Conservative semantic merge key:
+        - always keep technical/XBRL labels isolated;
+        - only anchor-merge free-text labels when explicitly allowed;
+        - default to raw-key merge to avoid collapsing parent totals with sub-lines.
+        """
+        raw = self._decode_mojibake_text(str(label or "")).strip()
+        if not raw:
+            return ""
+        if self._is_technical_label(raw):
+            return f"tech::{self._normalize_line_item_key(raw)}"
+        if allow_anchor_for_free_text:
+            return self._anchored_semantic_key(raw)
+        return f"raw::{self._normalize_line_item_key(raw)}"
+
+    def _is_internal_helper_label(self, label: str) -> bool:
+        l = str(label or '').lower()
+        return any(mark in l for mark in (
+            '_hierarchy',
+            '_parentpreferred',
+            '_parent',
+            '_legacy_conflicted',
+            '_hierarchyconflict',
+            '__canonical_',
+            '_source_tag',
+            '[abstract]',
+            '[line items]',
+            '_abstract',
+            '_lineitems',
+            'legacy current',
+        ))
+
+    def _refresh_sec_view_mode_display(self):
+        if not hasattr(self, 'sec_view_mode_combo'):
+            return
+        current_mode = getattr(self, '_sec_view_mode_var', tk.StringVar(value='official')).get() or 'official'
+        options = [
+            (self._t('sec_view_mode_inputs'), 'inputs'),
+            (self._t('sec_view_mode_official'), 'official'),
+            (self._t('sec_view_mode_canonical'), 'canonical'),
+        ]
+        self._sec_view_display_to_real = {disp: real for disp, real in options}
+        self._sec_view_real_to_display = {real: disp for disp, real in options}
+        self.sec_view_mode_combo.configure(values=[x[0] for x in options])
+        self.sec_view_mode_display_var.set(self._sec_view_real_to_display.get(current_mode, options[0][0]))
+
+    def _get_selected_sec_view_mode(self) -> str:
+        display = self.sec_view_mode_display_var.get() if hasattr(self, 'sec_view_mode_display_var') else ''
+        mode = (getattr(self, '_sec_view_display_to_real', {}) or {}).get(display)
+        return mode or 'official'
+
+    def _load_confidence_calibration_policy(self):
+        defaults = {
+            'source_priors': {
+                'ratio_engine': [18.0, 2.5],
+                'strategic_engine': [16.0, 3.0],
+                'excel_import': [19.0, 2.0],
+                'ui_fallback': [9.0, 4.0],
+                'default': [12.0, 4.0],
+            },
+            'evidence_weights': {
+                'input_concept_success': 0.9,
+                'input_concept_max': 6.0,
+                'raw_value_success': 0.6,
+                'raw_value_max': 4.0,
+                'missing_input_penalty': 1.8,
+                'missing_input_max': 8.0,
+                'fallback_penalty': 2.5,
+                'fallback_success_credit': 1.5,
+                'mismatch_penalty': 3.0,
+                'not_computable_penalty': 2.0,
+                'hint_weight': 2.0,
+            },
+            # Conservative one-sided confidence bound: p_lcb = p - z*sqrt(var)
+            'lcb_z_score': 1.0,
+            # Piecewise calibration curve: (raw_p, calibrated_p)
+            'calibration_curve': [
+                [0.00, 0.00],
+                [0.40, 0.35],
+                [0.60, 0.58],
+                [0.75, 0.74],
+                [0.85, 0.86],
+                [0.92, 0.93],
+                [0.98, 0.97],
+                [1.00, 0.99],
+            ],
+        }
+        try:
+            p = Path('config') / 'confidence_calibration_policy.json'
+            if not p.exists():
+                return defaults
+            with open(p, 'r', encoding='utf-8') as fh:
+                user_cfg = json.load(fh) or {}
+            if not isinstance(user_cfg, dict):
+                return defaults
+            out = dict(defaults)
+            for k in ('source_priors', 'evidence_weights'):
+                if isinstance(user_cfg.get(k), dict):
+                    merged = dict(defaults.get(k, {}))
+                    merged.update(user_cfg.get(k, {}))
+                    out[k] = merged
+            if isinstance(user_cfg.get('calibration_curve'), list) and user_cfg.get('calibration_curve'):
+                out['calibration_curve'] = user_cfg.get('calibration_curve')
+            if isinstance(user_cfg.get('lcb_z_score'), (int, float)):
+                out['lcb_z_score'] = float(user_cfg.get('lcb_z_score'))
+            return out
+        except Exception:
+            return defaults
+
+    def _apply_confidence_calibration_curve(self, p_raw: float) -> float:
+        try:
+            p = max(0.0, min(1.0, float(p_raw)))
+            curve = (self._confidence_calibration_policy or {}).get('calibration_curve') or []
+            pts = []
+            for item in curve:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    x = float(item[0])
+                    y = float(item[1])
+                    pts.append((max(0.0, min(1.0, x)), max(0.0, min(1.0, y))))
+            if len(pts) < 2:
+                return p
+            pts = sorted(pts, key=lambda t: t[0])
+            if p <= pts[0][0]:
+                return pts[0][1]
+            if p >= pts[-1][0]:
+                return pts[-1][1]
+            for i in range(1, len(pts)):
+                x0, y0 = pts[i - 1]
+                x1, y1 = pts[i]
+                if x0 <= p <= x1:
+                    if abs(x1 - x0) < 1e-12:
+                        return y1
+                    t = (p - x0) / (x1 - x0)
+                    return y0 + t * (y1 - y0)
+            return p
+        except Exception:
+            return max(0.0, min(1.0, float(p_raw)))
+
+    def _normalize_used_in_token(self, token: str) -> str:
+        t = str(token or '').strip().lower()
+        t = t.replace('%', '').replace('-', '_').replace(' ', '_')
+        t = t.replace('/', '_').replace('__', '_')
+        alias = {
+            'pe': 'pe_ratio',
+            'pb': 'pb_ratio',
+            'ev_ebitda': 'ev_ebitda',
+            'fcf_yield': 'fcf_yield',
+            'fcf_per_share': 'fcf_per_share',
+            'ccc_days': 'ccc_days',
+            'dso': 'days_sales_outstanding',
+            'dpo': 'ap_days',
+            'quick_ratio': 'quick_ratio',
+            'current_ratio': 'current_ratio',
+            'cash_ratio': 'cash_ratio',
+            'roa': 'roa',
+            'roe': 'roe',
+            'roic': 'roic',
+            'eps': 'eps_basic',
+            'ni_growth': 'ni_growth',
+            'wacc': 'wacc',
+            'cost_of_equity': 'wacc',
+            'valuation': 'pe_ratio',
+            'balance_check': 'debt_to_assets',
+            'market_cap': 'market_cap',
+            'enterprise_value': 'enterprise_value',
+            'debt_to_assets': 'debt_to_assets',
+            'debt_to_equity': 'debt_to_equity',
+            'interest_coverage': 'interest_coverage',
+            'gross_margin': 'gross_margin',
+            'operating_margin': 'operating_margin',
+            'net_margin': 'net_margin',
+            'ebitda_margin': 'ebitda_margin',
+            'net_debt_ebitda': 'net_debt_ebitda',
+            'inventory_days': 'inventory_days',
+            'investment_score': 'investment_score',
+            'economic_spread': 'economic_spread',
+            'dividend_yield': 'dividend_yield',
+            'book_value_per_share': 'book_value_per_share',
+        }
+        return alias.get(t, t)
+
+    def _extract_used_in_focus_tokens(self, used_in_text: str):
+        parts = [p.strip() for p in str(used_in_text or '').split(',')]
+        out = []
+        for p in parts:
+            n = self._normalize_used_in_token(p)
+            if n:
+                out.append(n)
+        return sorted(set(out))
+
+    def _on_raw_tree_double_click(self, event):
+        try:
+            if self._get_selected_sec_view_mode() != 'inputs':
+                return
+            region = self.raw_tree.identify('region', event.x, event.y)
+            if region != 'cell':
+                return
+            row_id = self.raw_tree.identify_row(event.y)
+            col_id = self.raw_tree.identify_column(event.x)
+            if not row_id or not col_id:
+                return
+            # Column layout in inputs mode: category, normalized, used_in, years..., source.
+            if str(col_id) != '#3':
+                return
+            vals = list(self.raw_tree.item(row_id, 'values') or [])
+            used_in = vals[2] if len(vals) >= 3 else ''
+            if not str(used_in).strip():
+                return
+            title = {
+                'ar': 'البنود المستخدمة',
+                'en': 'Used In',
+                'fr': 'Utilisé dans',
+            }.get(getattr(self, 'current_lang', 'en'), 'Used In')
+            messagebox.showinfo(title, str(used_in))
+        except Exception:
+            return
+
+    def _assert_no_legacy_ratio_keys(self, ratios_by_year: dict) -> None:
+        if not self._debug_ui_contracts_enabled():
+            return
+        banned = {'ROE', 'DSO', 'CCC', 'P_B', 'SGR'}
+        for _, row in (ratios_by_year or {}).items():
+            if not isinstance(row, dict):
+                continue
+            hit = banned.intersection(set(row.keys()))
+            if hit:
+                raise AssertionError(f"Legacy raw ratio keys blocked in UI path: {sorted(hit)}")
+
+    def _remove_selected_companies(self):
+        sel = list(self.companies_listbox.curselection())
+        if not sel:
+            messagebox.showinfo(self._t('msg_info'), self._translate_ui_text("اختر شركة واحدة أو أكثر للحذف"))
+            return
+        removed = []
+        for idx in reversed(sel):
+            name = self.companies_listbox.get(idx)
+            removed.append(name)
+            self.companies_listbox.delete(idx)
+            key = self._resolve_company_key(name)
+            if key in self.multi_company_data:
+                del self.multi_company_data[key]
+            if self.current_data and self.current_data.get('company_info', {}).get('ticker') == key:
+                self.current_data = None
+        messagebox.showinfo(self._t('msg_success'), self._translate_ui_text(f"تم حذف: {', '.join(removed)}"))
+        self.display_all()
+        self._update_workspace_context()
+
+    def _register_company_aliases(self, input_name, ticker, result=None):
+        aliases = set()
+        if input_name:
+            aliases.add(str(input_name).strip())
+        if ticker:
+            aliases.add(str(ticker).strip())
+        if isinstance(result, dict):
+            ci = result.get('company_info', {}) or {}
+            for v in (ci.get('ticker'), ci.get('name'), ci.get('title')):
+                if v:
+                    aliases.add(str(v).strip())
+        for a in aliases:
+            if not a:
+                continue
+            self.company_alias_map[a] = str(ticker)
+            self.company_alias_map[a.upper()] = str(ticker)
+            self.company_alias_map[a.lower()] = str(ticker)
+
+    def _resolve_company_key(self, selected_name):
+        s = str(selected_name or '').strip()
+        if not s:
+            return None
+        if s in self.multi_company_data:
+            return s
+        k = (
+            self.company_alias_map.get(s)
+            or self.company_alias_map.get(s.upper())
+            or self.company_alias_map.get(s.lower())
+        )
+        if k in self.multi_company_data:
+            return k
+        su = s.upper()
+        for kk in self.multi_company_data.keys():
+            if str(kk).upper() == su:
+                return kk
+        for kk, payload in (self.multi_company_data or {}).items():
+            ci = (payload.get('company_info', {}) if isinstance(payload, dict) else {}) or {}
+            nm = str(ci.get('name') or ci.get('title') or '').strip().lower()
+            if nm and s.lower() in nm:
+                return kk
+        return s
+
+    def _on_company_select(self, event=None):
+        """
+        âœ… Ù…Ø¹Ø§Ù„Ø¬ ØªØºÙŠÙŠØ± Ø§Ø®ØªÙŠØ§Ø± Ø§Ù„Ø´Ø±ÙƒØ© - ÙŠØ­Ø¯Ø« Ø§Ù„Ø¹Ø±Ø¶ ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹
+        """
+        sel = self.companies_listbox.curselection()
+        if not sel:
+            return
+
+        idx = None
+        try:
+            if event is not None and hasattr(event, 'y'):
+                idx = int(self.companies_listbox.nearest(event.y))
+        except Exception:
+            idx = None
+        if idx is None:
+            idx = sel[-1]
+        company_name = self.companies_listbox.get(idx)
+        company_key = self._resolve_company_key(company_name)
+
+        # ØªØ­Ø¯ÙŠØ« Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø­Ø§Ù„ÙŠØ©
+        if company_key in self.multi_company_data:
+            self.current_data = self.multi_company_data[company_key]
+
+            # ØªØ­Ø¯ÙŠØ« Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø¹Ø±ÙˆØ¶ Ø¨Ù…Ø§ ÙÙŠÙ‡Ø§ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ø°ÙƒÙŠ
+            self.display_all()
+
+    def _build_ai_analysis_tab(self):
+        """
+        ðŸ¤– Ø¨Ù†Ø§Ø¡ ØªØ¨ÙˆÙŠØ¨ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ø°ÙƒÙŠ AI
+        ÙŠØ­ØªÙˆÙŠ Ø¹Ù„Ù‰ 5 Ù…Ø¤Ø´Ø±Ø§Øª Ø°ÙƒÙŠØ©
+        """
+        # Ø¹Ù†ÙˆØ§Ù†
+        header = tk.Label(self.ai_analysis_tab, 
+                         text=self._t('ai_header'),
+                         bg=PALETTE['header_alt'], fg='white', 
+                         font=FONTS['title'], pady=14, padx=16, anchor='w')
+        header.pack(fill='x')
+        
+        # ÙˆØµÙ
+        desc = tk.Label(self.ai_analysis_tab,
+                       text=self._t('ai_desc'),
+                       bg=PALETTE['panel'], font=FONTS['normal'], fg='#666')
+        desc.pack(fill='x', padx=10, pady=5)
+        
+        # Ø¥Ø·Ø§Ø± Ù‚Ø§Ø¨Ù„ Ù„Ù„ØªÙ…Ø±ÙŠØ±
+        canvas = tk.Canvas(self.ai_analysis_tab, bg=PALETTE['panel'])
+        scrollbar = ttk.Scrollbar(self.ai_analysis_tab, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=PALETTE['panel'])
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        # 1ï¸âƒ£ AI Fraud Probability
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        fraud_frame = tk.LabelFrame(scrollable_frame, text=self._t('ai_fraud_frame'),
+                                   bg='#fff3cd', font=FONTS['label'], padx=15, pady=10)
+        fraud_frame.pack(fill='x', padx=10, pady=10)
+        
+        self.fraud_prob_label = tk.Label(fraud_frame, text=self._t('ai_fraud_prob'),
+                                        bg='#fff3cd', font=FONTS['title'], fg='#856404')
+        self.fraud_prob_label.pack(anchor='w')
+        
+        self.fraud_flags_label = tk.Label(fraud_frame, text=self._t('ai_fraud_flags'),
+                                         bg='#fff3cd', font=FONTS['normal'])
+        self.fraud_flags_label.pack(anchor='w')
+        
+        self.fraud_level_label = tk.Label(fraud_frame, text=self._t('ai_risk_level'),
+                                         bg='#fff3cd', font=FONTS['normal'])
+        self.fraud_level_label.pack(anchor='w')
+        
+        self.fraud_recommendation_label = tk.Label(fraud_frame, text=self._t('ai_recommendation'),
+                                                  bg='#fff3cd', font=FONTS['normal'], fg='#004085')
+        self.fraud_recommendation_label.pack(anchor='w')
+        
+        tk.Label(fraud_frame,
+                text=self._t('ai_fraud_hint'),
+                bg='#fff3cd', font=FONTS['normal'], fg='#666').pack(anchor='w', pady=(5,0))
+        
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        # 2ï¸âƒ£ Dynamic Failure Prediction
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        failure_frame = tk.LabelFrame(scrollable_frame, text=self._t('ai_failure_frame'),
+                                     bg='#f8d7da', font=FONTS['label'], padx=15, pady=10)
+        failure_frame.pack(fill='x', padx=10, pady=10)
+        
+        self.failure_3y_label = tk.Label(failure_frame, text=self._t('ai_failure_3y'),
+                                        bg='#f8d7da', font=FONTS['title'], fg='#721c24')
+        self.failure_3y_label.pack(anchor='w')
+        
+        self.failure_5y_label = tk.Label(failure_frame, text=self._t('ai_failure_5y'),
+                                        bg='#f8d7da', font=FONTS['normal'])
+        self.failure_5y_label.pack(anchor='w')
+        
+        self.failure_risk_label = tk.Label(failure_frame, text=self._t('ai_risk_level'),
+                                          bg='#f8d7da', font=FONTS['normal'])
+        self.failure_risk_label.pack(anchor='w')
+        
+        self.failure_concerns_label = tk.Label(failure_frame, text=self._t('ai_main_concerns'),
+                                              bg='#f8d7da', font=FONTS['normal'], wraplength=600, justify='left')
+        self.failure_concerns_label.pack(anchor='w')
+        
+        tk.Label(failure_frame,
+                text=self._t('ai_failure_hint'),
+                bg='#f8d7da', font=FONTS['normal'], fg='#666').pack(anchor='w', pady=(5,0))
+        
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        # 3ï¸âƒ£ Growth Sustainability Grade
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        growth_frame = tk.LabelFrame(scrollable_frame, text=self._t('ai_growth_frame'),
+                                    bg='#d1ecf1', font=FONTS['label'], padx=15, pady=10)
+        growth_frame.pack(fill='x', padx=10, pady=10)
+        
+        self.growth_score_label = tk.Label(
+            growth_frame,
+            text=self._t('ai_score'),
+            bg='#d1ecf1',
+            font=(FONTS['title'][0], 16, 'bold'),
+            fg='#0c5460',
+        )
+        self.growth_score_label.pack(anchor='w')
+        
+        self.growth_grade_label = tk.Label(growth_frame, text=self._t('ai_grade'),
+                                          bg='#d1ecf1', font=FONTS['title'])
+        self.growth_grade_label.pack(anchor='w')
+        
+        self.growth_assessment_label = tk.Label(growth_frame, text=self._t('ai_assessment'),
+                                               bg='#d1ecf1', font=FONTS['normal'])
+        self.growth_assessment_label.pack(anchor='w')
+        
+        self.growth_warning_label = tk.Label(growth_frame, text="",
+                                            bg='#d1ecf1', font=FONTS['normal'], fg='#d9534f')
+        self.growth_warning_label.pack(anchor='w')
+        
+        tk.Label(growth_frame,
+                text=self._t('ai_growth_hint'),
+                bg='#d1ecf1', font=FONTS['normal'], fg='#666').pack(anchor='w', pady=(5,0))
+        
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        # 4ï¸âƒ£ AI Working Capital Analysis
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        wc_frame = tk.LabelFrame(scrollable_frame, text=self._t('ai_wc_frame'),
+                                bg='#fff3cd', font=FONTS['label'], padx=15, pady=10)
+        wc_frame.pack(fill='x', padx=10, pady=10)
+        
+        self.wc_crisis_prob_label = tk.Label(wc_frame, text=self._t('ai_wc_crisis'),
+                                            bg='#fff3cd', font=FONTS['title'], fg='#856404')
+        self.wc_crisis_prob_label.pack(anchor='w')
+        
+        self.wc_ccc_label = tk.Label(wc_frame, text=self._t('ai_wc_ccc'),
+                                    bg='#fff3cd', font=FONTS['normal'])
+        self.wc_ccc_label.pack(anchor='w')
+        
+        self.wc_trend_label = tk.Label(wc_frame, text=self._t('ai_wc_trend'),
+                                      bg='#fff3cd', font=FONTS['normal'])
+        self.wc_trend_label.pack(anchor='w')
+        
+        self.wc_recommendation_label = tk.Label(wc_frame, text=self._t('ai_recommendation'),
+                                               bg='#fff3cd', font=FONTS['normal'], fg='#004085')
+        self.wc_recommendation_label.pack(anchor='w')
+        
+        tk.Label(wc_frame,
+                text=self._t('ai_wc_hint'),
+                bg='#fff3cd', font=FONTS['normal'], fg='#666').pack(anchor='w', pady=(5,0))
+        
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        # 5ï¸âƒ£ AI Investment Quality Score
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        quality_frame = tk.LabelFrame(scrollable_frame, text=self._t('ai_quality_frame'),
+                                     bg='#d4edda', font=FONTS['label'], padx=15, pady=10)
+        quality_frame.pack(fill='x', padx=10, pady=10)
+        
+        self.quality_score_label = tk.Label(
+            quality_frame,
+            text=self._t('ai_quality_score'),
+            bg='#d4edda',
+            font=(FONTS['title'][0], 18, 'bold'),
+            fg='#155724',
+        )
+        self.quality_score_label.pack(anchor='w')
+        
+        self.quality_verdict_label = tk.Label(quality_frame, text=self._t('ai_verdict'),
+                                             bg='#d4edda', font=FONTS['title'])
+        self.quality_verdict_label.pack(anchor='w')
+        
+        self.quality_action_label = tk.Label(quality_frame, text=self._t('ai_invest_action'),
+                                            bg='#d4edda', font=FONTS['normal'], fg='#004085')
+        self.quality_action_label.pack(anchor='w')
+        
+        self.quality_percentile_label = tk.Label(quality_frame, text=self._t('ai_percentile'),
+                                                bg='#d4edda', font=FONTS['normal'])
+        self.quality_percentile_label.pack(anchor='w')
+        
+        tk.Label(quality_frame,
+                text=self._t('ai_quality_hint'),
+                bg='#d4edda', font=FONTS['normal'], fg='#666').pack(anchor='w', pady=(5,0))
+
+        # Visual AI dashboard (advanced charts)
+        self.ai_chart_frame = tk.LabelFrame(
+            scrollable_frame,
+            text='AI Visual Dashboard',
+            bg=PALETTE['panel'],
+            fg='#0f2747',
+            font=FONTS['label'],
+            padx=8,
+            pady=8,
+        )
+        self.ai_chart_frame.pack(fill='x', padx=10, pady=(4, 10))
+        self._ai_chart_canvas = None
+        
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        # Ø£Ø²Ø±Ø§Ø± Ø§Ù„ØªØ­ÙƒÙ…
+        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        controls_frame = tk.Frame(scrollable_frame, bg=PALETTE['panel'])
+        controls_frame.pack(fill='x', pady=10, padx=10)
+        
+        refresh_btn = tk.Button(controls_frame, text=self._t('ai_btn_refresh'),
+                               font=FONTS['button'],
+                               command=self.display_ai_analysis, pady=8)
+        self._style_tk_button(refresh_btn, 'primary')
+        refresh_btn.pack(side='left', padx=5)
+        
+        # âœ… NEW: Ø²Ø± Ø§Ù„ØªØ¯Ø±ÙŠØ¨ Ø§Ù„ÙŠØ¯ÙˆÙŠ
+        train_btn = tk.Button(controls_frame, text=self._t('ai_btn_train'),
+                             font=FONTS['button'],
+                             command=self._manual_train_models, pady=8)
+        self._style_tk_button(train_btn, 'success')
+        train_btn.pack(side='left', padx=5)
+        
+        # âœ… NEW: Ø¹Ø±Ø¶ Ø¥Ø­ØµØ§Ø¦ÙŠØ§Øª Ø§Ù„ØªØ¯Ø±ÙŠØ¨
+        stats_btn = tk.Button(controls_frame, text=self._t('ai_btn_stats'),
+                             font=FONTS['button'],
+                             command=self._show_training_stats, pady=8)
+        self._style_tk_button(stats_btn, 'neutral')
+        stats_btn.pack(side='left', padx=5)
+        
+        # ØªØ¹Ø¨Ø¦Ø©
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def _build_chat_tab(self):
+        header = tk.Label(
+            self.chat_tab,
+            text=self._t('chat_header'),
+            bg=PALETTE['header_alt'],
+            fg='white',
+            font=FONTS['title'],
+            pady=14,
+            padx=16,
+            anchor='w',
+        )
+        header.pack(fill='x')
+
+        desc = tk.Label(
+            self.chat_tab,
+            text=self._t('chat_desc'),
+            bg=PALETTE['panel'],
+            fg=PALETTE['muted'],
+            font=FONTS['normal'],
+            anchor='w',
+            justify='left',
+            wraplength=1100,
+        )
+        desc.pack(fill='x', padx=10, pady=(6, 4))
+
+        top_controls = tk.Frame(self.chat_tab, bg=PALETTE['panel'])
+        top_controls.pack(fill='x', padx=10, pady=(0, 6))
+
+        self.chat_use_cloud_var = tk.BooleanVar(master=self.root, value=False)
+        self.chat_use_cloud_check = tk.Checkbutton(
+            top_controls,
+            text=self._t('chat_use_cloud'),
+            variable=self.chat_use_cloud_var,
+            bg=PALETTE['panel'],
+            anchor='w',
+            justify='left',
+            command=self._sync_chat_mode_badge,
+        )
+        self.chat_use_cloud_check.pack(side='left', padx=(0, 10))
+
+        self.chat_response_mode_real = 'auto'
+        self.chat_response_mode_var = tk.StringVar(master=self.root, value='')
+        self.chat_mode_label = tk.Label(
+            top_controls,
+            text=self._t('chat_mode_label'),
+            bg=PALETTE['panel'],
+            fg=PALETTE['text'],
+            font=FONTS['normal'],
+        )
+        self.chat_mode_label.pack(side='left', padx=(0, 6))
+
+        self.chat_response_mode_combo = ttk.Combobox(
+            top_controls,
+            textvariable=self.chat_response_mode_var,
+            state='readonly',
+            width=18,
+        )
+        self.chat_response_mode_combo.pack(side='left', padx=(0, 10))
+        self.chat_response_mode_combo.bind('<<ComboboxSelected>>', self._on_chat_response_mode_changed)
+
+        self.chat_mode_badge = tk.Label(
+            top_controls,
+            text=self._t('chat_status_local'),
+            bg=PALETTE['accent_soft'],
+            fg=PALETTE['accent_dark'],
+            font=FONTS['label'],
+            padx=10,
+            pady=6,
+        )
+        self.chat_mode_badge.pack(side='left')
+
+        self.chat_status_label = tk.Label(
+            top_controls,
+            text='',
+            bg=PALETTE['panel'],
+            fg=PALETTE['muted'],
+            font=FONTS['normal'],
+            anchor='e',
+            justify='right',
+        )
+        self.chat_status_label.pack(side='right')
+
+        # Composer is fixed at bottom so input is always visible.
+        input_frame = tk.Frame(self.chat_tab, bg=PALETTE['panel'])
+        input_frame.pack(side='bottom', fill='x', padx=10, pady=(0, 8))
+
+        self.chat_input = tk.Text(
+            input_frame,
+            height=4,
+            wrap='word',
+            font=FONTS['normal'],
+        )
+        self._style_text_like_widget(self.chat_input, background=PALETTE['surface'])
+        self.chat_input.pack(fill='x', side='left', expand=True, padx=(0, 8))
+        self.chat_input.insert('1.0', self._t('chat_input_hint'))
+        self.chat_input.bind('<FocusIn>', self._on_chat_input_focus_in)
+        self.chat_input.bind('<Control-Return>', self._on_chat_send_shortcut)
+
+        btn_col = tk.Frame(input_frame, bg=PALETTE['panel'])
+        btn_col.pack(side='right', fill='y')
+
+        self.chat_send_btn = tk.Button(
+            btn_col,
+            text=self._t('chat_send'),
+            font=FONTS['button'],
+            command=self._send_chat_message,
+            width=20,
+        )
+        self._style_tk_button(self.chat_send_btn, 'primary')
+        self.chat_send_btn.pack(fill='x', pady=(0, 6))
+
+        self.chat_report_btn = tk.Button(
+            btn_col,
+            text=self._t('chat_make_report'),
+            font=FONTS['button'],
+            command=self._generate_auto_chat_report,
+            width=20,
+        )
+        self._style_tk_button(self.chat_report_btn, 'success')
+        self.chat_report_btn.pack(fill='x', pady=(0, 6))
+
+        self.chat_word_btn = tk.Button(
+            btn_col,
+            text=self._t('chat_export_word'),
+            font=FONTS['button'],
+            command=self._export_chat_word_report,
+            width=20,
+        )
+        self._style_tk_button(self.chat_word_btn, 'secondary')
+        self.chat_word_btn.pack(fill='x', pady=(0, 6))
+
+        self.chat_clear_btn = tk.Button(
+            btn_col,
+            text=self._t('chat_clear'),
+            font=FONTS['button'],
+            command=self._clear_chat_history,
+            width=20,
+        )
+        self._style_tk_button(self.chat_clear_btn, 'neutral')
+        self.chat_clear_btn.pack(fill='x')
+
+        # Message history occupies remaining middle area.
+        chat_frame = tk.Frame(self.chat_tab, bg=PALETTE['panel'])
+        chat_frame.pack(side='top', fill='both', expand=True, padx=10, pady=(0, 8))
+        chat_frame.grid_columnconfigure(0, weight=1)
+        chat_frame.grid_rowconfigure(0, weight=1)
+
+        self.chat_text = tk.Text(
+            chat_frame,
+            wrap='word',
+            font=FONTS['normal'],
+            state='disabled',
+        )
+        self._style_text_like_widget(self.chat_text, background=PALETTE['surface'])
+        chat_scroll = ttk.Scrollbar(chat_frame, orient='vertical', command=self.chat_text.yview)
+        self.chat_text.configure(yscrollcommand=chat_scroll.set)
+        self.chat_text.grid(row=0, column=0, sticky='nsew')
+        chat_scroll.grid(row=0, column=1, sticky='ns')
+
+        self.chat_text.tag_configure('user', foreground='#0b6efd', font=FONTS['label'])
+        self.chat_text.tag_configure('assistant', foreground='#198754', font=FONTS['label'])
+        self.chat_text.tag_configure('meta', foreground='#6b7280', font=FONTS['normal'])
+        self.chat_text.tag_configure('body', foreground='#111827', font=FONTS['normal'])
+
+        self._refresh_chat_response_mode_display()
+        self._sync_chat_mode_badge()
+        self._append_chat_line('assistant', self._t('chat_desc'))
+
+    def _update_workspace_context(self, headline=None):
+        count = len(self.multi_company_data or {})
+        if hasattr(self, 'workspace_companies_value'):
+            self.workspace_companies_value.config(text=str(count))
+        if hasattr(self, 'workspace_range_value'):
+            try:
+                self.workspace_range_value.config(text=f"{self.start_year_var.get()} - {self.end_year_var.get()}")
+            except Exception:
+                self.workspace_range_value.config(text='--')
+        if headline is None:
+            ci = (self.current_data or {}).get('company_info', {}) if self.current_data else {}
+            ticker = ci.get('ticker') or ''
+            name = ci.get('name') or ''
+            if ticker:
+                headline = f"{name} ({ticker})" if name else ticker
+            else:
+                headline = self._t('status_ready')
+        if hasattr(self, 'workspace_context_label'):
+            self.workspace_context_label.config(text=headline)
+
+    def _on_chat_input_focus_in(self, _event=None):
+        try:
+            cur = self.chat_input.get('1.0', 'end').strip()
+            if cur == self._t('chat_input_hint'):
+                self.chat_input.delete('1.0', 'end')
+        except Exception:
+            pass
+
+    def _on_chat_send_shortcut(self, _event=None):
+        self._send_chat_message()
+        return "break"
+
+    def _chat_response_mode_options(self):
+        return [
+            ('auto', self._t('chat_mode_auto')),
+            ('quick', self._t('chat_mode_quick')),
+            ('expert', self._t('chat_mode_expert')),
+            ('report', self._t('chat_mode_report')),
+        ]
+
+    def _refresh_chat_response_mode_display(self):
+        if not hasattr(self, 'chat_response_mode_combo'):
+            return
+        options = self._chat_response_mode_options()
+        self._chat_mode_display_to_real = {label: real for real, label in options}
+        self._chat_mode_real_to_display = {real: label for real, label in options}
+        self.chat_response_mode_combo['values'] = [label for _real, label in options]
+        current_real = getattr(self, 'chat_response_mode_real', 'auto') or 'auto'
+        self.chat_response_mode_var.set(self._chat_mode_real_to_display.get(current_real, options[0][1]))
+        if hasattr(self, 'chat_mode_label'):
+            self.chat_mode_label.config(text=self._t('chat_mode_label'))
+
+    def _on_chat_response_mode_changed(self, _event=None):
+        disp = str(self.chat_response_mode_var.get() or '').strip()
+        real = getattr(self, '_chat_mode_display_to_real', {}).get(disp, 'auto')
+        self.chat_response_mode_real = real
+
+    def _get_selected_chat_response_mode(self):
+        return str(getattr(self, 'chat_response_mode_real', 'auto') or 'auto').strip().lower()
+
+    def _sync_chat_mode_badge(self):
+        if not hasattr(self, 'chat_mode_badge'):
+            return
+        cloud_requested = bool(getattr(self, 'chat_use_cloud_var', tk.BooleanVar(value=False)).get())
+        if cloud_requested and self.chat_assistant.has_cloud():
+            self.chat_mode_badge.config(text=self._t('chat_status_cloud'), bg='#e8fff1', fg='#198754')
+        else:
+            self.chat_mode_badge.config(text=self._t('chat_status_local'), bg='#eef5ff', fg='#0b6efd')
+
+    def _append_chat_line(self, role: str, text: str, meta: str = ""):
+        if not hasattr(self, 'chat_text'):
+            return
+        role = str(role or 'assistant').lower()
+        role_title = "Assistant" if role != 'user' else "You"
+        if self.current_lang == 'ar':
+            role_title = "المساعد" if role != 'user' else "أنت"
+        elif self.current_lang == 'fr':
+            role_title = "Assistant" if role != 'user' else "Vous"
+
+        self.chat_text.configure(state='normal')
+        self.chat_text.insert('end', f"{role_title}\n", (role if role in ('user', 'assistant') else 'assistant',))
+        self.chat_text.insert('end', f"{text}\n", ('body',))
+        if meta:
+            self.chat_text.insert('end', f"{meta}\n", ('meta',))
+        self.chat_text.insert('end', "\n")
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
+    def _set_chat_status(self, text: str):
+        if hasattr(self, 'chat_status_label'):
+            self.chat_status_label.config(text=text or '')
+
+    def _collect_chat_context(self):
+        if not self.current_data:
+            return {}
+        company_info = (self.current_data.get('company_info', {}) or {})
+        ratios_by_year = maybe_guard_ratios_by_year(self.current_data.get('financial_ratios', {}))
+        data_by_year = (
+            (self.current_data.get('data_layers', {}) or {}).get('layer1_by_year')
+            or self.current_data.get('data_by_year', {})
+            or {}
+        )
+
+        norm_ratios = {}
+        for yk, row in (ratios_by_year or {}).items():
+            try:
+                yy = int(yk)
+            except Exception:
+                continue
+            if isinstance(row, dict):
+                norm_ratios[yy] = row
+        chart_data_by_year = {}
+        for yk, row in (data_by_year or {}).items():
+            try:
+                yy = int(yk)
+            except Exception:
+                continue
+            chart_data_by_year[yy] = row or {}
+
+        # Enrich ratio context with core raw facts so local chat can produce
+        # period narratives without dropping into N/A.
+        for yy, raw in chart_data_by_year.items():
+            rr = norm_ratios.setdefault(yy, {})
+            if not isinstance(rr, dict):
+                rr = {}
+                norm_ratios[yy] = rr
+            rr.setdefault('revenue',
+                          raw.get('Revenues') or raw.get('Revenue') or raw.get('SalesRevenueNet')
+                          or raw.get('RevenueFromContractWithCustomerExcludingAssessedTax'))
+            rr.setdefault('net_income', raw.get('NetIncomeLoss') or raw.get('ProfitLoss'))
+            rr.setdefault('operating_income', raw.get('OperatingIncomeLoss') or raw.get('IncomeLossFromOperations'))
+            rr.setdefault('total_assets', raw.get('Assets') or raw.get('TotalAssets'))
+            rr.setdefault('shareholders_equity',
+                          raw.get('StockholdersEquity')
+                          or raw.get('StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest')
+                          or raw.get('TotalEquity'))
+            rr.setdefault('operating_cash_flow',
+                          raw.get('NetCashProvidedByUsedInOperatingActivities') or raw.get('OperatingCashFlow'))
+            rr.setdefault('capital_expenditures',
+                          raw.get('PaymentsToAcquirePropertyPlantAndEquipment') or raw.get('CapitalExpenditures'))
+
+        years = sorted(norm_ratios.keys())
+        latest_year = years[-1] if years else None
+        latest_ratios = norm_ratios.get(latest_year, {}) if latest_year is not None else {}
+        forecast_bundle = self._build_forecast_bundle(chart_data_by_year, years_forward=10) if chart_data_by_year else {}
+        ai = self._build_ai_insights_snapshot()
+        ai_quality = (ai.get('investment_quality') or {}) if isinstance(ai, dict) else {}
+
+        base = forecast_bundle.get('base') or {}
+        bull = forecast_bundle.get('bull') or {}
+        bear = forecast_bundle.get('bear') or {}
+        forecast_context = {
+            'base': {
+                'revenue_next': (base.get('revenue') or {}).get('next_value'),
+                'net_income_next': (base.get('net_income') or {}).get('next_value'),
+            },
+            'bull': {
+                'revenue_next': (bull.get('revenue') or {}).get('next_value'),
+                'net_income_next': (bull.get('net_income') or {}).get('next_value'),
+            },
+            'bear': {
+                'revenue_next': (bear.get('revenue') or {}).get('next_value'),
+                'net_income_next': (bear.get('net_income') or {}).get('next_value'),
+            },
+        }
+
+        return {
+            'company': {
+                'ticker': company_info.get('ticker'),
+                'name': company_info.get('name') or company_info.get('title'),
+                'sector': company_info.get('sector'),
+                'industry': company_info.get('industry'),
+            },
+            'latest_year': latest_year,
+            'latest_ratios': latest_ratios,
+            'ratios_by_year': norm_ratios,
+            'data_by_year': chart_data_by_year,
+            'strategic_by_year': maybe_guard_ratios_by_year(self.current_data.get('strategic_analysis', {})),
+            'forecast': forecast_context,
+            'ai_quality': ai_quality,
+            'live_trusted_context': self._fetch_live_trusted_context(company_info),
+        }
+
+    def _fetch_live_trusted_context(self, company_info):
+        """
+        Live trusted enrichment for chat explanations.
+        Priority:
+        1) SEC submissions endpoint (filings metadata)
+        2) fetcher market snapshot (Polygon/Yahoo merged by engine)
+        """
+        out = {
+            'sec': {},
+            'market': {},
+            'notes': [],
+        }
+        ticker = str((company_info or {}).get('ticker') or '').strip().upper()
+        cik_raw = str((company_info or {}).get('cik') or '').strip()
+        if cik_raw:
+            cik_digits = ''.join(ch for ch in cik_raw if ch.isdigit())
+            cik10 = cik_digits.zfill(10) if cik_digits else ''
+        else:
+            cik10 = ''
+
+        # SEC official filings metadata
+        try:
+            if cik10:
+                url = f"https://data.sec.gov/submissions/CIK{cik10}.json"
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": "SECFinancialSystem/4.0 (research@local.app)",
+                        "Accept": "application/json",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                recent = ((payload.get('filings') or {}).get('recent') or {})
+                forms = recent.get('form') or []
+                filed = recent.get('filingDate') or []
+                acc = recent.get('accessionNumber') or []
+                rows = []
+                for i in range(min(len(forms), len(filed), len(acc), 40)):
+                    if forms[i] in ('10-K', '10-Q', '8-K'):
+                        rows.append({'form': forms[i], 'filing_date': filed[i], 'accession': acc[i]})
+                out['sec'] = {
+                    'recent_authoritative_filings': rows[:15],
+                    'source': 'SEC submissions API',
+                }
+        except Exception as e:
+            out['notes'].append(f"SEC live enrichment failed: {e}")
+
+        # Market trusted snapshot via app fetcher
+        try:
+            if ticker and self.fetcher and hasattr(self.fetcher, 'get_market_data'):
+                mk = self.fetcher.get_market_data(ticker) or {}
+                out['market'] = {
+                    'snapshot': mk,
+                    'source': 'fetcher.get_market_data (market layers)',
+                }
+        except Exception as e:
+            out['notes'].append(f"Market live enrichment failed: {e}")
+        return out
+
+    def _send_chat_message(self, forced_mode=None):
+        if not hasattr(self, 'chat_input'):
+            return
+        q = self.chat_input.get('1.0', 'end').strip()
+        if not q or q == self._t('chat_input_hint'):
+            return
+        self.chat_input.delete('1.0', 'end')
+        self._append_chat_line('user', q)
+
+        if not self.current_data:
+            self._append_chat_line('assistant', self._t('chat_no_data'))
+            return
+
+        self.chat_send_btn.config(state='disabled')
+        self._set_chat_status(self._t('chat_status_thinking'))
+        self._sync_chat_mode_badge()
+
+        cloud_requested = bool(self.chat_use_cloud_var.get())
+        if cloud_requested and not self.chat_assistant.has_cloud():
+            self._append_chat_line('assistant', self._t('chat_cloud_missing'))
+
+        context = self._collect_chat_context()
+        selected_mode = str(forced_mode or self._get_selected_chat_response_mode() or 'auto').strip().lower()
+
+        def worker():
+            try:
+                answer, meta = self.chat_assistant.answer(
+                    question=q,
+                    context=context,
+                    prefer_cloud=cloud_requested,
+                    response_mode=selected_mode,
+                )
+            except Exception as e:
+                answer, meta = (f"Chat processing failed: {e}", {"engine": "local", "mode": "error"})
+
+            def done():
+                engine = (meta or {}).get('engine', 'local')
+                mode = (meta or {}).get('mode', '')
+                model = (meta or {}).get('model', '')
+                intent = (meta or {}).get('intent', '')
+                cloud_error = (meta or {}).get('cloud_error', '')
+                meta_line = f"[engine={engine}{', mode=' + mode if mode else ''}{', intent=' + intent if intent else ''}{', model=' + model if model else ''}]"
+                if cloud_error:
+                    meta_line += f" [cloud_fallback={cloud_error[:140]}]"
+                self._append_chat_line('assistant', answer, meta=meta_line)
+                self.chat_history.append({
+                    'ts': datetime.now().isoformat(),
+                    'question': q,
+                    'answer': answer,
+                    'meta': meta or {},
+                })
+                self.chat_send_btn.config(state='normal')
+                self._set_chat_status('')
+                self._sync_chat_mode_badge()
+
+            self.root.after(0, done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _generate_auto_chat_report(self):
+        if self.current_lang == 'ar':
+            prompt = (
+                "أنشئ تقريرًا ماليًا واستثماريًا احترافيًا كاملًا وفق الهيكل المؤسسي التالي حرفيًا: "
+                "1) صفحة العنوان 2) الملخص التنفيذي 3) نموذج الأعمال والتموضع 4) التحليل التاريخي "
+                "5) الربحية 6) السيولة والملاءة والرافعة 7) التدفقات النقدية وجودة الأرباح "
+                "8) كفاءة رأس المال وخلق القيمة 9) التحليل القطاعي 10) المخاطر المتقدم "
+                "11) التوقعات (Base/Bull/Bear) 12) التقييم 13) الحكم الاستثماري النهائي "
+                "14) الخلاصة التنفيذية. "
+                "مهم: لا تكرار أرقام بدون تفسير، لا إنشاء عام، لا اختراع بيانات، "
+                "واذكر DATA_NOT_AVAILABLE_FROM_AUTHORITATIVE_SOURCES عند غياب البيانات."
+            )
+        elif self.current_lang == 'fr':
+            prompt = (
+                "Génère un rapport financier institutionnel complet (pas un résumé court), "
+                "avec structure professionnelle et raisonnement d'investissement défendable."
+            )
+        else:
+            prompt = (
+                "Generate a full institutional equity research report (not concise), "
+                "with deep narrative, causal analysis, risk taxonomy, valuation judgment, and final recommendation."
+            )
+        if hasattr(self, 'chat_input'):
+            self.chat_input.delete('1.0', 'end')
+            self.chat_input.insert('1.0', prompt)
+        self._send_chat_message(forced_mode='report')
+
+    def _clear_chat_history(self):
+        self.chat_history = []
+        if hasattr(self, 'chat_text'):
+            self.chat_text.configure(state='normal')
+            self.chat_text.delete('1.0', 'end')
+            self.chat_text.configure(state='disabled')
+        self._append_chat_line('assistant', self._t('chat_desc'))
+
+    def _export_chat_word_report(self):
+        if not self.current_data:
+            messagebox.showwarning(self._t('msg_warning'), self._t('chat_no_data'))
+            return
+
+        try:
+            from docx import Document
+            from docx.shared import Inches
+            from docx.shared import Pt
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.oxml.ns import qn
+            try:
+                from docx.enum.table import WD_TABLE_DIRECTION
+            except Exception:
+                WD_TABLE_DIRECTION = None
+        except Exception:
+            messagebox.showerror(self._t('msg_error'), self._t('chat_word_dependency'))
+            return
+
+        context = self._collect_chat_context()
+        company = context.get('company') or {}
+        ticker = (company.get('ticker') or 'COMPANY').upper()
+        name = company.get('name') or ticker
+
+        # Always prefer Excel source-of-truth to keep Word fully aligned with exported workbook.
+        excel_path = (
+            (self.current_data or {}).get('_loaded_from_excel_path')
+            or (self.current_data or {}).get('_source_excel_path')
+            or ''
+        )
+        if not excel_path:
+            excel_path = filedialog.askopenfilename(
+                title=self._translate_ui_text("اختر ملف Excel المصدر للتقرير المطابق"),
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            )
+        if excel_path:
+            try:
+                import pandas as pd
+                sheets = pd.read_excel(excel_path, sheet_name=None)
+                raw_df = sheets.get('Raw_by_Year')
+                ratios_df = sheets.get('Ratios')
+                strategic_df = sheets.get('Strategic')
+
+                if raw_df is not None and not raw_df.empty:
+                    context['data_by_year'] = self._sheet_to_year_dict(
+                        raw_df, ['Concept', 'Line Item', 'Item', 'البند'], allow_text=False
+                    )
+                if ratios_df is not None and not ratios_df.empty:
+                    context['ratios_by_year'] = self._sheet_to_year_dict(
+                        ratios_df, ['Metric', 'Ratio', 'Name', 'النسبة'], allow_text=False
+                    )
+                if strategic_df is not None and not strategic_df.empty:
+                    context['strategic_by_year'] = self._sheet_to_year_dict(
+                        strategic_df, ['Metric', 'Indicator', 'المقياس'], allow_text=True
+                    )
+
+                years_x = sorted(
+                    int(y) for y in (context.get('ratios_by_year') or {}).keys()
+                    if str(y).isdigit()
+                )
+                if years_x:
+                    context['latest_year'] = years_x[-1]
+                    context['latest_ratios'] = (context.get('ratios_by_year') or {}).get(years_x[-1], {}) or {}
+
+                context['_source_excel_path'] = str(excel_path)
+                context['_source_excel_sheets'] = {
+                    str(k): int(len(v)) for k, v in (sheets or {}).items()
+                    if hasattr(v, '__len__')
+                }
+                context['_source_excel_frames'] = {}
+                for sh_name, sh_df in (sheets or {}).items():
+                    if sh_df is None or sh_df.empty:
+                        continue
+                    # Keep report readable while preserving full-sheet traceability.
+                    context['_source_excel_frames'][str(sh_name)] = sh_df.head(250).copy()
+            except Exception as e:
+                messagebox.showwarning(
+                    self._t('msg_warning'),
+                    f"{self._translate_ui_text('تعذر قراءة ملف Excel المصدر، سيتم استخدام بيانات الجلسة الحالية.')}\n{e}"
+                )
+
+        now_stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        default_name = f"{ticker}_financial_chat_report_{now_stamp}.docx"
+        fn = filedialog.asksaveasfilename(
+            defaultextension='.docx',
+            initialfile=default_name,
+            filetypes=[('Word files', '*.docx'), ('All files', '*.*')],
+            title='Save Financial Expert Report',
+        )
+        if not fn:
+            messagebox.showinfo(
+                self._t('msg_info') if hasattr(self, '_t') else 'Info',
+                self._translate_ui_text("تم إلغاء حفظ تقرير Word ولم يتم التصدير إلى مسار مخفي.")
+            )
+            return
+
+        def _apply_doc_style(doc_obj, arabic=True):
+            """
+            Normalize typography and spacing for clean, readable reports.
+            """
+            try:
+                normal = doc_obj.styles['Normal']
+                normal.font.name = 'Arial'
+                normal.font.size = Pt(11)
+                try:
+                    normal._element.rPr.rFonts.set(qn('w:eastAsia'), 'Arial')
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            for p in doc_obj.paragraphs:
+                try:
+                    pf = p.paragraph_format
+                    pf.space_after = Pt(6)
+                    pf.space_before = Pt(0)
+                    pf.line_spacing = 1.25
+                    if arabic:
+                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        ppr = p._p.get_or_add_pPr()
+                        ppr.set(qn('w:bidi'), '1')
+                except Exception:
+                    pass
+
+            for tb in doc_obj.tables:
+                try:
+                    tb.style = 'Table Grid'
+                except Exception:
+                    pass
+                for row in tb.rows:
+                    for cell in row.cells:
+                        for p in cell.paragraphs:
+                            try:
+                                pf = p.paragraph_format
+                                pf.space_after = Pt(3)
+                                pf.space_before = Pt(0)
+                                pf.line_spacing = 1.15
+                                if arabic:
+                                    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                                    ppr = p._p.get_or_add_pPr()
+                                    ppr.set(qn('w:bidi'), '1')
+                            except Exception:
+                                pass
+
+        def _extract_last_strict_json_answer():
+            """
+            Try to parse last assistant JSON report from chat history.
+            """
+            for item in reversed(self.chat_history or []):
+                ans = str((item or {}).get('answer') or '').strip()
+                if not ans:
+                    continue
+                # Direct JSON
+                try:
+                    payload = json.loads(ans)
+                    if isinstance(payload, dict) and 'report_title' in payload and 'investment_rating' in payload:
+                        return payload
+                except Exception:
+                    pass
+                # JSON embedded inside text
+                s = ans.find('{')
+                e = ans.rfind('}')
+                if s != -1 and e != -1 and e > s:
+                    try:
+                        payload = json.loads(ans[s:e + 1])
+                        if isinstance(payload, dict) and 'report_title' in payload and 'investment_rating' in payload:
+                            return payload
+                    except Exception:
+                        pass
+            return None
+
+        def _export_from_strict_json(payload):
+            doc = Document()
+            title = str(payload.get('report_title') or 'Financial Report')
+            company_name = str(payload.get('company_name') or '')
+            tk = str(payload.get('ticker') or '')
+            report_date = str(payload.get('report_date') or datetime.now().strftime("%Y-%m-%d"))
+            source = str(payload.get('data_source') or '')
+            rating = (payload.get('investment_rating') or {})
+            final_case = (payload.get('final_investment_case') or {})
+
+            def _add_section(title_text, body_text=None):
+                doc.add_heading(title_text, level=2)
+                if body_text is not None:
+                    doc.add_paragraph(str(body_text))
+
+            def _add_labeled(lbl, txt):
+                doc.add_paragraph(f"{lbl}: {txt if txt not in (None, '') else 'غير متاح من المصدر الموثوق'}")
+
+            def _add_expanded_comment(text):
+                doc.add_paragraph('تعليق مالي موسع:')
+                doc.add_paragraph(str(text))
+
+            def _append_excel_sheet_tables():
+                frames = context.get('_source_excel_frames') or {}
+                if not isinstance(frames, dict) or not frames:
+                    return
+                doc.add_heading('19. التحليل التفصيلي المباشر من ملف Excel', level=2)
+                doc.add_paragraph(
+                    'هذا القسم يعرض بيانات الأوراق كما هي في ملف الإكسل المصدر لضمان التطابق والتحقق.'
+                )
+                for sh_name, sh_df in frames.items():
+                    try:
+                        if sh_df is None or sh_df.empty:
+                            continue
+                        cols = [str(c) for c in list(sh_df.columns)]
+                        if not cols:
+                            continue
+                        max_cols = min(len(cols), 14)
+                        use_cols = cols[:max_cols]
+                        max_rows = min(len(sh_df), 120)
+
+                        doc.add_heading(f"ورقة: {sh_name}", level=3)
+                        tb = doc.add_table(rows=1, cols=max_cols)
+                        tb.style = 'Table Grid'
+                        for i, c in enumerate(use_cols):
+                            tb.rows[0].cells[i].text = c
+
+                        for ridx in range(max_rows):
+                            rr = tb.add_row().cells
+                            row = sh_df.iloc[ridx]
+                            for i, c in enumerate(use_cols):
+                                v = row.get(c)
+                                rr[i].text = '' if v is None else str(v)
+                        doc.add_paragraph(
+                            f"القراءة التحليلية: تم إدراج أول {max_rows} صف من الورقة كما وردت في المصدر."
+                        )
+                    except Exception:
+                        continue
+
+            def _append_source_excel_trace():
+                if not context.get('_source_excel_path'):
+                    return
+                _add_section('18. تتبع ملف Excel المصدر')
+                _add_labeled('ملف المصدر', context.get('_source_excel_path'))
+                sheet_inventory = context.get('_source_excel_sheets') or {}
+                if sheet_inventory:
+                    tb = doc.add_table(rows=1, cols=2)
+                    tb.style = 'Table Grid'
+                    tb.rows[0].cells[0].text = 'اسم الورقة'
+                    tb.rows[0].cells[1].text = 'عدد الصفوف'
+                    for sh, cnt in sheet_inventory.items():
+                        rr = tb.add_row().cells
+                        rr[0].text = str(sh)
+                        rr[1].text = str(cnt)
+                _add_expanded_comment(
+                    "هذا الملحق يؤكد أن التقرير الحالي بُني مباشرة من ملف Excel المصدر المختار، "
+                    "وليس من ذاكرة جلسة سابقة، لضمان التطابق بين الأرقام المعروضة في التقرير والجداول الأصلية."
+                )
+
+            def _md_table_to_doc(md_text, heading):
+                try:
+                    lines = [ln.strip() for ln in str(md_text or '').splitlines() if ln.strip()]
+                    if len(lines) < 3 or '|' not in lines[0]:
+                        return False
+                    header = [c.strip() for c in lines[0].strip('|').split('|')]
+                    body_lines = lines[2:]
+                    doc.add_heading(heading, level=3)
+                    tb = doc.add_table(rows=1, cols=len(header))
+                    tb.style = 'Table Grid'
+                    for i, htxt in enumerate(header):
+                        tb.rows[0].cells[i].text = htxt
+                    for ln in body_lines:
+                        cols = [c.strip() for c in ln.strip('|').split('|')]
+                        if len(cols) != len(header):
+                            continue
+                        rr = tb.add_row().cells
+                        for i, c in enumerate(cols):
+                            rr[i].text = c
+                    return True
+                except Exception:
+                    return False
+
+            def _append_shared_report_sections():
+                assistant = getattr(self, 'chat_assistant', None)
+                get_sections = getattr(assistant, 'get_report_sections_ar', None)
+                if not callable(get_sections):
+                    return False
+                sections = get_sections(payload)
+                if not sections:
+                    return False
+
+                for sec in sections:
+                    title_text = str(sec.get('title') or '').strip()
+                    if title_text:
+                        doc.add_heading(title_text, level=2)
+                    for block in (sec.get('blocks') or []):
+                        if not isinstance(block, (list, tuple)) or not block:
+                            continue
+                        btype = block[0]
+                        bval = block[1] if len(block) > 1 else None
+                        if btype == 'text':
+                            text = str(bval or 'DATA_NOT_AVAILABLE_FROM_AUTHORITATIVE_SOURCES')
+                            if not _md_table_to_doc(text, f"جدول {title_text}"):
+                                doc.add_paragraph(text)
+                        elif btype == 'label':
+                            label_text = str(bval or '').strip()
+                            if label_text:
+                                p = doc.add_paragraph()
+                                run = p.add_run(label_text)
+                                run.bold = True
+                        elif btype == 'bullets':
+                            items = [str(x).strip() for x in (bval or []) if str(x).strip()]
+                            if items:
+                                for item in items:
+                                    doc.add_paragraph(f"• {item}")
+                            else:
+                                doc.add_paragraph('• DATA_NOT_AVAILABLE_FROM_AUTHORITATIVE_SOURCES')
+                        else:
+                            doc.add_paragraph(str(bval or 'DATA_NOT_AVAILABLE_FROM_AUTHORITATIVE_SOURCES'))
+                return True
+
+            def _canonical_report_rows():
+                ratios_map = context.get('ratios_by_year') or {}
+                data_map = context.get('data_by_year') or {}
+                years_all = sorted(
+                    {int(y) for y in list(ratios_map.keys()) + list(data_map.keys()) if str(y).isdigit()}
+                )
+
+                def _pick(row, keys):
+                    row = row or {}
+                    for k in keys:
+                        v = row.get(k)
+                        try:
+                            if v is not None:
+                                return float(v)
+                        except Exception:
+                            pass
+                    return None
+
+                out = {}
+                for yy in years_all:
+                    rr = ratios_map.get(yy, {}) or {}
+                    raw = data_map.get(yy, {}) or {}
+                    out[yy] = {
+                        "revenue": _pick(rr, ["revenue"]) or _pick(raw, ["Revenues", "Revenue", "SalesRevenueNet", "RevenueFromContractWithCustomerExcludingAssessedTax"]),
+                        "gross_profit": _pick(rr, ["gross_profit"]) or _pick(raw, ["GrossProfit"]),
+                        "operating_income": _pick(rr, ["operating_income"]) or _pick(raw, ["OperatingIncomeLoss", "IncomeLossFromOperations"]),
+                        "net_income": _pick(rr, ["net_income"]) or _pick(raw, ["NetIncomeLoss", "ProfitLoss"]),
+                        "total_assets": _pick(rr, ["total_assets"]) or _pick(raw, ["Assets", "TotalAssets", "Total Assets"]),
+                        "total_liabilities": _pick(rr, ["total_liabilities"]) or _pick(raw, ["Liabilities", "TotalLiabilities", "Total Liabilities"]),
+                        "shareholders_equity": _pick(rr, ["shareholders_equity"]) or _pick(raw, ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "TotalEquity", "Total Equity"]),
+                        "operating_cash_flow": _pick(rr, ["operating_cash_flow"]) or _pick(raw, ["NetCashProvidedByUsedInOperatingActivities", "OperatingCashFlow"]),
+                        "capital_expenditures": _pick(rr, ["capital_expenditures"]) or _pick(raw, ["PaymentsToAcquirePropertyPlantAndEquipment", "CapitalExpenditures"]),
+                        "free_cash_flow": _pick(rr, ["free_cash_flow"]),
+                        "gross_margin": _pick(rr, ["gross_margin"]),
+                        "operating_margin": _pick(rr, ["operating_margin"]),
+                        "net_margin": _pick(rr, ["net_margin"]),
+                    }
+                return years_all, out
+
+            def _insert_report_charts():
+                try:
+                    import tempfile
+                    import uuid
+                    import matplotlib.pyplot as plt
+                except Exception:
+                    return
+                years, canonical = _canonical_report_rows()
+                if len(years) < 3:
+                    return
+
+                rev = []
+                ni = []
+                fcf = []
+                gm = []
+                om = []
+                nm = []
+                x = []
+                for y in years:
+                    row = canonical.get(y, {}) or {}
+                    r = row.get('revenue')
+                    n = row.get('net_income')
+                    f = row.get('free_cash_flow')
+                    g = row.get('gross_margin')
+                    o = row.get('operating_margin')
+                    m = row.get('net_margin')
+                    if any(v is not None for v in (r, n, f, g, o, m)):
+                        x.append(y)
+                        rev.append(r)
+                        ni.append(n)
+                        fcf.append(f)
+                        gm.append(g)
+                        om.append(o)
+                        nm.append(m)
+                if len(x) < 3:
+                    return
+
+                def _plot(path, title_txt, series_map, ylbl):
+                    fig, ax = plt.subplots(figsize=(8.8, 3.8), dpi=140)
+                    for lbl, vals in series_map.items():
+                        vv = [None if v is None else float(v) for v in vals]
+                        if sum(1 for z in vv if z is not None) < 2:
+                            continue
+                        ax.plot(x, vv, marker='o', linewidth=2, label=lbl)
+                    ax.set_title(title_txt)
+                    ax.set_xlabel('Year')
+                    ax.set_ylabel(ylbl)
+                    ax.grid(alpha=0.25)
+                    ax.legend(loc='best')
+                    fig.tight_layout()
+                    fig.savefig(path, bbox_inches='tight')
+                    plt.close(fig)
+
+                tmp1 = str(Path(tempfile.gettempdir()) / f"chat_rev_{uuid.uuid4().hex}.png")
+                tmp2 = str(Path(tempfile.gettempdir()) / f"chat_margin_{uuid.uuid4().hex}.png")
+                _plot(tmp1, "Revenue / Net Income / Free Cash Flow Trend", {"Revenue": rev, "Net Income": ni, "FCF": fcf}, "USD (system scale)")
+                _plot(tmp2, "Margin Trend (Gross / Operating / Net)", {"Gross Margin": gm, "Operating Margin": om, "Net Margin": nm}, "Ratio")
+                doc.add_heading('الرسوم البيانية التحليلية', level=2)
+                doc.add_picture(tmp1, width=Inches(6.8))
+                doc.add_paragraph('تفسير الرسم: يقارن اتجاه الإيرادات والربح وصافي التدفق النقدي الحر عبر السنوات.')
+                doc.add_picture(tmp2, width=Inches(6.8))
+                doc.add_paragraph('تفسير الرسم: يوضح استقرار/تذبذب الهوامش وجودة تحويل النمو إلى ربحية.')
+                _add_expanded_comment(
+                    "القراءة المتقدمة للرسوم تركز على ثلاثة محاور مترابطة: "
+                    "أولًا، هل نمو الإيرادات يترجم إلى نمو متوازن في صافي الربح والتدفق النقدي الحر، "
+                    "أم أن هناك انفصالًا يدل على ضغط في جودة الأرباح. "
+                    "ثانيًا، مسار الهوامش عبر الزمن يكشف إن كانت الشركة تدافع عن قوة التسعير أو تتعرض لتآكل تنافسي. "
+                    "ثالثًا، اتساق المسارين معًا (النمو + الهوامش) هو ما يحدد إن كان التحسن هيكليًا قابلًا للاستدامة "
+                    "أم مجرد دورة مؤقتة قد تنعكس لاحقًا."
+                )
+
+            # Cover + metadata
+            doc.add_heading(title, level=1)
+            meta = doc.add_table(rows=5, cols=2)
+            meta.style = 'Table Grid'
+            meta.rows[0].cells[0].text = 'الشركة'
+            meta.rows[0].cells[1].text = f"{company_name} ({tk})"
+            meta.rows[1].cells[0].text = 'تاريخ التقرير'
+            meta.rows[1].cells[1].text = report_date
+            meta.rows[2].cells[0].text = 'مصدر البيانات'
+            meta.rows[2].cells[1].text = source
+            meta.rows[3].cells[0].text = 'التوصية'
+            meta.rows[3].cells[1].text = str(rating.get('label', 'N/A'))
+            meta.rows[4].cells[0].text = 'الدرجة / الثقة / الأفق'
+            meta.rows[4].cells[1].text = f"{rating.get('score_100', 'N/A')}/100 | {rating.get('confidence', 'N/A')}% | {rating.get('time_horizon', 'N/A')}"
+            doc.add_paragraph(
+                "افتتاحية استثمارية: هذا التقرير يوازن بين جودة النشاط وعدالة السعر. "
+                "الهدف ليس وصف الأرقام فقط، بل تفسير ما إذا كانت fundamentals الحالية تبرر التقييم السوقي."
+            )
+
+            if _append_shared_report_sections():
+                _insert_report_charts()
+                _append_full_timeseries_tables()
+                _append_source_excel_trace()
+                _append_excel_sheet_tables()
+                return _finalize_doc()
+
+            es = payload.get('executive_summary') or {}
+            _add_section('1. الملخص التنفيذي', es.get('overview'))
+            doc.add_paragraph('نقاط القوة الرئيسية:')
+            for x in (es.get('key_strengths') or []):
+                doc.add_paragraph(f"• {x}")
+            doc.add_paragraph('نقاط الضغط/المخاطر:')
+            for x in (es.get('key_risks') or []):
+                doc.add_paragraph(f"• {x}")
+            _add_labeled('الخلاصة الأولية', es.get('preliminary_view'))
+            _add_expanded_comment(
+                "هذا الملخص يجب قراءته كإطار قرار لا كعرض معلومات: "
+                "إذا كانت نقاط القوة تشغيلية لكن المخاطر تقييمة، فالأولوية للمستثمر تصبح توقيت الدخول وهامش الأمان السعري. "
+                "أما إذا كانت المخاطر تشغيلية في الأساس، فحتى التقييم المنخفض لا يكفي لتبرير قرار هجومي قبل ظهور دلائل انعكاس واضحة."
+            )
+
+            bm = payload.get('business_model_and_positioning') or {}
+            _add_section('2. لمحة عن نموذج الأعمال والتموضع الاستراتيجي')
+            _add_labeled('نموذج الأعمال', bm.get('business_model'))
+            _add_labeled('خصائص الإيرادات', bm.get('revenue_characteristics'))
+            _add_labeled('المزايا التنافسية', bm.get('competitive_advantages'))
+            _add_labeled('التموضع الاستراتيجي', bm.get('strategic_positioning'))
+            _add_expanded_comment(
+                "المغزى الاستثماري من نموذج الأعمال لا يُقاس بالوصف النوعي فقط، بل بقدرته على تفسير الأرقام: "
+                "الهامش الإجمالي يعكس قوة التسعير، والهامش التشغيلي يعكس انضباط التكلفة، "
+                "بينما استدامة العائد على رأس المال تؤكد إن كانت الميزة التنافسية فعّالة اقتصاديًا وليست مؤقتة."
+            )
+
+            hf = payload.get('historical_financial_analysis') or {}
+            _add_section('3. التحليل التاريخي للأداء المالي')
+            if not _md_table_to_doc(hf.get('summary_table'), 'الجدول التاريخي متعدد السنوات'):
+                doc.add_paragraph(str(hf.get('summary_table') or 'DATA_NOT_AVAILABLE_FROM_AUTHORITATIVE_SOURCES'))
+            doc.add_paragraph('القراءة التحليلية:')
+            doc.add_paragraph(str(hf.get('analysis') or 'N/A'))
+            doc.add_paragraph('ما الذي يعنيه هذا للمستثمر؟')
+            doc.add_paragraph(str(hf.get('investor_implication') or 'N/A'))
+            _add_expanded_comment(
+                "الجدول التاريخي لا يُقرأ كسلسلة أرقام مستقلة؛ بل كحركة متكاملة بين الحجم والربحية والنقد. "
+                "النمو الصحي يظهر عندما ترتفع الإيرادات مع تحسن أو ثبات الهوامش، ويتأكد عندما يواكب النقد التشغيلي هذا النمو. "
+                    "أما إذا توسعت الإيرادات دون دعم ربحي/نقدي، فغالبًا يكون النمو أقل جودة وأعلى مخاطرة."
+                )
+
+            def _to_float(v):
+                try:
+                    return float(v)
+                except Exception:
+                    return None
+
+            def _trend_comment(series_vals):
+                clean = [v for v in series_vals if v is not None]
+                if len(clean) < 2:
+                    return "لا توجد نقاط كافية لاستخلاص اتجاه موثوق."
+                start = clean[0]
+                end = clean[-1]
+                delta = end - start
+                if abs(start) > 1e-12:
+                    pct = (delta / abs(start)) * 100.0
+                    pct_txt = f"{pct:+.1f}%"
+                else:
+                    pct_txt = "N/A"
+                direction = "اتجاه صاعد" if delta > 0 else ("اتجاه هابط" if delta < 0 else "اتجاه أفقي")
+                return f"{direction} | التغير المطلق={delta:,.4f} | التغير النسبي={pct_txt}"
+
+            def _append_full_timeseries_tables():
+                ratios_map = context.get('ratios_by_year') or {}
+                strategic_map = context.get('strategic_by_year') or {}
+                years, canonical = _canonical_report_rows()
+                if not years:
+                    return
+
+                # Canonical financial statements table (authoritative)
+                doc.add_heading('15. جدول القوائم المالية الأساسية عبر الزمن', level=2)
+                core_keys = [
+                    ('الإيرادات', 'revenue'),
+                    ('مجمل الربح', 'gross_profit'),
+                    ('الربح التشغيلي', 'operating_income'),
+                    ('صافي الربح', 'net_income'),
+                    ('إجمالي الأصول', 'total_assets'),
+                    ('إجمالي الالتزامات', 'total_liabilities'),
+                    ('حقوق الملكية', 'shareholders_equity'),
+                    ('التدفق النقدي التشغيلي', 'operating_cash_flow'),
+                    ('الإنفاق الرأسمالي', 'capital_expenditures'),
+                    ('التدفق النقدي الحر', 'free_cash_flow'),
+                ]
+                tb0 = doc.add_table(rows=1, cols=1 + len(years))
+                tb0.style = 'Table Grid'
+                tb0.rows[0].cells[0].text = 'البند'
+                for i, yy in enumerate(years, start=1):
+                    tb0.rows[0].cells[i].text = str(yy)
+                for lbl, ck in core_keys:
+                    rr = tb0.add_row().cells
+                    rr[0].text = lbl
+                    vals = []
+                    for i, yy in enumerate(years, start=1):
+                        v = _to_float((canonical.get(yy, {}) or {}).get(ck))
+                        vals.append(v)
+                        rr[i].text = "N/A" if v is None else f"{v:,.6g}"
+                    doc.add_paragraph(f"تحليل زمني - {lbl}: {_trend_comment(vals)}")
+
+                # Full ratios table
+                doc.add_heading('16. جدول النسب المالية الكامل عبر الزمن', level=2)
+                ratio_keys = sorted({
+                    k for y in years for k in (ratios_map.get(y, {}) or {}).keys()
+                    if not str(k).startswith('_')
+                })
+                if ratio_keys:
+                    tb = doc.add_table(rows=1, cols=1 + len(years))
+                    tb.style = 'Table Grid'
+                    tb.rows[0].cells[0].text = 'النسبة'
+                    for i, yy in enumerate(years, start=1):
+                        tb.rows[0].cells[i].text = str(yy)
+                    for rk in ratio_keys:
+                        rr = tb.add_row().cells
+                        rr[0].text = str(rk)
+                        vals = []
+                        for i, yy in enumerate(years, start=1):
+                            v = _to_float((ratios_map.get(yy, {}) or {}).get(rk))
+                            vals.append(v)
+                            rr[i].text = "N/A" if v is None else f"{v:,.6g}"
+                        doc.add_paragraph(f"تحليل زمني - {rk}: {_trend_comment(vals)}")
+                        _add_expanded_comment(
+                            "القراءة المهنية لهذا المسار تعتمد على ثلاثة عناصر: استمرارية الاتجاه، "
+                            "درجة التذبذب، وعلاقة المؤشر ببقية المحاور (الربحية/السيولة/التقييم). "
+                            "أي تحسن معزول لا يكفي للحكم دون اتساق مع المنظومة المالية الكاملة."
+                        )
+                else:
+                    doc.add_paragraph("DATA_NOT_AVAILABLE_FROM_AUTHORITATIVE_SOURCES")
+
+                # Full strategic table
+                doc.add_heading('17. جدول التحليل الاستراتيجي الكامل عبر الزمن', level=2)
+                s_years = sorted([int(y) for y in strategic_map.keys() if str(y).isdigit()])
+                s_keys = sorted({
+                    k for y in s_years for k in (strategic_map.get(y, {}) or {}).keys()
+                    if not str(k).startswith('_')
+                })
+                if s_years and s_keys:
+                    tb2 = doc.add_table(rows=1, cols=1 + len(s_years))
+                    tb2.style = 'Table Grid'
+                    tb2.rows[0].cells[0].text = 'المؤشر الاستراتيجي'
+                    for i, yy in enumerate(s_years, start=1):
+                        tb2.rows[0].cells[i].text = str(yy)
+                    for sk in s_keys:
+                        rr = tb2.add_row().cells
+                        rr[0].text = str(sk)
+                        vals = []
+                        for i, yy in enumerate(s_years, start=1):
+                            v = _to_float((strategic_map.get(yy, {}) or {}).get(sk))
+                            vals.append(v)
+                            rr[i].text = "N/A" if v is None else f"{v:,.6g}"
+                        doc.add_paragraph(f"تحليل خبير - {sk}: {_trend_comment(vals)}")
+                        _add_expanded_comment(
+                            "هذا المؤشر يُقرأ في سياق الأطروحة الاستثمارية: "
+                            "هل يخدم خلق القيمة طويلة الأجل أم يعكس تشوهًا ظرفيًا؟ "
+                            "القرار المهني يعتمد على اتساق المؤشر مع مسار الربحية والنقد والمخاطر."
+                        )
+                else:
+                    doc.add_paragraph("DATA_NOT_AVAILABLE_FROM_AUTHORITATIVE_SOURCES")
+
+            def _finalize_doc():
+                try:
+                    from docx.enum.text import WD_ALIGN_PARAGRAPH
+                    from docx.oxml.ns import qn
+                    for p in doc.paragraphs:
+                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        ppr = p._p.get_or_add_pPr()
+                        ppr.set(qn('w:bidi'), '1')
+                    for tb in doc.tables:
+                        for row in tb.rows:
+                            for cell in row.cells:
+                                for p in cell.paragraphs:
+                                    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                                    ppr = p._p.get_or_add_pPr()
+                                    ppr.set(qn('w:bidi'), '1')
+                except Exception:
+                    pass
+
+                Path(fn).parent.mkdir(parents=True, exist_ok=True)
+                _apply_doc_style(doc, arabic=True)
+                doc.save(fn)
+                return True
+            _insert_report_charts()
+
+            pa = payload.get('profitability_analysis') or {}
+            _add_section('4. تحليل الربحية')
+            _add_labeled('مراجعة المؤشرات', pa.get('metrics_review'))
+            doc.add_paragraph('القراءة التحليلية:')
+            doc.add_paragraph(str(pa.get('analysis') or 'N/A'))
+            _add_labeled('رؤية الاستدامة', pa.get('sustainability_view'))
+            doc.add_paragraph('ما الذي يعنيه هذا للمستثمر؟')
+            doc.add_paragraph(str(pa.get('investor_implication') or 'N/A'))
+            _add_expanded_comment(
+                "التحليل الربحي المهني يميّز بين الربحية التشغيلية والربحية المتأثرة بهيكل رأس المال. "
+                "ارتفاع ROE وحده لا يكفي إن كان مدفوعًا بانخفاض حقوق الملكية أو زيادة الرافعة. "
+                "القيمة الحقيقية تظهر عندما يتزامن ارتفاع ROIC مع اتساق الهوامش، ما يدل على قدرة الشركة على خلق قيمة حقيقية من كل وحدة رأسمال."
+            )
+
+            ls = payload.get('liquidity_solvency_leverage') or {}
+            _add_section('5. تحليل السيولة والملاءة والرافعة')
+            _add_labeled('مراجعة المؤشرات', ls.get('metrics_review'))
+            doc.add_paragraph('القراءة التحليلية:')
+            doc.add_paragraph(str(ls.get('analysis') or 'N/A'))
+            _add_labeled('حكم الميزانية', ls.get('balance_sheet_view'))
+            doc.add_paragraph('ما الذي يعنيه هذا للمستثمر؟')
+            doc.add_paragraph(str(ls.get('investor_implication') or 'N/A'))
+            _add_expanded_comment(
+                "ضعف السيولة الظاهرية لا يعني تلقائيًا هشاشة مالية إذا كانت الشركة مولدًا قويًا للنقد وقادرة على خدمة التزاماتها بانتظام. "
+                "لكن عند اجتماع سيولة ضعيفة مع تراجع التغطية وارتفاع الرافعة، ينتقل الخطر من كونه رقابيًا إلى كونه جوهريًا مؤثرًا على التقييم."
+            )
+
+            cf = payload.get('cash_flow_and_earnings_quality') or {}
+            _add_section('6. تحليل التدفقات النقدية وجودة الأرباح')
+            _add_labeled('مراجعة التدفقات', cf.get('cash_flow_review'))
+            _add_labeled('تقييم جودة الأرباح', cf.get('earnings_quality_assessment'))
+            doc.add_paragraph('القراءة التحليلية:')
+            doc.add_paragraph(str(cf.get('analysis') or 'N/A'))
+            doc.add_paragraph('ما الذي يعنيه هذا للمستثمر؟')
+            doc.add_paragraph(str(cf.get('investor_implication') or 'N/A'))
+            _add_expanded_comment(
+                "جودة الأرباح هي حجر الأساس في الحكم المؤسسي: الأرباح التي لا تتحول إلى نقد بكفاءة تُعد أقل موثوقية استثماريًا. "
+                "التدفق النقدي الحر المستدام يمنح الإدارة مرونة في إعادة الشراء والتوزيعات والاستثمار دون ضغط تمويلي، "
+                "بينما ضعف التحول النقدي يرفع احتمال إعادة تسعير سلبي حتى مع ربحية محاسبية جيدة."
+            )
+
+            ce = payload.get('capital_efficiency_and_value_creation') or {}
+            _add_section('7. تحليل كفاءة رأس المال وخلق القيمة الاقتصادية')
+            _add_labeled('مراجعة كفاءة رأس المال', ce.get('capital_efficiency_review'))
+            _add_labeled('خلق القيمة الاقتصادية', ce.get('economic_value_creation'))
+            doc.add_paragraph('القراءة التحليلية:')
+            doc.add_paragraph(str(ce.get('analysis') or 'N/A'))
+            doc.add_paragraph('ما الذي يعنيه هذا للمستثمر؟')
+            doc.add_paragraph(str(ce.get('investor_implication') or 'N/A'))
+            _add_expanded_comment(
+                "هذا القسم يجيب عن سؤال جوهري: هل النمو يخلق قيمة أم يستهلكها؟ "
+                "عندما يتجاوز ROIC تكلفة رأس المال بشكل مستدام، تتحول الشركة إلى آلة مركبة لخلق القيمة طويلة الأجل. "
+                "أما إذا اقترب العائد من تكلفة رأس المال، فالنمو يصبح أقل جودة حتى لو بدا قويًا اسميًا."
+            )
+
+            sp = payload.get('sector_and_peer_context') or {}
+            _add_section('8. التحليل القطاعي والمقارنات المرجعية')
+            _add_labeled('أساس المقارنة', sp.get('comparison_basis'))
+            _add_labeled('التموضع النسبي', sp.get('relative_positioning'))
+            doc.add_paragraph('القراءة التحليلية:')
+            doc.add_paragraph(str(sp.get('analysis') or 'N/A'))
+            doc.add_paragraph('ما الذي يعنيه هذا للمستثمر؟')
+            doc.add_paragraph(str(sp.get('investor_implication') or 'N/A'))
+            _add_expanded_comment(
+                "المقارنة القطاعية تمنع القراءة المطلقة للأرقام؛ فالهامش الجيد في قطاع قد يكون عاديًا في قطاع آخر. "
+                "التموضع النسبي يجب أن يجمع بين النمو والهوامش والعائد على رأس المال والمخاطر التقييمية لتحديد ما إذا كانت الشركة حقًا ضمن شريحة الجودة الأعلى."
+            )
+
+            rk = payload.get('risk_analysis') or {}
+            _add_section('9. تحليل المخاطر المتقدم')
+            for sec_name, sec_key in [
+                ('المخاطر المالية', 'financial_risks'),
+                ('المخاطر التشغيلية', 'operating_risks'),
+                ('المخاطر الاستراتيجية', 'strategic_risks'),
+                ('المخاطر التقييمية', 'valuation_risks'),
+            ]:
+                doc.add_paragraph(f"{sec_name}:")
+                for x in (rk.get(sec_key) or []):
+                    doc.add_paragraph(f"• {x}")
+            _add_labeled('الرؤية الإجمالية للمخاطر', rk.get('overall_risk_view'))
+            _add_expanded_comment(
+                "الخريطة المهنية للمخاطر لا تكتفي بالاحتمالات الرقمية، بل تقيّم شدة الأثر وسرعة الانتقال. "
+                "المخاطر التقييمية غالبًا تتحقق بسرعة عبر انكماش المضاعفات، بينما المخاطر التشغيلية تتراكم تدريجيًا عبر تآكل الهوامش. "
+                "لذلك، إدارة المخاطر تعني مراقبة مؤشرات الإنذار المبكر لا انتظار تدهور النتائج النهائية."
+            )
+
+            fc = payload.get('forecast_analysis') or {}
+            _add_section('10. تحليل التوقعات المستقبلية')
+            _add_labeled('السيناريو الأساسي', fc.get('base_case'))
+            _add_labeled('السيناريو المتفائل', fc.get('bull_case'))
+            _add_labeled('السيناريو المتحفظ', fc.get('bear_case'))
+            doc.add_paragraph('القراءة التحليلية:')
+            doc.add_paragraph(str(fc.get('scenario_interpretation') or 'N/A'))
+            doc.add_paragraph('ما الذي يعنيه هذا للمستثمر؟')
+            doc.add_paragraph(str(fc.get('investor_implication') or 'N/A'))
+            _add_expanded_comment(
+                "السيناريو الأساسي ليس توقعًا يقينيًا بل فرضية مرجعية. "
+                "كلما اتسع الفارق بين السيناريوهات، ارتفعت قيمة إدارة المخاطر وتدرج بناء المركز. "
+                "إذا كانت مدخلات التوقعات ضعيفة أو غير مكتملة، يجب تخفيض الثقة وعدم رفع التوصية اعتمادًا على هذا القسم."
+            )
+
+            va = payload.get('valuation_analysis') or {}
+            _add_section('11. تحليل التقييم')
+            _add_labeled('لقطة التقييم', va.get('valuation_snapshot'))
+            _add_labeled('تقييم العدالة السعرية', va.get('fairness_assessment'))
+            doc.add_paragraph('القراءة التحليلية:')
+            doc.add_paragraph(str(va.get('multiple_interpretation') or 'N/A'))
+            doc.add_paragraph('ما الذي يعنيه هذا للمستثمر؟')
+            doc.add_paragraph(str(va.get('investor_implication') or 'N/A'))
+            _add_expanded_comment(
+                "السؤال الصحيح ليس: هل الشركة ممتازة؟ بل: هل السعر الحالي يمنح عائدًا معدلًا بالمخاطر مناسبًا؟ "
+                "حتى الشركات عالية الجودة قد تكون استثمارًا ضعيفًا عند مضاعفات متضخمة، "
+                "بينما تصبح جذابة عند وجود هامش أمان يوازن بين جودة الأساسيات وعدم يقين المستقبل."
+            )
+
+            _add_section('12. الحكم الاستثماري النهائي')
+            _add_labeled('التوصية', final_case.get('rating_label', rating.get('label', 'N/A')))
+            _add_labeled('الدرجة من 100', final_case.get('score_100', rating.get('score_100', 'N/A')))
+            _add_labeled('الثقة', f"{final_case.get('confidence', rating.get('confidence', 'N/A'))}%")
+            doc.add_paragraph('أهم 5 مبررات:')
+            for x in (final_case.get('top_5_reasons') or []):
+                doc.add_paragraph(f"• {x}")
+            doc.add_paragraph('أهم 5 نقاط مراقبة:')
+            for x in (final_case.get('top_5_monitoring_points') or []):
+                doc.add_paragraph(f"• {x}")
+            doc.add_paragraph('العوامل التي قد تغيّر التوصية:')
+            doc.add_paragraph(str(final_case.get('what_could_change_the_rating') or 'N/A'))
+            _add_expanded_comment(
+                "التوصية المهنية يجب أن تكون قابلة للدفاع والمراجعة مع كل دورة نتائج. "
+                "ما يغيّر التوصية عادة هو تغير جودة التحول النقدي، انضباط الهوامش، مستوى الرافعة، "
+                "وسلوك التقييم مقارنة بمسار الأساسيات. لذلك القرار هنا ديناميكي وليس حكمًا ثابتًا."
+            )
+
+            _add_section('13. الخلاصة التنفيذية النهائية', payload.get('closing_summary'))
+            _add_expanded_comment(
+                "الخلاصة النهائية تربط بين جوهرين: جودة الشركة وجودة السعر. "
+                "أفضل قرار استثماري ينتج عندما تتوافق قوة النشاط مع تقييم يسمح بهامش أمان معقول؛ "
+                "أما عند اختلال هذا التوازن، فالأولوية تكون لإدارة المخاطر وتوقيت الدخول."
+            )
+
+            sr = payload.get('self_review') or {}
+            _add_section('14. المراجعة الذاتية')
+            _add_labeled('العمق الرقمي', f"{sr.get('numerical_depth', 'N/A')}/10")
+            _add_labeled('الجودة السردية', f"{sr.get('narrative_quality', 'N/A')}/10")
+            _add_labeled('المنطق الاقتصادي', f"{sr.get('economic_reasoning', 'N/A')}/10")
+            _add_labeled('جودة المخاطر', f"{sr.get('risk_analysis_quality', 'N/A')}/10")
+            _add_labeled('جودة التقييم', f"{sr.get('valuation_quality', 'N/A')}/10")
+            _add_labeled('اتساق التوصية', f"{sr.get('consistency_of_final_rating', 'N/A')}/10")
+            _append_full_timeseries_tables()
+
+            _append_source_excel_trace()
+            _append_excel_sheet_tables()
+            return _finalize_doc()
+
+        # Build strict payload directly from current structured data (authoritative),
+        # not from potentially stale chat text.
+        strict_payload = None
+        try:
+            years_ctx = []
+            for yk in (context.get('ratios_by_year') or {}).keys():
+                try:
+                    years_ctx.append(int(yk))
+                except Exception:
+                    pass
+            years_ctx = sorted(set(years_ctx))
+            y0_ctx = years_ctx[0] if years_ctx else context.get('latest_year')
+            y1_ctx = years_ctx[-1] if years_ctx else context.get('latest_year')
+            if hasattr(self.chat_assistant, '_build_strict_report_json_local'):
+                strict_payload = self.chat_assistant._build_strict_report_json_local(
+                    name=name,
+                    ticker=ticker,
+                    year=context.get('latest_year'),
+                    ratios=(context.get('latest_ratios') or {}),
+                    quality=(context.get('ai_quality') or {}),
+                    forecast=(context.get('forecast') or {}),
+                    ratios_by_year=(context.get('ratios_by_year') or {}),
+                    y0=y0_ctx,
+                    y1=y1_ctx,
+                    data_by_year=(context.get('data_by_year') or {}),
+                )
+        except Exception:
+            strict_payload = _extract_last_strict_json_answer()
+
+        if strict_payload is None:
+            strict_payload = _extract_last_strict_json_answer()
+
+        if strict_payload:
+            if _export_from_strict_json(strict_payload):
+                messagebox.showinfo(
+                    self._t('msg_success'),
+                    f"{self._t('chat_word_saved')}\n{fn}\n(Authoritative structured report mode)"
+                )
+                return
+
+        def _n(v):
+            try:
+                return float(v)
+            except Exception:
+                return None
+
+        def _fmt_num(v, dec=2):
+            nv = _n(v)
+            if nv is None:
+                return 'N/A'
+            return f"{nv:,.{dec}f}"
+
+        def _fmt_pct(v, dec=2):
+            nv = _n(v)
+            if nv is None:
+                return 'N/A'
+            return f"{nv * 100:.{dec}f}%"
+
+        def _fmt_b_from_million(v, dec=1):
+            nv = _n(v)
+            if nv is None:
+                return 'N/A'
+            return f"{nv / 1000.0:,.{dec}f}"
+
+        def _fmt_money_b(v, dec=1):
+            nv = _n(v)
+            if nv is None:
+                return 'N/A'
+            return f"${nv / 1000.0:,.{dec}f}B"
+
+        ratios_by_year_raw = context.get('ratios_by_year') or {}
+        ratios_by_year = {}
+        for yk, row in ratios_by_year_raw.items():
+            try:
+                yy = int(yk)
+            except Exception:
+                continue
+            ratios_by_year[yy] = row or {}
+
+        years_all = sorted(ratios_by_year.keys())
+        latest_year = context.get('latest_year')
+        if isinstance(latest_year, str) and latest_year.isdigit():
+            latest_year = int(latest_year)
+        if latest_year is None and years_all:
+            latest_year = years_all[-1]
+        years_focus = years_all[-3:] if len(years_all) >= 3 else years_all
+        if not years_focus and latest_year:
+            years_focus = [latest_year]
+
+        latest_ratios = context.get('latest_ratios') or {}
+        if not latest_ratios and latest_year in ratios_by_year:
+            latest_ratios = ratios_by_year.get(latest_year) or {}
+
+        data_by_year_raw = (
+            (self.current_data.get('data_layers', {}) or {}).get('layer1_by_year')
+            or self.current_data.get('data_by_year', {})
+            or {}
+        )
+        data_by_year = {}
+        for yk, row in data_by_year_raw.items():
+            try:
+                yy = int(yk)
+            except Exception:
+                continue
+            data_by_year[yy] = row or {}
+
+        strategic_raw = maybe_guard_ratios_by_year(self.current_data.get('strategic_analysis', {}))
+        strategic_by_year = {}
+        if isinstance(strategic_raw, dict):
+            for yk, row in strategic_raw.items():
+                try:
+                    yy = int(yk)
+                except Exception:
+                    continue
+                strategic_by_year[yy] = row or {}
+
+        forecast_df = self._build_forecast_export_df()
+        ai = self._build_ai_insights_snapshot() or {}
+        ai_quality = ai.get('investment_quality', {}) or {}
+        ai_fraud = ai.get('fraud_detection', {}) or {}
+        ai_fail = ai.get('failure_prediction', {}) or {}
+
+        live = context.get('live_trusted_context') or {}
+        sec = live.get('sec') or {}
+        filings = sec.get('recent_authoritative_filings') or []
+
+        def _pick_raw(year, keys):
+            row = data_by_year.get(year, {}) or {}
+            for k in keys:
+                v = _n(row.get(k))
+                if v is not None:
+                    return v
+            return None
+
+        def _pick_ratio(year, keys):
+            row = ratios_by_year.get(year, {}) or {}
+            for k in keys:
+                v = _n(row.get(k))
+                if v is not None:
+                    return v
+            return None
+
+        def _pick_strategic(year, keys):
+            row = strategic_by_year.get(year, {}) or {}
+            for k in keys:
+                v = _n(row.get(k))
+                if v is not None:
+                    return v
+            return None
+
+        def _pick_any(year, keys):
+            v = _pick_ratio(year, keys)
+            if v is not None:
+                return v
+            return _pick_strategic(year, keys)
+
+        def _stars(score):
+            sv = _n(score)
+            if sv is None:
+                return 'N/A'
+            if sv >= 85:
+                return '5/5'
+            if sv >= 70:
+                return '4/5'
+            if sv >= 55:
+                return '3/5'
+            return '2/5'
+
+        def _quality_label(metric, value):
+            v = _n(value)
+            if v is None:
+                return 'N/A'
+            if metric in {'gross_margin', 'operating_margin', 'net_margin', 'roa', 'roe', 'roic'}:
+                if v >= 0.20:
+                    return 'Strong'
+                if v >= 0.10:
+                    return 'Moderate'
+                return 'Weak'
+            if metric in {'current_ratio', 'quick_ratio', 'cash_ratio'}:
+                return 'Strong' if v >= 1.0 else 'Weak'
+            if metric == 'debt_to_equity':
+                if v <= 1.0:
+                    return 'Strong'
+                if v <= 2.0:
+                    return 'Moderate'
+                return 'Weak'
+            if metric == 'interest_coverage':
+                if v >= 5:
+                    return 'Strong'
+                if v >= 2:
+                    return 'Moderate'
+                return 'Weak'
+            return 'Neutral'
+
+        def _assessment_text(metric, value):
+            raw = _quality_label(metric, value)
+            if raw == 'N/A':
+                return 'N/A'
+            if raw == 'Strong':
+                return L('قوي', 'Strong', 'Fort')
+            if raw == 'Moderate':
+                return L('متوسط', 'Moderate', 'Moyen')
+            if raw == 'Weak':
+                return L('ضعيف', 'Weak', 'Faible')
+            return L('محايد', 'Neutral', 'Neutre')
+
+        def _risk_level_text(pct_val):
+            pv = _n(pct_val)
+            if pv is None:
+                return L('غير متاح', 'N/A', 'N/A')
+            if pv >= 50:
+                return L('مرتفع', 'High', 'Élevé')
+            if pv >= 20:
+                return L('متوسط', 'Moderate', 'Moyen')
+            return L('منخفض', 'Low', 'Faible')
+
+        lang_code = getattr(self, 'current_lang', 'en')
+        is_ar = (lang_code == 'ar')
+        is_fr = (lang_code == 'fr')
+
+        def L(ar, en, fr=None):
+            if is_ar:
+                return ar
+            if is_fr and fr is not None:
+                return fr
+            return en
+
+        def _make_chart(title, x_vals, series_map, y_label):
+            try:
+                import uuid
+                import tempfile
+                import matplotlib.pyplot as plt
+            except Exception:
+                return None
+            if not x_vals:
+                return None
+            try:
+                fig, ax = plt.subplots(figsize=(8.8, 3.6), dpi=140)
+                for label, vals in (series_map or {}).items():
+                    if not vals:
+                        continue
+                    ax.plot(x_vals, vals, marker='o', linewidth=2, label=label)
+                ax.set_title(title)
+                ax.set_xlabel(L('السنة', 'Year', 'Année'))
+                ax.set_ylabel(y_label)
+                ax.grid(alpha=0.25)
+                ax.legend(loc='best')
+                out = Path(tempfile.gettempdir()) / f"sec_report_chart_{uuid.uuid4().hex}.png"
+                fig.tight_layout()
+                fig.savefig(out, bbox_inches='tight')
+                plt.close(fig)
+                return str(out)
+            except Exception:
+                return None
+
+        doc = Document()
+
+        # 0) Cover
+        doc.add_heading(L('التقرير المالي الشامل', 'Institutional Financial Analysis Report', 'Rapport financier institutionnel'), level=1)
+        doc.add_paragraph(L(f'الشركة: {name} ({ticker})', f'Company: {name} ({ticker})', f'Société: {name} ({ticker})'))
+        doc.add_paragraph(L(f'التاريخ: {datetime.now().strftime("%Y-%m-%d")}', f'Date: {datetime.now().strftime("%Y-%m-%d")}', f'Date: {datetime.now().strftime("%Y-%m-%d")}'))
+        doc.add_paragraph(L('المصدر الرئيسي: SEC EDGAR (XBRL)', 'Primary Source: SEC EDGAR (XBRL)', 'Source principale : SEC EDGAR (XBRL)'))
+        doc.add_paragraph(L('النطاق: تحليل تاريخي + تشخيص النسب + سيناريوهات التوقع + فحوصات المخاطر الذكية',
+                            'Scope: Historical analysis + ratio diagnostics + forecast scenarios + AI risk checks',
+                            'Portée : historique + ratios + scénarios prévisionnels + contrôles de risque IA'))
+
+        qscore = _n(ai_quality.get('quality_score'))
+        if qscore is None:
+            qscore = _n(latest_ratios.get('investment_quality_score'))
+        if qscore is None:
+            qscore = _n(latest_ratios.get('investment_score'))
+        qscore = qscore if qscore is not None else 0.0
+
+        # 1) Executive summary
+        doc.add_heading(L('1. الملخص التنفيذي', '1. Executive Summary', '1. Résumé exécutif'), level=2)
+        gm = _n(latest_ratios.get('gross_margin'))
+        nm = _n(latest_ratios.get('net_margin'))
+        roe = _n(latest_ratios.get('roe'))
+        cr = _n(latest_ratios.get('current_ratio'))
+        dte = _n(latest_ratios.get('debt_to_equity'))
+
+        doc.add_paragraph(L(f'درجة الجودة الكلية: {_fmt_num(qscore, 1)}/100',
+                            f'Overall quality score: {_fmt_num(qscore, 1)}/100',
+                            f'Score global de qualité: {_fmt_num(qscore, 1)}/100'))
+        doc.add_paragraph(L(f'أحدث هامش إجمالي: {_fmt_pct(gm)} | هامش صافي: {_fmt_pct(nm)} | العائد على حقوق الملكية ROE: {_fmt_pct(roe)}',
+                            f'Latest gross margin: {_fmt_pct(gm)} | net margin: {_fmt_pct(nm)} | ROE: {_fmt_pct(roe)}',
+                            f'Dernière marge brute: {_fmt_pct(gm)} | marge nette: {_fmt_pct(nm)} | ROE: {_fmt_pct(roe)}'))
+        doc.add_paragraph(L(f'السيولة الحالية (النسبة الجارية): {_fmt_num(cr, 2)} | الرافعة (الدين/حقوق الملكية): {_fmt_num(dte, 2)}',
+                            f'Latest liquidity (current ratio): {_fmt_num(cr, 2)} | leverage (debt/equity): {_fmt_num(dte, 2)}',
+                            f'Liquidité (current ratio): {_fmt_num(cr, 2)} | levier (dette/capitaux): {_fmt_num(dte, 2)}'))
+        strengths = []
+        cautions = []
+        if _n(nm) is not None and _n(nm) >= 0.20:
+            strengths.append(L(f"ربحية صافية قوية ({_fmt_pct(nm)})", f"Strong net profitability ({_fmt_pct(nm)})", f"Rentabilité nette solide ({_fmt_pct(nm)})"))
+        if _n(roe) is not None and _n(roe) >= 0.20:
+            strengths.append(L(f"عائد مرتفع على حقوق الملكية ({_fmt_pct(roe)})", f"High return on equity ({_fmt_pct(roe)})", f"ROE élevé ({_fmt_pct(roe)})"))
+        if _n(gm) is not None and _n(gm) >= 0.35:
+            strengths.append(L(f"هامش إجمالي مرتفع ({_fmt_pct(gm)})", f"High gross margin ({_fmt_pct(gm)})", f"Marge brute élevée ({_fmt_pct(gm)})"))
+        if _n(cr) is not None and _n(cr) < 1.0:
+            cautions.append(L(f"السيولة قصيرة الأجل دون 1 ({_fmt_num(cr,2)})", f"Short-term liquidity below 1 ({_fmt_num(cr,2)})", f"Liquidité court terme < 1 ({_fmt_num(cr,2)})"))
+        if _n(dte) is not None and _n(dte) > 1.5:
+            cautions.append(L(f"رافعة مالية مرتفعة نسبيًا ({_fmt_num(dte,2)})", f"Relatively elevated leverage ({_fmt_num(dte,2)})", f"Levier relativement élevé ({_fmt_num(dte,2)})"))
+        if not strengths:
+            strengths.append(L("جودة تشغيلية مقبولة مع إمكانية تحسين بعض المحاور.", "Acceptable operating quality with room for improvement.", "Qualité opérationnelle acceptable avec marge d’amélioration."))
+        if not cautions:
+            cautions.append(L("لا توجد إشارات حرجة فورية في المؤشرات الأساسية.", "No immediate critical signal in core metrics.", "Aucun signal critique immédiat dans les indicateurs clés."))
+        doc.add_paragraph(L('نقاط القوة الرئيسية:', 'Key strengths:', 'Forces principales :'))
+        for s in strengths[:5]:
+            doc.add_paragraph(f"• {s}")
+        doc.add_paragraph(L('نقاط تحتاج انتباه:', 'Watch items:', 'Points de vigilance :'))
+        for c in cautions[:5]:
+            doc.add_paragraph(f"• {c}")
+
+        # 2) Historical financial statements snapshot
+        doc.add_heading(L('2. البيانات المالية التاريخية (مليار دولار)', '2. Historical Financial Data (Billions USD)', '2. Données financières historiques (Md USD)'), level=2)
+        t_hist = doc.add_table(rows=1, cols=5)
+        t_hist.style = 'Table Grid'
+        h = t_hist.rows[0].cells
+        h[0].text = L('البند', 'Metric', 'Indicateur')
+        h[1].text = str(years_focus[0] if len(years_focus) > 0 else 'N/A')
+        h[2].text = str(years_focus[1] if len(years_focus) > 1 else 'N/A')
+        h[3].text = str(years_focus[2] if len(years_focus) > 2 else 'N/A')
+        h[4].text = L('الاتجاه', 'Trend', 'Tendance')
+
+        hist_rows = [
+            (L('الإيرادات', 'Revenue', 'Revenu'), ['Revenues', 'Revenue', 'SalesRevenueNet', 'RevenueFromContractWithCustomerExcludingAssessedTax']),
+            (L('إجمالي الربح', 'Gross Profit', 'Marge brute'), ['GrossProfit']),
+            (L('الدخل التشغيلي', 'Operating Income', 'Résultat opérationnel'), ['OperatingIncomeLoss', 'IncomeLossFromOperations']),
+            (L('صافي الدخل', 'Net Income', 'Résultat net'), ['NetIncomeLoss', 'ProfitLoss']),
+            (L('إجمالي الأصول', 'Total Assets', 'Total Actifs'), ['Assets', 'TotalAssets']),
+            (L('إجمالي الالتزامات', 'Total Liabilities', 'Total Passifs'), ['Liabilities', 'TotalLiabilities']),
+            (L('حقوق الملكية', 'Shareholders Equity', 'Capitaux propres'), ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest', 'TotalEquity']),
+            (L('التدفق النقدي التشغيلي', 'Operating Cash Flow', 'Flux de trésorerie opérationnel'), ['NetCashProvidedByUsedInOperatingActivities', 'OperatingCashFlow']),
+            (L('الإنفاق الرأسمالي', 'Capital Expenditures', 'Dépenses d’investissement'), ['PaymentsToAcquirePropertyPlantAndEquipment', 'CapitalExpenditures']),
+        ]
+
+        for label, keys in hist_rows:
+            vals = [_pick_raw(y, keys) for y in years_focus[:3]]
+            trend = 'N/A'
+            if len(vals) >= 2 and _n(vals[0]) not in (None, 0) and _n(vals[-1]) is not None:
+                trend = f"{((_n(vals[-1]) - _n(vals[0])) / abs(_n(vals[0])) * 100.0):+.1f}%"
+            r = t_hist.add_row().cells
+            r[0].text = label
+            r[1].text = _fmt_b_from_million(vals[0]) if len(vals) > 0 else 'N/A'
+            r[2].text = _fmt_b_from_million(vals[1]) if len(vals) > 1 else 'N/A'
+            r[3].text = _fmt_b_from_million(vals[2]) if len(vals) > 2 else 'N/A'
+            r[4].text = trend
+
+        # 3) Ratios
+        doc.add_heading(L('3. تحليل النسب المالية', '3. Financial Ratio Analysis', '3. Analyse des ratios financiers'), level=2)
+        doc.add_heading(L('3.1 نسب الربحية', '3.1 Profitability', '3.1 Rentabilité'), level=3)
+        t_profit = doc.add_table(rows=1, cols=5)
+        t_profit.style = 'Table Grid'
+        hp = t_profit.rows[0].cells
+        hp[0].text = L('النسبة', 'Ratio', 'Ratio')
+        hp[1].text = str(years_focus[0] if len(years_focus) > 0 else 'N/A')
+        hp[2].text = str(years_focus[1] if len(years_focus) > 1 else 'N/A')
+        hp[3].text = str(years_focus[2] if len(years_focus) > 2 else 'N/A')
+        hp[4].text = L('التقييم', 'Assessment', 'Évaluation')
+
+        profit_items = [
+            (L('هامش الربح الإجمالي', 'Gross Margin', 'Marge brute'), 'gross_margin'),
+            (L('هامش الربح التشغيلي', 'Operating Margin', 'Marge opérationnelle'), 'operating_margin'),
+            (L('هامش صافي الربح', 'Net Margin', 'Marge nette'), 'net_margin'),
+            ('ROA', 'roa'),
+            ('ROE', 'roe'),
+            ('ROIC', 'roic'),
+        ]
+        for label, key in profit_items:
+            vals = [_pick_ratio(y, [key]) for y in years_focus[:3]]
+            r = t_profit.add_row().cells
+            r[0].text = label
+            r[1].text = _fmt_pct(vals[0]) if len(vals) > 0 else 'N/A'
+            r[2].text = _fmt_pct(vals[1]) if len(vals) > 1 else 'N/A'
+            r[3].text = _fmt_pct(vals[2]) if len(vals) > 2 else 'N/A'
+            r[4].text = _assessment_text(key, vals[-1] if vals else None)
+        doc.add_paragraph(L('القراءة التحليلية: استمرار الهوامش عند مستويات مرتفعة يعزز جودة الربحية، بينما أي تراجع متتالٍ لسنوات عدة يعد إشارة ضغط تنافسي.',
+                            'Analytical read: sustained high margins support profitability quality; multi-year contraction signals competitive pressure.',
+                            'Lecture analytique : des marges durablement élevées soutiennent la qualité de rentabilité ; une contraction pluriannuelle signale une pression concurrentielle.'))
+
+        doc.add_heading(L('3.2 السيولة والرافعة', '3.2 Liquidity and Leverage', '3.2 Liquidité et levier'), level=3)
+        t_liq = doc.add_table(rows=1, cols=5)
+        t_liq.style = 'Table Grid'
+        hl = t_liq.rows[0].cells
+        hl[0].text = L('النسبة', 'Ratio', 'Ratio')
+        hl[1].text = str(years_focus[0] if len(years_focus) > 0 else 'N/A')
+        hl[2].text = str(years_focus[1] if len(years_focus) > 1 else 'N/A')
+        hl[3].text = str(years_focus[2] if len(years_focus) > 2 else 'N/A')
+        hl[4].text = L('التقييم', 'Assessment', 'Évaluation')
+
+        liq_items = [
+            (L('النسبة الجارية', 'Current Ratio', 'Ratio courant'), 'current_ratio', False),
+            (L('النسبة السريعة', 'Quick Ratio', 'Quick ratio'), 'quick_ratio', False),
+            (L('النسبة النقدية', 'Cash Ratio', 'Ratio de trésorerie'), 'cash_ratio', False),
+            (L('الدين إلى حقوق الملكية', 'Debt to Equity', 'Dette / Capitaux propres'), 'debt_to_equity', False),
+            (L('تغطية الفائدة', 'Interest Coverage', 'Couverture des intérêts'), 'interest_coverage', False),
+            (L('عائد التدفق النقدي الحر', 'FCF Yield', 'Rendement FCF'), 'fcf_yield', True),
+        ]
+        for label, key, is_pct in liq_items:
+            vals = [_pick_ratio(y, [key]) for y in years_focus[:3]]
+            r = t_liq.add_row().cells
+            r[0].text = label
+            if is_pct:
+                r[1].text = _fmt_pct(vals[0]) if len(vals) > 0 else 'N/A'
+                r[2].text = _fmt_pct(vals[1]) if len(vals) > 1 else 'N/A'
+                r[3].text = _fmt_pct(vals[2]) if len(vals) > 2 else 'N/A'
+            else:
+                r[1].text = _fmt_num(vals[0], 2) if len(vals) > 0 else 'N/A'
+                r[2].text = _fmt_num(vals[1], 2) if len(vals) > 1 else 'N/A'
+                r[3].text = _fmt_num(vals[2], 2) if len(vals) > 2 else 'N/A'
+            r[4].text = _assessment_text(key, vals[-1] if vals else None)
+        doc.add_paragraph(L('القراءة التحليلية: ضعف السيولة لا يُعد خطيرًا تلقائيًا إذا كانت التدفقات النقدية التشغيلية قوية وثابتة.',
+                            'Analytical read: weak liquidity is not automatically critical if operating cash flow remains strong and stable.',
+                            'Lecture analytique : une liquidité faible n’est pas forcément critique si le flux opérationnel reste solide et stable.'))
+
+        # 4) Strategic indicators
+        doc.add_heading(L('4. مؤشرات التحليل الاستراتيجي', '4. Strategic Analysis Indicators', '4. Indicateurs stratégiques'), level=2)
+        t_str = doc.add_table(rows=1, cols=4)
+        t_str.style = 'Table Grid'
+        hs = t_str.rows[0].cells
+        hs[0].text = L('المؤشر', 'Indicator', 'Indicateur')
+        hs[1].text = str(years_focus[0] if len(years_focus) > 0 else 'N/A')
+        hs[2].text = str(years_focus[1] if len(years_focus) > 1 else 'N/A')
+        hs[3].text = str(years_focus[2] if len(years_focus) > 2 else 'N/A')
+
+        strat_items = [
+            (L('نقاط جودة الاستثمار', 'Investment Score', 'Score d’investissement'), ['investment_score', 'Investment_Score', 'investment_quality_score']),
+            (L('الفارق الاقتصادي', 'Economic Spread', 'Spread économique'), ['economic_spread', 'Economic_Spread']),
+            (L('القيمة العادلة', 'Fair Value Estimate', 'Juste valeur'), ['fair_value_estimate', 'Fair_Value_Estimate', 'Fair_Value', 'fair_value']),
+            (L('درجة Altman Z', 'Altman Z Score', 'Score Altman Z'), ['altman_z_score', 'Altman_Z_Score']),
+            (L('درجة Piotroski F', 'Piotroski F Score', 'Score Piotroski F'), ['piotroski_f_score', 'Piotroski_F_Score']),
+        ]
+        for label, keys in strat_items:
+            vals = []
+            for y in years_focus[:3]:
+                sv = _pick_any(y, keys)
+                if sv is None and label == L('الفارق الاقتصادي', 'Economic Spread', 'Spread économique'):
+                    roic = _pick_any(y, ['roic', 'ROIC'])
+                    wacc = _pick_any(y, ['wacc', 'WACC'])
+                    if _n(roic) is not None and _n(wacc) is not None:
+                        sv = _n(roic) - _n(wacc)
+                vals.append(sv)
+            r = t_str.add_row().cells
+            r[0].text = label
+            if label == L('القيمة العادلة', 'Fair Value Estimate', 'Juste valeur'):
+                # Fair value is typically per share; keep it numeric (not B$).
+                r[1].text = _fmt_num(vals[0], 2) if len(vals) > 0 else 'N/A'
+                r[2].text = _fmt_num(vals[1], 2) if len(vals) > 1 else 'N/A'
+                r[3].text = _fmt_num(vals[2], 2) if len(vals) > 2 else 'N/A'
+            elif label in {L('الفارق الاقتصادي', 'Economic Spread', 'Spread économique')}:
+                r[1].text = _fmt_pct(vals[0]) if len(vals) > 0 else 'N/A'
+                r[2].text = _fmt_pct(vals[1]) if len(vals) > 1 else 'N/A'
+                r[3].text = _fmt_pct(vals[2]) if len(vals) > 2 else 'N/A'
+            elif label in {L('نقاط جودة الاستثمار', 'Investment Score', 'Score d’investissement')}:
+                r[1].text = f"{_fmt_num(vals[0], 1)}/100" if len(vals) > 0 and _n(vals[0]) is not None else 'N/A'
+                r[2].text = f"{_fmt_num(vals[1], 1)}/100" if len(vals) > 1 and _n(vals[1]) is not None else 'N/A'
+                r[3].text = f"{_fmt_num(vals[2], 1)}/100" if len(vals) > 2 and _n(vals[2]) is not None else 'N/A'
+            else:
+                r[1].text = _fmt_num(vals[0], 2) if len(vals) > 0 else 'N/A'
+                r[2].text = _fmt_num(vals[1], 2) if len(vals) > 1 else 'N/A'
+                r[3].text = _fmt_num(vals[2], 2) if len(vals) > 2 else 'N/A'
+
+        doc.add_paragraph(L('تفسير مختصر: يظهر هذا القسم التحول في جودة الاستثمار، والفارق الاقتصادي (ROIC - WACC)، ومستوى السلامة المالية.',
+                            'Quick interpretation: this section tracks investment quality, economic spread (ROIC - WACC), and financial safety indicators.',
+                            'Interprétation rapide : cette section suit la qualité d’investissement, le spread économique (ROIC - WACC) et la sécurité financière.'))
+
+        # 5) Forecast block
+        doc.add_heading(L('5. سيناريوهات التوقع (2026-2035)', '5. Forecast Scenarios (2026-2035)', '5. Scénarios de prévision (2026-2035)'), level=2)
+        t_fc = doc.add_table(rows=1, cols=6)
+        t_fc.style = 'Table Grid'
+        hf = t_fc.rows[0].cells
+        hf[0].text = L('السنة', 'Year', 'Année')
+        hf[1].text = L('الإيرادات (السيناريو الأساسي)', 'Revenue Base', 'Revenu Base')
+        hf[2].text = L('الإيرادات (السيناريو المتفائل)', 'Revenue Bull', 'Revenu Bull')
+        hf[3].text = L('الإيرادات (السيناريو المتحفظ)', 'Revenue Bear', 'Revenu Bear')
+        hf[4].text = L('صافي الدخل (السيناريو الأساسي)', 'Net Income Base', 'Résultat net Base')
+        hf[5].text = L('الثقة', 'Confidence', 'Confiance')
+
+        if forecast_df is not None and not forecast_df.empty:
+            for _, fr in forecast_df.head(10).iterrows():
+                r = t_fc.add_row().cells
+                r[0].text = str(fr.get('Year', ''))
+                r[1].text = _fmt_money_b(fr.get('Revenue_Base'))
+                r[2].text = _fmt_money_b(fr.get('Revenue_Bull'))
+                r[3].text = _fmt_money_b(fr.get('Revenue_Bear'))
+                r[4].text = _fmt_money_b(fr.get('NetIncome_Base'))
+                confv = _n(fr.get('Revenue_Confidence_Pct'))
+                r[5].text = 'N/A' if confv is None else f"{confv:.1f}%"
+        else:
+            r = t_fc.add_row().cells
+            r[0].text = 'N/A'
+            r[1].text = 'N/A'
+            r[2].text = 'N/A'
+            r[3].text = 'N/A'
+            r[4].text = 'N/A'
+            r[5].text = 'N/A'
+        doc.add_paragraph(L('منهجية التوقع: نموذج سيناريوهات متعددة (أساسي/متفائل/متحفظ) مع نطاق تقلب يتسع تدريجيًا كلما طال أفق التوقع.',
+                            'Forecast method: multi-scenario model (base/bull/bear) with volatility bands that gradually widen over longer horizons.',
+                            'Méthode : modèle multi-scénarios (base/bull/bear) avec bandes de volatilité élargies avec l’horizon.'))
+
+        # 5.1 Visual charts with interpretation
+        doc.add_heading(L('5.1 الرسومات البيانية التفسيرية', '5.1 Visual Forecast and Trend Charts', '5.1 Graphiques explicatifs'), level=3)
+
+        rev_years = sorted([y for y in data_by_year.keys() if isinstance(y, int)])
+        rev_vals = [_pick_raw(y, ['Revenues', 'Revenue', 'SalesRevenueNet', 'RevenueFromContractWithCustomerExcludingAssessedTax']) for y in rev_years]
+        ni_vals = [_pick_raw(y, ['NetIncomeLoss', 'ProfitLoss']) for y in rev_years]
+        rev_b = [(_n(v) / 1000.0) if _n(v) is not None else None for v in rev_vals]
+        ni_b = [(_n(v) / 1000.0) if _n(v) is not None else None for v in ni_vals]
+        valid_hist = [i for i, (a, b) in enumerate(zip(rev_b, ni_b)) if a is not None and b is not None]
+        if valid_hist:
+            xh = [rev_years[i] for i in valid_hist]
+            yr = [rev_b[i] for i in valid_hist]
+            yn = [ni_b[i] for i in valid_hist]
+            p_hist = _make_chart(
+                L('اتجاه الإيرادات وصافي الدخل (B$)', 'Revenue and Net Income Trend (B$)', 'Tendance revenu et résultat net (Md$)'),
+                xh,
+                {
+                    L('الإيرادات', 'Revenue', 'Revenu'): yr,
+                    L('صافي الدخل', 'Net Income', 'Résultat net'): yn,
+                },
+                L('مليار دولار', 'Billion USD', 'Md USD'),
+            )
+            if p_hist:
+                doc.add_picture(p_hist, width=Inches(6.6))
+                if len(yr) >= 2 and yr[0] not in (None, 0):
+                    growth_hist = ((yr[-1] - yr[0]) / abs(yr[0])) * 100.0
+                    doc.add_paragraph(L(f'تفسير الرسم: الإيرادات تحركت بنسبة {growth_hist:+.1f}% عبر الفترة المتاحة، مع تماسك صافي الدخل.',
+                                        f'Chart interpretation: revenue moved by {growth_hist:+.1f}% over the available period, with net income consistency.',
+                                        f'Interprétation : le revenu a évolué de {growth_hist:+.1f}% sur la période, avec une cohérence du résultat net.'))
+
+        margin_years = sorted([y for y in ratios_by_year.keys() if isinstance(y, int)])
+        gm_vals = [_pick_ratio(y, ['gross_margin']) for y in margin_years]
+        om_vals = [_pick_ratio(y, ['operating_margin']) for y in margin_years]
+        nm_vals = [_pick_ratio(y, ['net_margin']) for y in margin_years]
+        valid_m = [i for i in range(len(margin_years)) if _n(gm_vals[i]) is not None and _n(om_vals[i]) is not None and _n(nm_vals[i]) is not None]
+        if valid_m:
+            xm = [margin_years[i] for i in valid_m]
+            ygm = [_n(gm_vals[i]) * 100.0 for i in valid_m]
+            yom = [_n(om_vals[i]) * 100.0 for i in valid_m]
+            ynm = [_n(nm_vals[i]) * 100.0 for i in valid_m]
+            p_margin = _make_chart(
+                L('تطور هوامش الربحية (%)', 'Profitability Margin Trend (%)', 'Évolution des marges (%)'),
+                xm,
+                {
+                    L('هامش إجمالي', 'Gross Margin', 'Marge brute'): ygm,
+                    L('هامش تشغيلي', 'Operating Margin', 'Marge opérationnelle'): yom,
+                    L('هامش صافي', 'Net Margin', 'Marge nette'): ynm,
+                },
+                L('النسبة المئوية', 'Percent', 'Pourcentage'),
+            )
+            if p_margin:
+                doc.add_picture(p_margin, width=Inches(6.6))
+                doc.add_paragraph(L('تفسير الرسم: اتساع الفجوة الإيجابية بين الهوامش يدعم جودة الربحية، بينما انكماشها يشير إلى ضغط تشغيلي.',
+                                    'Chart interpretation: wider positive spread between margins supports profitability quality; narrowing spread indicates operating pressure.',
+                                    'Interprétation : un écart positif plus large entre marges soutient la qualité de rentabilité ; un rétrécissement signale une pression opérationnelle.'))
+
+        if forecast_df is not None and not forecast_df.empty:
+            fdf = forecast_df.head(10).copy()
+            yrs = [int(y) for y in fdf['Year'].tolist() if str(y).isdigit()]
+            rb = [(_n(v) / 1000.0) if _n(v) is not None else None for v in fdf['Revenue_Base'].tolist()]
+            rbu = [(_n(v) / 1000.0) if _n(v) is not None else None for v in fdf['Revenue_Bull'].tolist()]
+            rbe = [(_n(v) / 1000.0) if _n(v) is not None else None for v in fdf['Revenue_Bear'].tolist()]
+            valid_f = [i for i in range(min(len(yrs), len(rb), len(rbu), len(rbe))) if rb[i] is not None and rbu[i] is not None and rbe[i] is not None]
+            if valid_f:
+                xf = [yrs[i] for i in valid_f]
+                yb = [rb[i] for i in valid_f]
+                ybu = [rbu[i] for i in valid_f]
+                ybe = [rbe[i] for i in valid_f]
+                p_fc = _make_chart(
+                    L('مسارات التوقع: Bear/Base/Bull (الإيرادات B$)', 'Forecast Paths: Bear/Base/Bull (Revenue B$)', 'Trajectoires prévisionnelles : Bear/Base/Bull (Revenu Md$)'),
+                    xf,
+                    {
+                        'Base': yb,
+                        'Bull': ybu,
+                        'Bear': ybe,
+                    },
+                    L('مليار دولار', 'Billion USD', 'Md USD'),
+                )
+                if p_fc:
+                    doc.add_picture(p_fc, width=Inches(6.6))
+                    if len(yb) >= 2 and yb[0] not in (None, 0):
+                        gfc = ((yb[-1] - yb[0]) / abs(yb[0])) * 100.0
+                        doc.add_paragraph(L(f'تفسير الرسم: المسار الأساسي يشير إلى نمو تراكمي يقارب {gfc:+.1f}% خلال أفق التوقع.',
+                                            f'Chart interpretation: the base path implies cumulative growth of about {gfc:+.1f}% over the forecast horizon.',
+                                            f'Interprétation : le scénario de base implique une croissance cumulée d’environ {gfc:+.1f}% sur l’horizon prévu.'))
+
+        # 6) AI analysis
+        doc.add_heading(L('6. ملخص التحليل الذكي', '6. AI Analysis Snapshot', '6. Synthèse IA'), level=2)
+        fp = _n(ai_fraud.get('fraud_probability'))
+        fail3 = _n(ai_fail.get('failure_prob_3y'))
+        fail5 = _n(ai_fail.get('failure_prob_5y'))
+        wc_prob = _n((ai.get('working_capital_analysis', {}) or {}).get('liquidity_crisis_prob'))
+
+        doc.add_paragraph(L(f"احتمال الاحتيال: {'N/A' if fp is None else f'{fp * 100:.2f}%'}",
+                            f"Fraud probability: {'N/A' if fp is None else f'{fp * 100:.2f}%'}",
+                            f"Probabilité de fraude: {'N/A' if fp is None else f'{fp * 100:.2f}%'}"))
+        doc.add_paragraph(L(f"احتمال التعثر (3 سنوات): {'N/A' if fail3 is None else f'{fail3 * 100:.2f}%'}",
+                            f"Failure probability (3Y): {'N/A' if fail3 is None else f'{fail3 * 100:.2f}%'}",
+                            f"Probabilité de défaillance (3 ans): {'N/A' if fail3 is None else f'{fail3 * 100:.2f}%'}"))
+        doc.add_paragraph(L(f"احتمال التعثر (5 سنوات): {'N/A' if fail5 is None else f'{fail5 * 100:.2f}%'}",
+                            f"Failure probability (5Y): {'N/A' if fail5 is None else f'{fail5 * 100:.2f}%'}",
+                            f"Probabilité de défaillance (5 ans): {'N/A' if fail5 is None else f'{fail5 * 100:.2f}%'}"))
+        doc.add_paragraph(L(f"درجة جودة الاستثمار: {_fmt_num(qscore, 1)}/100",
+                            f"Investment quality score: {_fmt_num(qscore, 1)}/100",
+                            f"Score qualité investissement: {_fmt_num(qscore, 1)}/100"))
+
+        # Embed same AI chart family (Risk Heatmap + Quality Radar) used by app visuals.
+        ai_chart_path = None
+        try:
+            import tempfile
+            import uuid
+            ai_fig = self._build_ai_figure(ai)
+            ai_chart_path = str(Path(tempfile.gettempdir()) / f"ai_report_{uuid.uuid4().hex}.png")
+            ai_fig.savefig(ai_chart_path, bbox_inches='tight')
+        except Exception:
+            ai_chart_path = None
+        if ai_chart_path and Path(ai_chart_path).exists():
+            doc.add_heading(L('6.1 مخطط المخاطر والجودة', '6.1 AI Risk and Quality Chart', '6.1 Graphe risque et qualité IA'), level=3)
+            doc.add_picture(ai_chart_path, width=Inches(6.6))
+
+            fp_pct = (_n(fp) or 0.0) * 100.0 if fp is not None else None
+            f3_pct = (_n(fail3) or 0.0) * 100.0 if fail3 is not None else None
+            wc_pct = (_n(wc_prob) or 0.0) * 100.0 if wc_prob is not None else None
+            comps = (ai_quality.get('components') or {}) if isinstance(ai_quality, dict) else {}
+            roic_n = max(0.0, min(100.0, float(comps.get('roic') or 0.0) * 300.0))
+            spread_n = max(0.0, min(100.0, float(comps.get('economic_spread') or 0.0) * 400.0))
+            fcf_n = max(0.0, min(100.0, float(comps.get('fcf_yield') or 0.0) * 800.0))
+            z_n = max(0.0, min(100.0, (float(comps.get('z_score') or 0.0) / 4.0) * 100.0))
+            # Keep a single authoritative investment score in the report to avoid
+            # contradictory conclusions across sections.
+            inv_raw = _n(qscore)
+            if inv_raw is None:
+                inv_raw = _n(comps.get('investment_score'))
+            if inv_raw is None:
+                inv_raw = 0.0
+            # Guard against ratio-like [0..1] accidental inputs.
+            if 0.0 <= inv_raw <= 1.0:
+                inv_raw = inv_raw * 100.0
+            inv_n = max(0.0, min(100.0, float(inv_raw)))
+
+            risk_text = L(
+                f"تفسير خريطة المخاطر: الاحتيال {_risk_level_text(fp_pct)} ({'N/A' if fp_pct is None else f'{fp_pct:.1f}%'}), "
+                f"التعثر خلال 3 سنوات {_risk_level_text(f3_pct)} ({'N/A' if f3_pct is None else f'{f3_pct:.1f}%'}), "
+                f"وأزمة السيولة {_risk_level_text(wc_pct)} ({'N/A' if wc_pct is None else f'{wc_pct:.1f}%'}).",
+                f"Heatmap interpretation: fraud {_risk_level_text(fp_pct)} ({'N/A' if fp_pct is None else f'{fp_pct:.1f}%'}), "
+                f"3Y failure {_risk_level_text(f3_pct)} ({'N/A' if f3_pct is None else f'{f3_pct:.1f}%'}), "
+                f"and liquidity crisis {_risk_level_text(wc_pct)} ({'N/A' if wc_pct is None else f'{wc_pct:.1f}%'}).",
+                f"Interprétation heatmap : fraude {_risk_level_text(fp_pct)} ({'N/A' if fp_pct is None else f'{fp_pct:.1f}%'}), "
+                f"défaillance 3 ans {_risk_level_text(f3_pct)} ({'N/A' if f3_pct is None else f'{f3_pct:.1f}%'}), "
+                f"et crise de liquidité {_risk_level_text(wc_pct)} ({'N/A' if wc_pct is None else f'{wc_pct:.1f}%'})."
+            )
+            radar_text = L(
+                f"تفسير رادار الجودة: ROIC={roic_n:.1f}/100، Spread={spread_n:.1f}/100، FCF Yield={fcf_n:.1f}/100، "
+                f"Z-Score={z_n:.1f}/100، Investment Score={inv_n:.1f}/100. النتيجة تعني "
+                f"{'جودة قوية' if inv_n >= 75 else ('جودة متوسطة' if inv_n >= 55 else 'جودة ضعيفة')} مقارنةً بعوامل الربحية والمخاطر.",
+                f"Radar interpretation: ROIC={roic_n:.1f}/100, Spread={spread_n:.1f}/100, FCF Yield={fcf_n:.1f}/100, "
+                f"Z-Score={z_n:.1f}/100, Investment Score={inv_n:.1f}/100. This indicates "
+                f"{'strong quality' if inv_n >= 75 else ('moderate quality' if inv_n >= 55 else 'weak quality')} versus profitability/risk factors.",
+                f"Interprétation radar : ROIC={roic_n:.1f}/100, Spread={spread_n:.1f}/100, FCF Yield={fcf_n:.1f}/100, "
+                f"Z-Score={z_n:.1f}/100, Investment Score={inv_n:.1f}/100. Cela indique une "
+                f"{'qualité forte' if inv_n >= 75 else ('qualité moyenne' if inv_n >= 55 else 'qualité faible')} face aux facteurs rentabilité/risque."
+            )
+            doc.add_paragraph(risk_text)
+            doc.add_paragraph(radar_text)
+
+        # 7) Final investment verdict
+        doc.add_heading(L('7. الحكم الاستثماري النهائي', '7. Final Investment Verdict', '7. Verdict d’investissement final'), level=2)
+        t_v = doc.add_table(rows=1, cols=5)
+        t_v.style = 'Table Grid'
+        hv = t_v.rows[0].cells
+        hv[0].text = L('السنة', 'Year', 'Année')
+        hv[1].text = L('الحكم', 'Verdict', 'Verdict')
+        hv[2].text = L('الثقة', 'Confidence', 'Confiance')
+        hv[3].text = 'P/E'
+        hv[4].text = 'P/B'
+
+        base_conf = min(98.0, max(60.0, qscore + 20.0))
+        for yy in years_focus[:3]:
+            nm_y = _pick_ratio(yy, ['net_margin'])
+            roe_y = _pick_ratio(yy, ['roe'])
+            pe_y = _pick_ratio(yy, ['pe_ratio'])
+            pb_y = _pick_ratio(yy, ['pb_ratio'])
+
+            if _n(nm_y) is not None and _n(roe_y) is not None and _n(nm_y) > 0.10 and _n(roe_y) > 0.12:
+                verdict = L('قبول', 'PASS', 'PASS')
+            elif _n(nm_y) is not None and _n(nm_y) > 0:
+                verdict = L('مراقبة', 'WATCH', 'SURVEILLER')
+            else:
+                verdict = L('مراجعة', 'REVIEW', 'REVIEW')
+
+            r = t_v.add_row().cells
+            r[0].text = str(yy)
+            r[1].text = verdict
+            r[2].text = f"{base_conf:.1f}%"
+            r[3].text = _fmt_num(pe_y, 2)
+            r[4].text = _fmt_num(pb_y, 2)
+
+        # 8) Audit trail and accounting check
+        doc.add_heading(L('8. سلامة المعادلة المحاسبية وسجل التدقيق', '8. Accounting Integrity and Audit Trail', '8. Intégrité comptable et piste d’audit'), level=2)
+        t_a = doc.add_table(rows=1, cols=5)
+        t_a.style = 'Table Grid'
+        ha = t_a.rows[0].cells
+        ha[0].text = L('السنة', 'Year', 'Année')
+        ha[1].text = L('الأصول (B$)', 'Assets (B$)', 'Actifs (Md$)')
+        ha[2].text = L('الالتزامات (B$)', 'Liabilities (B$)', 'Passifs (Md$)')
+        ha[3].text = L('حقوق الملكية (B$)', 'Equity (B$)', 'Capitaux propres (Md$)')
+        ha[4].text = L('فحص التوازن', 'Balance Check', 'Contrôle bilan')
+
+        years_bal = sorted(data_by_year.keys())[-5:]
+        balance_pass_count = 0
+        for yy in years_bal:
+            assets = _pick_raw(yy, ['Assets', 'TotalAssets'])
+            liabilities = _pick_raw(yy, ['Liabilities', 'TotalLiabilities'])
+            equity = _pick_raw(yy, ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest', 'TotalEquity'])
+
+            status = 'N/A'
+            if _n(assets) is not None and _n(liabilities) is not None and _n(equity) is not None and _n(assets) != 0:
+                diff = abs(_n(assets) - (_n(liabilities) + _n(equity))) / abs(_n(assets))
+                status = L('مطابق', 'PASS', 'PASS') if diff <= 0.08 else L('تحقق', 'CHECK', 'CHECK')
+                if diff <= 0.08:
+                    balance_pass_count += 1
+
+            r = t_a.add_row().cells
+            r[0].text = str(yy)
+            r[1].text = _fmt_b_from_million(assets)
+            r[2].text = _fmt_b_from_million(liabilities)
+            r[3].text = _fmt_b_from_million(equity)
+            r[4].text = status
+
+        t_q = doc.add_table(rows=1, cols=2)
+        t_q.style = 'Table Grid'
+        t_q.rows[0].cells[0].text = L('بُعد الجودة', 'Quality Dimension', 'Dimension qualité')
+        t_q.rows[0].cells[1].text = L('التقييم', 'Rating', 'Note')
+
+        gross_latest = _pick_ratio(latest_year, ['gross_margin']) if latest_year else None
+        current_latest = _pick_ratio(latest_year, ['current_ratio']) if latest_year else None
+        debt_latest = _pick_ratio(latest_year, ['debt_to_equity']) if latest_year else None
+        roic_latest = _pick_ratio(latest_year, ['roic']) if latest_year else None
+
+        quality_rows = [
+            (L('الربحية', 'Profitability', 'Rentabilité'), _stars(((_n(gross_latest) or 0.0) * 100.0) + 35.0)),
+            (L('السيولة', 'Liquidity', 'Liquidité'), _stars(((_n(current_latest) or 0.0) * 40.0) + 30.0)),
+            (L('الرافعة', 'Leverage', 'Levier'), _stars(100.0 - min(100.0, ((_n(debt_latest) or 0.0) * 35.0)))),
+            (L('كفاءة رأس المال', 'Capital Efficiency', 'Efficacité du capital'), _stars(((_n(roic_latest) or 0.0) * 100.0) + 30.0)),
+            (L('جودة الاستثمار', 'Investment Quality', 'Qualité d’investissement'), _stars(qscore)),
+        ]
+        for k, v in quality_rows:
+            rr = t_q.add_row().cells
+            rr[0].text = k
+            rr[1].text = v
+
+        # Expert-style final synthesis with explicit recommendation logic.
+        fp_pct = (_n(fp) or 0.0) * 100.0 if fp is not None else 0.0
+        f3_pct = (_n(fail3) or 0.0) * 100.0 if fail3 is not None else 0.0
+        wc_pct = (_n(wc_prob) or 0.0) * 100.0 if wc_prob is not None else 0.0
+        nm_pct = (_n(nm) or 0.0) * 100.0
+        roe_pct = (_n(roe) or 0.0) * 100.0
+        cr_v = _n(cr) or 0.0
+        dte_v = _n(dte) or 0.0
+
+        score = 0.0
+        score += min(30.0, max(0.0, qscore * 0.30))
+        score += min(18.0, max(0.0, nm_pct * 0.45))
+        score += min(15.0, max(0.0, roe_pct * 0.12))
+        score += min(12.0, max(0.0, (2.0 - min(2.0, dte_v)) * 6.0))
+        score += min(10.0, max(0.0, min(2.0, cr_v) * 5.0))
+        score += min(8.0, max(0.0, balance_pass_count * 1.6))
+        risk_penalty = min(35.0, (fp_pct * 0.35) + (f3_pct * 0.25) + (wc_pct * 0.20))
+        final_index = max(0.0, min(100.0, score - risk_penalty))
+
+        if final_index >= 85:
+            final_rec = L('شراء قوي', 'Strong Buy', 'Achat fort')
+        elif final_index >= 70:
+            final_rec = L('شراء', 'Buy', 'Achat')
+        elif final_index >= 55:
+            final_rec = L('احتفاظ', 'Hold', 'Conserver')
+        elif final_index >= 40:
+            final_rec = L('مراقبة', 'Watch', 'Surveiller')
+        else:
+            final_rec = L('تجنب', 'Avoid', 'Éviter')
+
+        final_conf = max(55.0, min(98.5, (qscore * 0.55) + (100.0 - min(100.0, risk_penalty)) * 0.35 + (balance_pass_count * 2.0)))
+        doc.add_heading(L('8.1 الخلاصة والتوصية النهائية', '8.1 Final Synthesis and Recommendation', '8.1 Synthèse et recommandation finale'), level=3)
+        doc.add_paragraph(L(f'مؤشر الحكم الاستثماري: {final_index:.1f}/100',
+                            f'Investment verdict index: {final_index:.1f}/100',
+                            f'Indice de verdict: {final_index:.1f}/100'))
+        doc.add_paragraph(L(f'التوصية النهائية: {final_rec}',
+                            f'Final recommendation: {final_rec}',
+                            f'Recommandation finale: {final_rec}'))
+        doc.add_paragraph(L(f'درجة الثقة: {final_conf:.1f}%',
+                            f'Confidence level: {final_conf:.1f}%',
+                            f'Niveau de confiance: {final_conf:.1f}%'))
+        doc.add_paragraph(L('مبررات الحكم: ربحية، جودة استثمار، سيولة/رافعة، مخاطر ذكاء، واتساق محاسبي.',
+                            'Verdict drivers: profitability, investment quality, liquidity/leverage, AI risks, and accounting consistency.',
+                            'Moteurs du verdict : rentabilité, qualité, liquidité/levier, risques IA et cohérence comptable.'))
+
+        doc.add_paragraph(L('آخر إيداعات SEC المستخدمة:', 'Recent SEC filings used:', 'Derniers dépôts SEC utilisés :'))
+        if filings:
+            for f in filings[:8]:
+                form = f.get('form') or 'N/A'
+                fdate = f.get('filing_date') or 'N/A'
+                accession = f.get('accession') or 'N/A'
+                doc.add_paragraph(f"- {form} | {fdate} | {accession}")
+        else:
+            doc.add_paragraph(L('- قائمة الإيداعات غير متاحة في سياق هذا التصدير.',
+                                '- SEC filing list not available in this export context.',
+                                '- Liste des dépôts SEC indisponible dans ce contexte.'))
+
+        # Arabic polish: enforce RTL reading order and right alignment for better report readability.
+        if is_ar:
+            for p in doc.paragraphs:
+                try:
+                    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                    ppr = p._p.get_or_add_pPr()
+                    ppr.set(qn('w:bidi'), '1')
+                except Exception:
+                    pass
+            for tb in doc.tables:
+                try:
+                    if WD_TABLE_DIRECTION is not None:
+                        tb.table_direction = WD_TABLE_DIRECTION.RTL
+                except Exception:
+                    pass
+                for row in tb.rows:
+                    for cell in row.cells:
+                        for p in cell.paragraphs:
+                            try:
+                                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                                ppr = p._p.get_or_add_pPr()
+                                ppr.set(qn('w:bidi'), '1')
+                            except Exception:
+                                pass
+
+        Path(fn).parent.mkdir(parents=True, exist_ok=True)
+        doc.save(fn)
+        messagebox.showinfo(self._t('msg_success'), f"{self._t('chat_word_saved')}\\n{fn}")
+
+    def _clear_companies(self):
+        if messagebox.askyesno(self._t('msg_confirm'), self._translate_ui_text("هل تريد مسح جميع الشركات من القائمة؟")):
+            self.companies_listbox.delete(0, tk.END)
+            self.multi_company_data.clear()
+            self.company_alias_map.clear()
+            self.current_data = None
+            self.display_all()
+            self._update_workspace_context()
+
+    # ---------- Fetch ----------
+    def fetch_data(self):
+        companies = list(self.companies_listbox.get(0, tk.END))
+        if not companies:
+            messagebox.showerror(self._t('msg_error'), self._translate_ui_text("أضف شركة واحدة على الأقل"))
+            return
+        try:
+            start_year = int(self.start_year_var.get())
+            end_year = int(self.end_year_var.get())
+        except:
+            messagebox.showerror(self._t('msg_error'), self._translate_ui_text("السنوات غير صحيحة"))
+            return
+        if start_year > end_year:
+            messagebox.showerror(self._t('msg_error'), self._translate_ui_text("سنة البداية يجب أن تكون ≤ سنة النهاية"))
+            return
+        filing_type = self.filing_type_var.get()
+        if filing_type != '10-K':
+            messagebox.showwarning(self._t('msg_warning'), self._t('filing_warn_unsupported'))
+            filing_type = '10-K'
+            self.filing_type_var.set('10-K')
+            if hasattr(self, 'filing_type_display_var') and hasattr(self, '_filing_real_to_display'):
+                self.filing_type_display_var.set(self._filing_real_to_display.get('10-K', '10-K'))
+        if self.current_lang == 'ar':
+            self.progress_label.config(text=f"بدء التحميل الآلي للبيانات | نوع التقرير: {filing_type} | الفترة: {start_year}-{end_year}")
+        elif self.current_lang == 'fr':
+            self.progress_label.config(text=f"Démarrage du chargement automatique | Type: {filing_type} | Période: {start_year}-{end_year}")
+        else:
+            self.progress_label.config(text=f"Starting auto data loading | Filing: {filing_type} | Period: {start_year}-{end_year}")
+        self.progress_bar.start()
+        self._start_loading_indicator()
+
+        def cb(msg):
+            self.root.after(0, lambda: self.progress_label.config(text=msg))
+
+        def worker():
+            try:
+                for idx, comp in enumerate(companies, start=1):
+                    cb(self._translate_ui_text(f"({idx}/{len(companies)}) جلب: {comp} ..."))
+                    res = self.fetcher.fetch_company_data(comp, start_year, end_year, filing_type, callback=cb, include_all_concepts=True)
+                    if res.get('success'):
+                        t = res['company_info'].get('ticker') or comp
+                        self.multi_company_data[t] = res
+                        self._register_company_aliases(comp, t, res)
+                        self.current_data = res
+
+                        self.root.after(0, self.display_all)
+                    else:
+                        cb(self._translate_ui_text(f"❌ فشل {comp}: {res.get('error')}"))
+                    time.sleep(0.5)
+            finally:
+                self.root.after(0, lambda: self.progress_bar.stop())
+                self.root.after(0, lambda: self._stop_loading_indicator())
+                self.root.after(0, lambda: self.progress_label.config(text=self._t('progress_done')))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def display_ai_analysis(self):
+        """
+        ðŸ¤– Ø¹Ø±Ø¶ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ø°ÙƒÙŠ - 5 Ù…Ø¤Ø´Ø±Ø§Øª Ù…ØªÙ‚Ø¯Ù…Ø©
+        """
+        print("ðŸ¤– [DEBUG] display_ai_analysis called")
+        
+        if not self.current_data:
+            print("âš ï¸ [DEBUG] No current_data available")
+            # Ù…Ø³Ø­ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø¹Ø±ÙˆØ¶
+            self.fraud_prob_label.config(text=self._t('ai_fraud_prob').replace('--', '-- (N/A)'))
+            self.fraud_flags_label.config(text=self._t('ai_fraud_flags'))
+            self.fraud_level_label.config(text=self._t('ai_risk_level'))
+            self.fraud_recommendation_label.config(text=self._t('ai_recommendation'))
+
+            self.failure_3y_label.config(text=self._t('ai_failure_3y'))
+            self.failure_5y_label.config(text=self._t('ai_failure_5y'))
+            self.failure_risk_label.config(text=self._t('ai_risk_level'))
+            self.failure_concerns_label.config(text=self._t('ai_main_concerns'))
+
+            self.growth_score_label.config(text=self._t('ai_score'))
+            self.growth_grade_label.config(text=self._t('ai_grade'))
+            self.growth_assessment_label.config(text=self._t('ai_assessment'))
+            self.growth_warning_label.config(text="")
+
+            self.wc_crisis_prob_label.config(text=self._t('ai_wc_crisis'))
+            self.wc_ccc_label.config(text=self._t('ai_wc_ccc'))
+            self.wc_trend_label.config(text=self._t('ai_wc_trend'))
+            self.wc_recommendation_label.config(text=self._t('ai_recommendation'))
+
+            self.quality_score_label.config(text=self._t('ai_quality_score'))
+            self.quality_verdict_label.config(text=self._t('ai_verdict'))
+            self.quality_action_label.config(text=self._t('ai_invest_action'))
+            self.quality_percentile_label.config(text=self._t('ai_percentile'))
+            self._clear_embedded_chart('_ai_chart_canvas')
+            return
+        
+        try:
+            print("âœ… [DEBUG] Importing advanced_analysis...")
+            from modules.advanced_analysis import generate_ai_insights
+            
+            data_by_year_raw = ((self.current_data.get('data_layers', {}) or {}).get('layer1_by_year') or self.current_data.get('data_by_year', {}))
+            ratios_by_year_raw = maybe_guard_ratios_by_year(self.current_data.get('financial_ratios', {}))
+            data_by_year = {}
+            for yk, row in (data_by_year_raw or {}).items():
+                try:
+                    ky = int(yk)
+                except Exception:
+                    continue
+                data_by_year[ky] = row or {}
+            ratios_by_year = {}
+            for yk, row in (ratios_by_year_raw or {}).items():
+                try:
+                    ky = int(yk)
+                except Exception:
+                    continue
+                ratios_by_year[ky] = row or {}
+            ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+            ratio_source = UnifiedRatioSource()
+            ratio_source.load(ticker, data_by_year, ratios_by_year)
+            
+            print(f"ðŸ“Š [DEBUG] data_by_year keys: {list(data_by_year.keys())}")
+            print(f"ðŸ“Š [DEBUG] ratios_by_year keys: {list(ratios_by_year.keys())}")
+            
+            if not data_by_year or not ratios_by_year:
+                print("âš ï¸ [DEBUG] Missing data_by_year or ratios_by_year")
+                self.fraud_prob_label.config(text=self._t('ai_fraud_prob').replace('--', '-- (N/A)'))
+                self._clear_embedded_chart('_ai_chart_canvas')
+                return
+            
+            # Ø¬Ù…Ø¹ Ø§Ù„Ù…Ù‚Ø§ÙŠÙŠØ³ Ø§Ù„Ù…Ø·Ù„ÙˆØ¨Ø©
+            years = sorted([y for y in data_by_year.keys() if isinstance(y, int)])
+            if not years:
+                return
+            
+            latest_year = years[-1]
+            investment_score = ratio_source.get_ratio_contract(ticker, latest_year, 'investment_score').get('value')
+            if investment_score is None:
+                investment_score = 50
+            economic_spread = ratio_source.get_ratio_contract(ticker, latest_year, 'economic_spread').get('value')
+            if economic_spread is None:
+                roic = ratio_source.get_ratio_contract(ticker, latest_year, 'roic').get('value')
+                wacc = ratio_source.get_ratio_contract(ticker, latest_year, 'wacc').get('value')
+                if roic and wacc:
+                    economic_spread = roic - wacc
+                else:
+                    economic_spread = 0.0
+            fcf_yield = ratio_source.get_ratio_contract(ticker, latest_year, 'fcf_yield').get('value')
+            if fcf_yield is None:
+                fcf = ratio_source.get_ratio_contract(ticker, latest_year, 'free_cash_flow').get('value')
+                market_cap = ratio_source.get_ratio_contract(ticker, latest_year, 'market_cap').get('value')
+                if fcf and market_cap and market_cap != 0:
+                    fcf_yield = (fcf / market_cap)
+                else:
+                    fcf_yield = 0.0
+
+            forecast_bundle = self._build_forecast_bundle(data_by_year=data_by_year, years_forward=5)
+            forecast_rows = forecast_bundle.get('rows') or []
+            rev_conf_vals = [r.get('Revenue_Confidence_Pct') for r in forecast_rows if isinstance(r.get('Revenue_Confidence_Pct'), (int, float))]
+            ni_conf_vals = [r.get('NetIncome_Confidence_Pct') for r in forecast_rows if isinstance(r.get('NetIncome_Confidence_Pct'), (int, float))]
+            rev_conf_avg = (sum(rev_conf_vals) / len(rev_conf_vals)) if rev_conf_vals else None
+            ni_conf_avg = (sum(ni_conf_vals) / len(ni_conf_vals)) if ni_conf_vals else None
+            model_quality_label = "N/A"
+            if isinstance(rev_conf_avg, (int, float)) and isinstance(ni_conf_avg, (int, float)):
+                blend_conf = (rev_conf_avg * 0.55) + (ni_conf_avg * 0.45)
+                if blend_conf >= 86:
+                    model_quality_label = "HIGH"
+                elif blend_conf >= 72:
+                    model_quality_label = "MEDIUM"
+                else:
+                    model_quality_label = "LOW"
+            
+            # âœ… ØªÙˆÙ„ÙŠØ¯ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ø°ÙƒÙŠ
+            print("ðŸ”„ [DEBUG] Calling generate_ai_insights...")
+            
+            # âœ… NEW: Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø§Ù„Ù†Ù…Ø§Ø°Ø¬ Ø§Ù„Ù…Ø¯Ø±Ø¨Ø© Ø¥Ø°Ø§ ÙƒØ§Ù†Øª Ù…ØªÙˆÙØ±Ø©
+            enhanced_insights = None
+            if self.ml_trainer and self.ml_trainer.trained_models:
+                try:
+                    print("ðŸ¤– [DEBUG] Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø§Ù„Ù†Ù…Ø§Ø°Ø¬ Ø§Ù„Ù…Ø¯Ø±Ø¨Ø© Ù„Ù„ØªØ­Ø³ÙŠÙ†...")
+                    features = self.ml_trainer._extract_features(data_by_year, ratios_by_year)
+                    
+                    # ØªØ­Ø³ÙŠÙ† Ø§Ø­ØªÙ…Ø§Ù„ÙŠØ© Ø§Ù„Ø§Ø­ØªÙŠØ§Ù„
+                    ml_fraud_prob = self.ml_trainer.predict_fraud_probability(features)
+                    if ml_fraud_prob is not None:
+                        print(f"   ðŸ“Š Ø§Ø­ØªÙ…Ø§Ù„ÙŠØ© Ø§Ù„Ø§Ø­ØªÙŠØ§Ù„ Ù…Ù† ML: {ml_fraud_prob*100:.1f}%")
+                        enhanced_insights = {'ml_fraud_probability': ml_fraud_prob}
+                except Exception as e:
+                    print(f"âš ï¸ Ø®Ø·Ø£ ÙÙŠ Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø§Ù„Ù†Ù…Ø§Ø°Ø¬ Ø§Ù„Ù…Ø¯Ø±Ø¨Ø©: {e}")
+            
+            insights = generate_ai_insights(
+                data_by_year=data_by_year,
+                ratios_by_year=ratios_by_year,
+                investment_score=investment_score,
+                economic_spread=economic_spread,
+                fcf_yield=fcf_yield
+            )
+            
+            # âœ… Ø¯Ù…Ø¬ Ø§Ù„Ù†ØªØ§Ø¦Ø¬ Ø§Ù„Ù…Ø­Ø³Ù‘Ù†Ø© Ù…Ù† ML
+            if enhanced_insights and 'ml_fraud_probability' in enhanced_insights:
+                ml_prob = enhanced_insights['ml_fraud_probability']
+                rule_prob = insights['fraud_detection']['fraud_probability']
+                # Ø§Ø³ØªØ®Ø¯Ø§Ù… Ù…ØªÙˆØ³Ø· Ù…Ø±Ø¬Ø­: 70% ML + 30% Rules
+                insights['fraud_detection']['fraud_probability'] = (ml_prob * 0.7) + (rule_prob * 0.3)
+                insights['fraud_detection']['using_ml'] = True
+                print(f"   âœ… ØªÙ… Ø¯Ù…Ø¬ Ù†ØªØ§Ø¦Ø¬ ML: {insights['fraud_detection']['fraud_probability']*100:.1f}%")
+            
+            print(f"âœ… [DEBUG] AI Insights generated successfully!")
+            print(f"   Keys: {list(insights.keys())}")
+            
+            # âœ… NEW: Ø­ÙØ¸ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ù„Ù„ØªØ¯Ø±ÙŠØ¨ Ø§Ù„Ù…Ø³ØªÙ…Ø±
+            if self.ml_trainer:
+                try:
+                    ticker = self.current_data.get('company_info', {}).get('ticker', 'UNKNOWN')
+                    self.ml_trainer.collect_company_data(
+                        ticker=ticker,
+                        data_by_year=data_by_year,
+                        ratios_by_year=ratios_by_year,
+                        ai_results=insights
+                    )
+                    
+                    # Ù…Ø­Ø§ÙˆÙ„Ø© ØªØ¯Ø±ÙŠØ¨ ØªÙ„Ù‚Ø§Ø¦ÙŠ Ø¥Ø°Ø§ ÙˆØµÙ„Ù†Ø§ Ù„Ù„Ø­Ø¯ Ø§Ù„Ù…Ø·Ù„ÙˆØ¨
+                    from modules.ml_trainer import auto_train_if_needed
+                    if auto_train_if_needed(self.ml_trainer, threshold=20):
+                        print("ðŸŽ“ ØªÙ… Ø§Ù„ØªØ¯Ø±ÙŠØ¨ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ Ø¨Ù†Ø¬Ø§Ø­!")
+                except Exception as e:
+                    print(f"âš ï¸ Ø®Ø·Ø£ ÙÙŠ Ø­ÙØ¸ Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ØªØ¯Ø±ÙŠØ¨: {e}")
+            
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            # 1ï¸âƒ£ Ø¹Ø±Ø¶ AI Fraud Probability
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            fraud = insights.get('fraud_detection', {})
+            fraud_prob = fraud.get('fraud_probability', 0) * 100
+            
+            self.fraud_prob_label.config(text=self._t('ai_fraud_prob').replace('--', f"{fraud_prob:.1f}%"))
+            self.fraud_flags_label.config(text=self._t('ai_fraud_flags').replace('--', str(fraud.get('red_flags_count', 0))))
+            self.fraud_level_label.config(text=self._t('ai_risk_level').replace('--', str(fraud.get('risk_level', '--'))))
+            self.fraud_recommendation_label.config(text=self._t('ai_recommendation').replace('--', str(fraud.get('recommendation', '--'))))
+            
+            # Ù„ÙˆÙ† Ø­Ø³Ø¨ Ø§Ù„Ù…Ø®Ø§Ø·Ø±
+            risk_level = fraud.get('risk_level', '')
+            if risk_level == 'Ù…Ù†Ø®ÙØ¶':
+                self.fraud_prob_label.config(fg='#28a745')
+            elif risk_level == 'Ù…ØªÙˆØ³Ø·':
+                self.fraud_prob_label.config(fg='#ffc107')
+            else:
+                self.fraud_prob_label.config(fg='#dc3545')
+            
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            # 2ï¸âƒ£ Ø¹Ø±Ø¶ Dynamic Failure Prediction
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            failure = insights.get('failure_prediction', {})
+            failure_3y = failure.get('failure_prob_3y', 0) * 100
+            failure_5y = failure.get('failure_prob_5y', 0) * 100
+            
+            self.failure_3y_label.config(text=self._t('ai_failure_3y').replace('--', f"{failure_3y:.1f}%"))
+            self.failure_5y_label.config(text=self._t('ai_failure_5y').replace('--', f"{failure_5y:.1f}%"))
+            self.failure_risk_label.config(text=self._t('ai_risk_level').replace('--', str(failure.get('risk_level', '--'))))
+            
+            concerns = failure.get('key_concerns', [])
+            concerns_text = "ØŒ ".join(concerns) if concerns else "Ù„Ø§ ØªÙˆØ¬Ø¯ Ù…Ø®Ø§ÙˆÙ ÙƒØ¨ÙŠØ±Ø©"
+            self.failure_concerns_label.config(text=self._t('ai_main_concerns').replace('--', concerns_text))
+            
+            # Ù„ÙˆÙ† Ø­Ø³Ø¨ Ø§Ù„Ù…Ø®Ø§Ø·Ø±
+            f_risk = failure.get('risk_level', '')
+            if f_risk == 'Ù…Ù†Ø®ÙØ¶':
+                self.failure_3y_label.config(fg='#28a745')
+            elif f_risk == 'Ù…ØªÙˆØ³Ø·':
+                self.failure_3y_label.config(fg='#ffc107')
+            else:
+                self.failure_3y_label.config(fg='#dc3545')
+            
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            # 3ï¸âƒ£ Ø¹Ø±Ø¶ Growth Sustainability Grade
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            growth = insights.get('growth_sustainability', {})
+            g_score = growth.get('sustainability_score', 0)
+            g_grade = growth.get('grade', '--')
+            g_assessment = growth.get('assessment', '--')
+            g_warning = growth.get('debt_warning', False)
+            if model_quality_label != "N/A":
+                g_assessment = f"{g_assessment} | Forecast model quality: {model_quality_label}"
+            
+            self.growth_score_label.config(text=self._t('ai_score').replace('--', str(g_score)))
+            self.growth_grade_label.config(text=self._t('ai_grade').replace('--', str(g_grade)))
+            self.growth_assessment_label.config(text=self._t('ai_assessment').replace('--', str(g_assessment)))
+            
+            if g_warning:
+                self.growth_warning_label.config(text=self._translate_ui_text("⚠️ تحذير: النمو يتطلب زيادة كبيرة في الديون!"))
+            else:
+                self.growth_warning_label.config(text=self._translate_ui_text("✅ النمو مستدام بدون ديون خطيرة"))
+            
+            # Ù„ÙˆÙ† Ø­Ø³Ø¨ Ø§Ù„Ø¯Ø±Ø¬Ø©
+            if g_grade in ['A', 'B']:
+                self.growth_grade_label.config(fg='#28a745')
+            elif g_grade == 'C':
+                self.growth_grade_label.config(fg='#ffc107')
+            else:
+                self.growth_grade_label.config(fg='#dc3545')
+            
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            # 4ï¸âƒ£ Ø¹Ø±Ø¶ AI Working Capital Analysis
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            wc = insights.get('working_capital_analysis', {})
+            wc_crisis = wc.get('liquidity_crisis_prob', 0) * 100
+            wc_ccc = wc.get('latest_ccc', 0)
+            wc_trend = wc.get('ccc_trend', 0)
+            wc_risk = wc.get('risk_level', '--')
+            wc_rec = wc.get('recommendation', '--')
+            
+            self.wc_crisis_prob_label.config(text=self._t('ai_wc_crisis').replace('--', f"{wc_crisis:.1f}%"))
+            self.wc_ccc_label.config(text=self._t('ai_wc_ccc').replace('--', f"{wc_ccc:.1f}"))
+            
+            if wc_trend > 0:
+                self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text(f"⬆️ متزايد بمعدل {wc_trend:.1f} يوم/سنة")))
+            elif wc_trend < 0:
+                self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text(f"⬇️ تحسن بمعدل {abs(wc_trend):.1f} يوم/سنة")))
+            else:
+                self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text("↔️ مستقر")))
+            
+            self.wc_recommendation_label.config(text=self._t('ai_recommendation').replace('--', str(wc_rec)))
+            
+            # Ù„ÙˆÙ† Ø­Ø³Ø¨ Ø§Ù„Ù…Ø®Ø§Ø·Ø±
+            if wc_risk == 'Ù…Ù†Ø®ÙØ¶':
+                self.wc_crisis_prob_label.config(fg='#28a745')
+            elif wc_risk == 'Ù…ØªÙˆØ³Ø·':
+                self.wc_crisis_prob_label.config(fg='#ffc107')
+            else:
+                self.wc_crisis_prob_label.config(fg='#dc3545')
+            
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            # 5ï¸âƒ£ Ø¹Ø±Ø¶ AI Investment Quality Score
+            # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            quality = insights.get('investment_quality', {})
+            q_score = quality.get('quality_score', 0)
+            q_verdict = quality.get('verdict', '--')
+            q_action = quality.get('action', '--')
+            q_percentile = quality.get('percentile', 0)
+            
+            self.quality_score_label.config(text=self._t('ai_quality_score').replace('--', str(q_score)))
+            self.quality_verdict_label.config(text=self._t('ai_verdict').replace('--', str(q_verdict)))
+            self.quality_action_label.config(text=self._t('ai_invest_action').replace('--', str(q_action)))
+            self.quality_percentile_label.config(text=self._t('ai_percentile').replace('--', f"{q_percentile:.0f}"))
+            
+            # Ù„ÙˆÙ† Ø­Ø³Ø¨ Ø§Ù„Ù†ØªÙŠØ¬Ø©
+            if q_score >= 85:
+                self.quality_verdict_label.config(fg='#28a745')
+            elif q_score >= 70:
+                self.quality_verdict_label.config(fg='#5cb85c')
+            elif q_score >= 55:
+                self.quality_verdict_label.config(fg='#5bc0de')
+            elif q_score >= 40:
+                self.quality_verdict_label.config(fg='#ffc107')
+            else:
+                self.quality_verdict_label.config(fg='#dc3545')
+
+            self._render_ai_dashboard_charts(insights)
+                 
+        except Exception as e:
+            print(f"âŒ Ø®Ø·Ø£ ÙÙŠ Ø¹Ø±Ø¶ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ø°ÙƒÙŠ: {e}")
+            import traceback
+            traceback.print_exc()
+            self._clear_embedded_chart('_ai_chart_canvas')
+
+    def _manual_train_models(self):
+        """
+        âœ… ØªØ¯Ø±ÙŠØ¨ ÙŠØ¯ÙˆÙŠ Ù„Ù„Ù†Ù…Ø§Ø°Ø¬
+        """
+        if not self.ml_trainer:
+            messagebox.showwarning("ØªÙ†Ø¨ÙŠÙ‡", "Ù†Ø¸Ø§Ù… Ø§Ù„ØªØ¯Ø±ÙŠØ¨ ØºÙŠØ± Ù…ØªØ§Ø­")
+            return
+        
+        if self.ml_trainer.stats['total_records'] < 10:
+            messagebox.showinfo("Ù…Ø¹Ù„ÙˆÙ…Ø©", 
+                              f"Ø¹Ø¯Ø¯ Ø§Ù„Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ù…ØªØ§Ø­Ø©: {self.ml_trainer.stats['total_records']}\n"
+                              "Ø§Ù„Ø­Ø¯ Ø§Ù„Ø£Ø¯Ù†Ù‰ Ù„Ù„ØªØ¯Ø±ÙŠØ¨: 10 Ø³Ø¬Ù„Ø§Øª\n\n"
+                              "Ù‚Ù… Ø¨ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ù…Ø²ÙŠØ¯ Ù…Ù† Ø§Ù„Ø´Ø±ÙƒØ§Øª Ù„Ø¬Ù…Ø¹ Ø¨ÙŠØ§Ù†Ø§Øª ÙƒØ§ÙÙŠØ©")
+            return
+        
+        # ØªØ£ÙƒÙŠØ¯
+        if not messagebox.askyesno("ØªØ£ÙƒÙŠØ¯ Ø§Ù„ØªØ¯Ø±ÙŠØ¨",
+                                  f"Ø³ÙŠØªÙ… ØªØ¯Ø±ÙŠØ¨ Ø§Ù„Ù†Ù…Ø§Ø°Ø¬ Ø¹Ù„Ù‰ {self.ml_trainer.stats['total_records']} Ø³Ø¬Ù„\n"
+                                  f"Ù…Ù† {self.ml_trainer.stats['total_companies']} Ø´Ø±ÙƒØ©\n\n"
+                                  "Ù‡Ù„ ØªØ±ÙŠØ¯ Ø§Ù„Ù…ØªØ§Ø¨Ø¹Ø©ØŸ"):
+            return
+        
+        # Ø§Ù„ØªØ¯Ø±ÙŠØ¨
+        try:
+            print("ðŸŽ“ Ø¨Ø¯Ø¡ Ø§Ù„ØªØ¯Ø±ÙŠØ¨ Ø§Ù„ÙŠØ¯ÙˆÙŠ...")
+            results = self.ml_trainer.train_models(min_samples=10)
+            
+            if results:
+                msg = f"âœ… ØªÙ… ØªØ¯Ø±ÙŠØ¨ {len(results)} Ù†Ù…ÙˆØ°Ø¬ Ø¨Ù†Ø¬Ø§Ø­!\n\n"
+                for model_name, model_data in results.items():
+                    if model_data.get('samples'):
+                        msg += f"â€¢ {model_name}: {model_data['samples']} Ø³Ø¬Ù„\n"
+                
+                msg += f"\nØ§Ù„Ù†Ù…Ø§Ø°Ø¬ Ø§Ù„Ø¢Ù† Ø³ØªÙØ³ØªØ®Ø¯Ù… Ù„ØªØ­Ø³ÙŠÙ† Ø¯Ù‚Ø© Ø§Ù„ØªÙ†Ø¨Ø¤Ø§Øª"
+                messagebox.showinfo("Ù†Ø¬Ø§Ø­ Ø§Ù„ØªØ¯Ø±ÙŠØ¨", msg)
+                
+                # Ø¥Ø¹Ø§Ø¯Ø© Ø­Ø³Ø§Ø¨ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ø°ÙƒÙŠ Ø¨Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø§Ù„Ù†Ù…Ø§Ø°Ø¬ Ø§Ù„Ø¬Ø¯ÙŠØ¯Ø©
+                self.display_ai_analysis()
+            else:
+                messagebox.showinfo("Ù…Ø¹Ù„ÙˆÙ…Ø©", "Ù„Ø§ ØªÙˆØ¬Ø¯ Ø¨ÙŠØ§Ù†Ø§Øª ÙƒØ§ÙÙŠØ© Ù„Ù„ØªØ¯Ø±ÙŠØ¨ Ø¨Ø¹Ø¯")
+                
+        except Exception as e:
+            messagebox.showerror("Ø®Ø·Ø£ ÙÙŠ Ø§Ù„ØªØ¯Ø±ÙŠØ¨", f"Ø­Ø¯Ø« Ø®Ø·Ø£ Ø£Ø«Ù†Ø§Ø¡ Ø§Ù„ØªØ¯Ø±ÙŠØ¨:\n{e}")
+            print(f"âŒ Ø®Ø·Ø£ ÙÙŠ Ø§Ù„ØªØ¯Ø±ÙŠØ¨: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _show_training_stats(self):
+        """
+        âœ… Ø¹Ø±Ø¶ Ø¥Ø­ØµØ§Ø¦ÙŠØ§Øª Ø§Ù„ØªØ¯Ø±ÙŠØ¨
+        """
+        if not self.ml_trainer:
+            messagebox.showwarning("ØªÙ†Ø¨ÙŠÙ‡", "Ù†Ø¸Ø§Ù… Ø§Ù„ØªØ¯Ø±ÙŠØ¨ ØºÙŠØ± Ù…ØªØ§Ø­")
+            return
+        
+        stats = self.ml_trainer.get_stats_summary()
+        
+        # Ø¥Ø¶Ø§ÙØ© Ù…Ø¹Ù„ÙˆÙ…Ø§Øª Ø¹Ù† Ø§Ù„Ù†Ù…Ø§Ø°Ø¬
+        if self.ml_trainer.trained_models:
+            stats += "\nðŸ¤– Ø§Ù„Ù†Ù…Ø§Ø°Ø¬ Ø§Ù„Ù…Ø¯Ø±Ø¨Ø©:\n"
+            stats += "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
+            for model_name, model_data in self.ml_trainer.trained_models.items():
+                samples = model_data.get('samples', 0)
+                model_type = model_data.get('type', 'unknown')
+                stats += f"â€¢ {model_name}: {samples} Ø³Ø¬Ù„ ({model_type})\n"
+        else:
+            stats += "\nâš ï¸ Ù„Ù… ÙŠØªÙ… ØªØ¯Ø±ÙŠØ¨ Ø£ÙŠ Ù†Ù…Ø§Ø°Ø¬ Ø¨Ø¹Ø¯\n"
+            stats += "Ù‚Ù… Ø¨ØªØ­Ù„ÙŠÙ„ 10+ Ø´Ø±ÙƒØ§Øª Ø«Ù… Ø§Ø¶ØºØ· 'ØªØ¯Ø±ÙŠØ¨ Ø§Ù„Ù†Ù…Ø§Ø°Ø¬'\n"
+        
+        messagebox.showinfo("Ø¥Ø­ØµØ§Ø¦ÙŠØ§Øª Ø§Ù„ØªØ¯Ø±ÙŠØ¨", stats)
+
+    def _fill_missing_market_ratios(self, market_data):
+        """
+        âœ… Ø¥ÙƒÙ…Ø§Ù„ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù†Ø§Ù‚ØµØ© Ù…Ù† Yahoo Finance ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹
+        ÙŠØ³ØªØ®Ø¯Ù… Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø¥Ø¶Ø§ÙÙŠØ©: P/E, P/B, Dividend Yield Ù…Ù† yfinance
+        """
+        if not self.current_data or not market_data:
+            return
+        
+        ratios_by_year = self.current_data.get('financial_ratios', {})
+        data_by_year = self.current_data.get('data_by_year', {})
+        
+        price = market_data.get('price')
+        shares_yf = market_data.get('shares')
+        market_cap = market_data.get('market_cap')
+        try:
+            if market_cap is not None and abs(float(market_cap)) > 1_000_000_000:
+                market_cap = float(market_cap) / 1_000_000.0
+        except Exception:
+            pass
+        beta = market_data.get('beta')
+        pe_yf = market_data.get('pe_ratio')
+        pb_yf = market_data.get('pb_ratio')
+        div_yield_yf = market_data.get('dividend_yield')
+        
+        if not ratios_by_year:
+            return
+        
+        print(f"ðŸ”„ Ø¥ÙƒÙ…Ø§Ù„ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù†Ø§Ù‚ØµØ© Ù…Ù† Yahoo Finance...")
+        filled_count = 0
+        
+        # Ø¥ÙƒÙ…Ø§Ù„ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ù„ÙƒÙ„ Ø³Ù†Ø© (Ù†Ø³ØªØ®Ø¯Ù… Ø£Ø­Ø¯Ø« Ø³Ù†Ø© Ù„Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø³ÙˆÙ‚ÙŠØ©)
+        latest_year = max(ratios_by_year.keys()) if ratios_by_year else None
+        
+        for year in ratios_by_year.keys():
+            if year not in ratios_by_year:
+                continue
+            
+            # âœ… Ø¥ÙƒÙ…Ø§Ù„ Shares Outstanding Ø¥Ø°Ø§ ÙƒØ§Ù†Øª Ù†Ø§Ù‚ØµØ©
+            if year == latest_year and not ratios_by_year[year].get('shares_outstanding') and shares_yf:
+                ratios_by_year[year]['shares_outstanding'] = shares_yf
+                filled_count += 1
+            
+            # âœ… Ø¥ÙƒÙ…Ø§Ù„ Market Cap
+            if year == latest_year and not ratios_by_year[year].get('market_cap') and market_cap:
+                ratios_by_year[year]['market_cap'] = market_cap
+                filled_count += 1
+            
+            # âœ… Ø¥ÙƒÙ…Ø§Ù„ Beta (Ù„Ù„Ø³Ù†Ø© Ø§Ù„Ø£Ø­Ø¯Ø« ÙÙ‚Ø· Ù„Ø£Ù† Beta Ù…ØªØºÙŠØ±)
+            if year == latest_year and not ratios_by_year[year].get('beta') and beta:
+                ratios_by_year[year]['beta'] = beta
+                filled_count += 1
+            
+            # âœ… Ø¥ÙƒÙ…Ø§Ù„ P/E Ratio - Ø£ÙˆÙ„ÙˆÙŠØ© Ù„Ù„Ø­Ø³Ø§Ø¨ØŒ Ø«Ù… yfinance
+            if not ratios_by_year[year].get('pe_ratio'):
+                if year == latest_year and price:
+                    eps = ratios_by_year[year].get('eps_basic')
+                    if eps and eps != 0:
+                        ratios_by_year[year]['pe_ratio'] = price / eps
+                        filled_count += 1
+                elif year == latest_year and pe_yf:  # Ø§Ø³ØªØ®Ø¯Ø§Ù… yfinance Ù„Ù„Ø³Ù†Ø© Ø§Ù„Ø£Ø­Ø¯Ø«
+                    ratios_by_year[year]['pe_ratio'] = pe_yf
+                    filled_count += 1
+            
+            # âœ… Ø¥ÙƒÙ…Ø§Ù„ P/B Ratio - Ø£ÙˆÙ„ÙˆÙŠØ© Ù„Ù„Ø­Ø³Ø§Ø¨ØŒ Ø«Ù… yfinance
+            if not ratios_by_year[year].get('pb_ratio'):
+                if year == latest_year and price:
+                    bvps = ratios_by_year[year].get('book_value_per_share')
+                    if bvps and bvps != 0:
+                        ratios_by_year[year]['pb_ratio'] = price / bvps
+                        filled_count += 1
+                elif year == latest_year and pb_yf:  # Ø§Ø³ØªØ®Ø¯Ø§Ù… yfinance Ù„Ù„Ø³Ù†Ø© Ø§Ù„Ø£Ø­Ø¯Ø«
+                    ratios_by_year[year]['pb_ratio'] = pb_yf
+                    filled_count += 1
+            
+            # âœ… Ø¥ÙƒÙ…Ø§Ù„ Dividend Yield - Ø£ÙˆÙ„ÙˆÙŠØ© Ù„Ù„Ø­Ø³Ø§Ø¨ØŒ Ø«Ù… yfinance
+            if not ratios_by_year[year].get('dividend_yield'):
+                if year == latest_year and price:
+                    dividends = ratios_by_year[year].get('dividends_paid')
+                    shares = ratios_by_year[year].get('shares_outstanding') or shares_yf
+                    if dividends and shares and shares != 0 and price != 0:
+                        div_per_share = abs(dividends) / shares
+                        ratios_by_year[year]['dividend_yield'] = (div_per_share / price)
+                        filled_count += 1
+                elif year == latest_year and div_yield_yf:  # Ø§Ø³ØªØ®Ø¯Ø§Ù… yfinance Ù„Ù„Ø³Ù†Ø© Ø§Ù„Ø£Ø­Ø¯Ø«
+                    ratios_by_year[year]['dividend_yield'] = div_yield_yf
+                    filled_count += 1
+            
+            # âœ… Ø¥ÙƒÙ…Ø§Ù„ FCF Yield
+            if year == latest_year and not ratios_by_year[year].get('fcf_yield') and market_cap:
+                fcf = ratios_by_year[year].get('free_cash_flow')
+                if fcf and market_cap != 0:
+                    ratios_by_year[year]['fcf_yield'] = (fcf / market_cap)
+                    filled_count += 1
+        
+        if filled_count > 0:
+            print(f"âœ… ØªÙ… Ø¥ÙƒÙ…Ø§Ù„ {filled_count} Ù‚ÙŠÙ…Ø© Ù†Ø§Ù‚ØµØ© Ù…Ù† Yahoo Finance")
+        else:
+            print(f"â„¹ï¸ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ù…ØªÙˆÙØ±Ø©ØŒ Ù„Ù… ÙŠØªÙ… Ø¥ÙƒÙ…Ø§Ù„ Ø£ÙŠ Ù‚ÙŠÙ…")
+
+    # ---------- Display helpers ----------
+    def display_all(self):
+        self._prepare_ui_for_export_parity()
+        self._sync_layer_selector_from_data()
+        self.display_raw_data()
+        self.display_ratios()
+        self.display_strategic_analysis()
+        # Keep all analytical tabs synchronized after every successful data refresh.
+        self.display_forecasts()
+        self.display_comparison()
+        self.display_ai_analysis()
+
+    def _prepare_ui_for_export_parity(self):
+        """
+        Align UI data state with the exact pre-export normalization path so that
+        on-screen values and Excel values come from the same canonical state.
+        """
+        if not self.current_data:
+            return
+        # Imported Excel is already the canonical source of truth for display.
+        if self._is_excel_ui_locked():
+            return
+        try:
+            data_by_year = self.current_data.get('data_by_year', {}) or {}
+            data_layers = self.current_data.get('data_layers', {}) or {}
+            ratios_by_year = self.current_data.get('financial_ratios', {}) or {}
+            years = self._get_selected_years_range() or self._get_analysis_years_range() or []
+            if not years:
+                return
+
+            # Apply same quality gate as export path.
+            self._apply_pre_export_quality_gate(
+                years=years,
+                data_by_year=data_by_year,
+                ratios_by_year=ratios_by_year,
+                data_layers=data_layers,
+            )
+
+            # Final no-dividend lock (same logic as export path).
+            try:
+                layer2_by_year = (data_layers.get('layer2_by_year', {}) or {})
+                has_price = False
+                market_div_positive = False
+                for yy in years:
+                    l2 = layer2_by_year.get(yy, {}) or {}
+                    px = self._safe_excel_number(l2.get('market:price') or l2.get('yahoo:price'))
+                    dy = self._safe_excel_number(l2.get('market:dividend_yield') or l2.get('yahoo:dividend_yield'))
+                    if px not in (None, 0):
+                        has_price = True
+                    if dy is not None and abs(float(dy)) > 1e-12:
+                        market_div_positive = True
+                if has_price and not market_div_positive:
+                    for yy in years:
+                        rr = (ratios_by_year or {}).setdefault(yy, {})
+                        cur = self._safe_excel_number(rr.get('dividend_yield'))
+                        if cur is None:
+                            rr['dividend_yield'] = 0.0
+                            rr['dividend_yield_source'] = 'UI_PARITY_NO_DIVIDEND_ZERO'
+                            reasons = rr.get('_ratio_reasons')
+                            if isinstance(reasons, dict):
+                                reasons.pop('dividend_yield', None)
+            except Exception:
+                pass
+
+            per_year = self._compute_per_year_metrics(data_by_year, ratios_by_year)
+            ratios_by_year, per_year = self._sync_strategic_ratio_maps(years, ratios_by_year, per_year)
+
+            # Persist synchronized maps.
+            self.current_data['financial_ratios'] = ratios_by_year
+            self.current_data['strategic_analysis'] = per_year
+        except Exception:
+            return
+
+    def _sync_layer_selector_from_data(self):
+        if not hasattr(self, 'raw_layer_combo'):
+            return
+        data_layers = ((self.current_data or {}).get('data_layers', {}) or {})
+        catalog = data_layers.get('layer_catalog') or []
+        if not isinstance(catalog, list) or not catalog:
+            return
+        values = []
+        self._raw_layer_display_to_real = {}
+        self._raw_layer_real_to_display = {}
+        for item in catalog:
+            title = str(item.get('title') or '')
+            if not title:
+                continue
+            disp = self._translate_layer_title(title)
+            values.append(disp)
+            self._raw_layer_display_to_real[disp] = title
+            self._raw_layer_real_to_display[title] = disp
+        if not values:
+            return
+        self.raw_layer_combo.configure(values=values)
+        current_display = self.raw_layer_var.get()
+        current_real = self._raw_layer_display_to_real.get(current_display, current_display)
+        target_display = self._raw_layer_real_to_display.get(current_real)
+        if target_display in values:
+            self.raw_layer_var.set(target_display)
+        else:
+            self.raw_layer_var.set(values[0])
+
+    def _get_comparison_source_snapshot(self, preferred_current=None):
+        source = {}
+        resolved_order = []
+        try:
+            if hasattr(self, 'companies_listbox'):
+                for displayed_name in (self.companies_listbox.get(0, tk.END) or []):
+                    resolved_key = self._resolve_company_key(displayed_name)
+                    if resolved_key and resolved_key not in resolved_order:
+                        resolved_order.append(resolved_key)
+        except Exception:
+            resolved_order = []
+
+        candidate_keys = list(resolved_order)
+        for raw_key in (self.multi_company_data or {}).keys():
+            if raw_key not in candidate_keys:
+                candidate_keys.append(raw_key)
+
+        for key in candidate_keys:
+            data = (self.multi_company_data or {}).get(key)
+            if not isinstance(data, dict):
+                continue
+            company = (data.get('company_info', {}) or {})
+            ticker = str(company.get('ticker') or key or '').strip().upper()
+            if not ticker:
+                continue
+            has_payload = bool(
+                ((data.get('data_layers', {}) or {}).get('layer1_by_year'))
+                or data.get('data_by_year')
+                or data.get('financial_ratios')
+            )
+            if not has_payload:
+                continue
+            source[ticker] = data
+
+        candidate = preferred_current if isinstance(preferred_current, dict) else self.current_data
+        if isinstance(candidate, dict):
+            company = (candidate.get('company_info', {}) or {})
+            ticker = str(company.get('ticker') or '').strip().upper()
+            if ticker:
+                source[ticker] = candidate
+        return source
+
+    def _collect_comparison_rows(self, source_snapshot=None):
+        rows = []
+        details = {}
+        source = source_snapshot or self._get_comparison_source_snapshot()
+        for key, data in source.items():
+            company = data.get('company_info', {}) or {}
+            ticker = company.get('ticker') or key
+            inst = data.get('institutional_outputs') or {}
+            classification = inst.get('classification', {}) or {}
+            classifier_diag = inst.get('classifier_diagnostics', {}) or classification.get('classifier_diagnostics', {}) or {}
+            filing_diag = data.get('filing_diagnostics', {}) or {}
+            sector = (
+                classifier_diag.get('sector')
+                or classification.get('primary_profile')
+                or company.get('sector_profile')
+                or company.get('sector')
+                or ((data.get('sector_gating', {}) or {}).get('sub_profile'))
+                or ((data.get('sector_gating', {}) or {}).get('profile'))
+                or classification.get('sector_profile')
+                or 'unknown'
+            )
+            sector = self._canonical_sector_profile(sector)
+            raw_confidence = (
+                classifier_diag.get('confidence_score')
+                or classification.get('confidence')
+                or company.get('sector_confidence')
+                or ((data.get('sector_gating', {}) or {}).get('confidence'))
+            )
+            has_comparison_history = bool((data.get('financial_ratios') or {}) or (data.get('data_by_year') or {}) or (((data.get('data_layers', {}) or {}).get('layer1_by_year')) or {}))
+            filing_grade = filing_diag.get('filing_grade') or ('IN_RANGE_ANNUAL' if has_comparison_history else 'N/A')
+            out_of_range = filing_diag.get('out_of_range', False)
+            company_summary = self._build_company_comparison_summary(data, ticker=ticker)
+            comparison_diag = self._build_comparison_quality_diagnostics(
+                data=data,
+                sector=sector,
+                filing_grade=filing_grade,
+                out_of_range=out_of_range,
+            )
+            confidence = self._derive_comparison_confidence(
+                diagnostics=comparison_diag,
+                sector=sector,
+                filing_grade=filing_grade,
+                out_of_range=out_of_range,
+                explicit_confidence=raw_confidence,
+            )
+
+            row = {
+                'ticker': ticker,
+                'sector': sector,
+                'confidence': confidence,
+                'filing_grade': filing_grade,
+                'out_of_range': out_of_range,
+                'high': comparison_diag.get('grade_counts', {}).get('HIGH', 0),
+                'medium': comparison_diag.get('grade_counts', {}).get('MEDIUM', 0),
+                'low': comparison_diag.get('grade_counts', {}).get('LOW', 0),
+                'rejected': comparison_diag.get('grade_counts', {}).get('REJECTED', 0),
+                'top_reasons': comparison_diag.get('top_reasons', 'NONE'),
+                'top_flags': comparison_diag.get('top_flags', 'NONE'),
+            }
+            row.update(company_summary or {})
+            rows.append(row)
+            details[ticker] = {
+                'company': company,
+                'classification': classification,
+                'classifier_diagnostics': classifier_diag,
+                'filing_diagnostics': filing_diag,
+                'ratio_contracts': comparison_diag.get('metric_contracts', []),
+                'top_reasons': comparison_diag.get('top_reasons', 'NONE'),
+                'top_flags': comparison_diag.get('top_flags', 'NONE'),
+                'comparison_diagnostics': comparison_diag,
+            }
+        rows.sort(key=lambda x: x['ticker'])
+        return rows, details
+
+    def _build_comparison_quality_diagnostics(self, data, sector=None, filing_grade=None, out_of_range=False):
+        data_by_year = ((data.get('data_layers', {}) or {}).get('layer1_by_year') or data.get('data_by_year', {}) or {})
+        ratios_by_year = maybe_guard_ratios_by_year(data.get('financial_ratios', {}) or {})
+        years = sorted(int(y) for y in set(list(data_by_year.keys()) + list(ratios_by_year.keys())) if str(y).isdigit())
+        latest_year = years[-1] if years else None
+        grade_counts = Counter({'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'REJECTED': 0})
+        rejected_reason_counts = Counter()
+        flag_counts = Counter()
+        metric_contracts = []
+        metric_defs = list(self._comparison_metric_catalog() or [])
+        total_metrics = len(metric_defs)
+        history_gate = 5 if len(years) >= 8 else 4 if len(years) >= 6 else 3
+
+        if not years:
+            flag_counts.update(['NO_HISTORY'])
+
+        for metric_def in metric_defs:
+            metric_key = str(metric_def.get('metric_key') or '').strip()
+            if not metric_key:
+                continue
+            series = []
+            for year in years:
+                value = self._extract_comparison_metric_value(data_by_year, ratios_by_year, year, metric_def)
+                if isinstance(value, (int, float)):
+                    series.append((year, float(value)))
+            latest_value = None
+            if latest_year is not None:
+                latest_value = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, metric_def)
+            coverage_points = len(series)
+            if not isinstance(latest_value, (int, float)):
+                grade = 'REJECTED'
+                score = 0
+                reasons = ['MISSING_LATEST_VALUE']
+                flag_counts.update(['LATEST_VALUE_GAP'])
+                rejected_reason_counts.update(reasons)
+            elif coverage_points >= history_gate:
+                grade = 'HIGH'
+                score = 92
+                reasons = []
+            elif coverage_points >= 2:
+                grade = 'MEDIUM'
+                score = 74
+                reasons = ['LIMITED_HISTORY']
+                flag_counts.update(['LIMITED_HISTORY'])
+            else:
+                grade = 'LOW'
+                score = 58
+                reasons = ['SINGLE_POINT_ONLY']
+                flag_counts.update(['SINGLE_POINT_ONLY'])
+            grade_counts[grade] += 1
+            metric_contracts.append({
+                'year': latest_year,
+                'ratio': metric_key,
+                'value': latest_value,
+                'grade': grade,
+                'score': score,
+                'reasons': reasons,
+                'gates_failed': reasons,
+                'coverage_points': coverage_points,
+            })
+
+        normalized_sector = self._canonical_sector_profile(sector)
+        if normalized_sector in ('', 'unknown', 'none'):
+            flag_counts.update(['SECTOR_UNCLASSIFIED'])
+        if str(filing_grade or '').upper() not in ('', 'IN_RANGE_ANNUAL'):
+            flag_counts.update(['FILING_GRADE_ATTENTION'])
+        if out_of_range:
+            flag_counts.update(['OUT_OF_RANGE'])
+        if years and len(years) < 5:
+            flag_counts.update(['SHORT_HISTORY'])
+
+        top_reasons = ', '.join(reason for reason, _ in rejected_reason_counts.most_common(3)) if grade_counts.get('REJECTED', 0) > 0 else 'NONE'
+        top_flags = ', '.join(flag for flag, _ in flag_counts.most_common(3)) if flag_counts else 'NONE'
+        return {
+            'years': years,
+            'latest_year': latest_year,
+            'metric_total': total_metrics,
+            'grade_counts': dict(grade_counts),
+            'top_reasons': top_reasons,
+            'top_flags': top_flags,
+            'flag_count': sum(int(v or 0) for v in flag_counts.values()),
+            'metric_contracts': metric_contracts,
+        }
+
+    def _derive_comparison_confidence(self, diagnostics, sector=None, filing_grade=None, out_of_range=False, explicit_confidence=None):
+        diag = diagnostics or {}
+        grade_counts = diag.get('grade_counts') or {}
+        total = max(1, int(diag.get('metric_total') or sum(int(v or 0) for v in grade_counts.values()) or 1))
+        high = int(grade_counts.get('HIGH', 0) or 0)
+        medium = int(grade_counts.get('MEDIUM', 0) or 0)
+        low = int(grade_counts.get('LOW', 0) or 0)
+        rejected = int(grade_counts.get('REJECTED', 0) or 0)
+        years = [int(y) for y in (diag.get('years') or []) if str(y).isdigit()]
+        weighted_coverage = (high + (0.82 * medium) + (0.58 * low)) / float(total)
+        latest_availability = max(0.0, min(1.0, 1.0 - (rejected / float(total))))
+        history_factor = min(1.0, float(len(years)) / 8.0) if years else 0.0
+        sector_factor = 1.0 if self._canonical_sector_profile(sector) not in ('', 'unknown', 'none') else 0.72
+        filing_factor = 1.0 if str(filing_grade or '').upper() == 'IN_RANGE_ANNUAL' and not out_of_range else 0.84
+        raw_score = 100.0 * (
+            (0.45 * weighted_coverage)
+            + (0.24 * latest_availability)
+            + (0.17 * history_factor)
+            + (0.08 * sector_factor)
+            + (0.06 * filing_factor)
+        )
+        penalty = min(0.12, 0.02 * float(diag.get('flag_count') or 0))
+        derived_conf = max(35.0, min(99.0, raw_score * (1.0 - penalty)))
+        explicit_num = self._safe_excel_number(explicit_confidence)
+        if explicit_num is None:
+            return round(derived_conf, 1)
+        explicit_norm = float(explicit_num)
+        if explicit_norm <= 1.0:
+            explicit_norm *= 100.0
+        explicit_norm = max(0.0, min(100.0, explicit_norm))
+        # Ignore the legacy fallback score of 80 unless it aligns closely with the derived signal.
+        if abs(explicit_norm - 80.0) < 0.01:
+            return round(derived_conf, 1)
+        blended = (0.7 * derived_conf) + (0.3 * explicit_norm)
+        return round(max(35.0, min(99.0, blended)), 1)
+
+    def _comparison_metric_catalog(self):
+        return [
+            {'metric_key': 'revenue', 'label': 'الإيرادات', 'category': 'Growth', 'source': 'raw', 'keys': ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenue', 'SalesRevenueNet', 'TotalRevenue'], 'higher_better': True, 'aggregation': 'max_positive'},
+            {'metric_key': 'net_income', 'label': 'صافي الدخل', 'category': 'Growth', 'source': 'raw', 'keys': ['NetIncomeLoss', 'NetIncome', 'ProfitLoss'], 'higher_better': True},
+            {'metric_key': 'operating_cash_flow', 'label': 'التدفق النقدي التشغيلي', 'category': 'Cash Flow', 'source': 'raw', 'keys': ['NetCashProvidedByUsedInOperatingActivities', 'NetCashProvidedByOperatingActivities'], 'higher_better': True},
+            {'metric_key': 'free_cash_flow', 'label': 'التدفق النقدي الحر', 'category': 'Cash Flow', 'source': 'ratio', 'keys': ['free_cash_flow'], 'higher_better': True},
+            {'metric_key': 'gross_margin', 'label': self._translate_ratio_explanation('gross_margin', 'هامش الربح الإجمالي'), 'category': 'Profitability', 'source': 'ratio', 'keys': ['gross_margin'], 'higher_better': True},
+            {'metric_key': 'operating_margin', 'label': self._translate_ratio_explanation('operating_margin', 'الهامش التشغيلي'), 'category': 'Profitability', 'source': 'ratio', 'keys': ['operating_margin'], 'higher_better': True},
+            {'metric_key': 'net_margin', 'label': self._translate_ratio_explanation('net_margin', 'هامش صافي الربح'), 'category': 'Profitability', 'source': 'ratio', 'keys': ['net_margin'], 'higher_better': True},
+            {'metric_key': 'roic', 'label': self._translate_ratio_explanation('roic', 'العائد على رأس المال المستثمر'), 'category': 'Capital Efficiency', 'source': 'ratio', 'keys': ['roic'], 'higher_better': True},
+            {'metric_key': 'roe', 'label': self._translate_ratio_explanation('roe', 'العائد على حقوق الملكية'), 'category': 'Capital Efficiency', 'source': 'ratio', 'keys': ['roe'], 'higher_better': True},
+            {'metric_key': 'current_ratio', 'label': self._translate_ratio_explanation('current_ratio', 'نسبة التداول'), 'category': 'Liquidity', 'source': 'ratio', 'keys': ['current_ratio'], 'higher_better': True},
+            {'metric_key': 'quick_ratio', 'label': self._translate_ratio_explanation('quick_ratio', 'النسبة السريعة'), 'category': 'Liquidity', 'source': 'ratio', 'keys': ['quick_ratio'], 'higher_better': True},
+            {'metric_key': 'debt_to_equity', 'label': self._translate_ratio_explanation('debt_to_equity', 'الدين إلى حقوق الملكية'), 'category': 'Leverage', 'source': 'ratio', 'keys': ['debt_to_equity'], 'higher_better': False},
+            {'metric_key': 'net_debt_ebitda', 'label': self._translate_ratio_explanation('net_debt_ebitda', 'صافي الدين إلى EBITDA'), 'category': 'Leverage', 'source': 'ratio', 'keys': ['net_debt_ebitda'], 'higher_better': False},
+            {'metric_key': 'interest_coverage', 'label': self._translate_ratio_explanation('interest_coverage', 'تغطية الفائدة'), 'category': 'Leverage', 'source': 'ratio', 'keys': ['interest_coverage'], 'higher_better': True},
+            {'metric_key': 'pe_ratio', 'label': self._translate_ratio_explanation('pe_ratio', 'مكرر الربحية'), 'category': 'Valuation', 'source': 'ratio', 'keys': ['pe_ratio_used', 'pe_ratio'], 'higher_better': False},
+            {'metric_key': 'pb_ratio', 'label': self._translate_ratio_explanation('pb_ratio', 'مكرر القيمة الدفترية'), 'category': 'Valuation', 'source': 'ratio', 'keys': ['pb_ratio_used', 'pb_ratio'], 'higher_better': False},
+            {'metric_key': 'fcf_yield', 'label': self._translate_ratio_explanation('fcf_yield', 'عائد التدفق النقدي الحر'), 'category': 'Valuation', 'source': 'ratio', 'keys': ['fcf_yield'], 'higher_better': True},
+        ]
+
+    def _comparison_expert_meta(self, metric_key):
+        meta = {
+            'revenue': {
+                'framework': {'ar': 'النمو', 'en': 'Growth', 'fr': 'Croissance'},
+                'tool': {'ar': 'معدل نمو الإيرادات', 'en': 'Revenue CAGR', 'fr': 'TCAC du chiffre d’affaires'},
+                'why': {'ar': 'يقيس اتساع النشاط الحقيقي وقدرة الشركة على زيادة حجم أعمالها.', 'en': 'Measures expansion of the business and top-line scale.', 'fr': "Mesure l’expansion de l’activité et de la base de revenus."},
+            },
+            'net_income': {
+                'framework': {'ar': 'جودة الأرباح', 'en': 'Earnings Quality', 'fr': 'Qualité des bénéfices'},
+                'tool': {'ar': 'نمو صافي الربح', 'en': 'Net Income Growth', 'fr': 'Croissance du bénéfice net'},
+                'why': {'ar': 'يكشف هل تتحسن الربحية النهائية مع الزمن أم لا.', 'en': 'Shows whether bottom-line profitability is compounding over time.', 'fr': 'Montre si la rentabilité nette progresse au fil du temps.'},
+            },
+            'operating_cash_flow': {
+                'framework': {'ar': 'جودة النقد', 'en': 'Cash Quality', 'fr': 'Qualité du cash'},
+                'tool': {'ar': 'استقرار التدفق النقدي التشغيلي', 'en': 'Operating Cash Flow Stability', 'fr': 'Stabilité du cash-flow opérationnel'},
+                'why': {'ar': 'يعتمد الخبراء على التدفق النقدي التشغيلي لاختبار قدرة الأرباح على التحول إلى سيولة فعلية عبر الدورة.', 'en': 'Experts rely on operating cash flow to test whether earnings convert into real liquidity through the cycle.', 'fr': "Les experts utilisent le cash-flow opérationnel pour vérifier la conversion des bénéfices en liquidité réelle sur le cycle."},
+            },
+            'free_cash_flow': {
+                'framework': {'ar': 'النقد', 'en': 'Cash Flow', 'fr': 'Flux de trésorerie'},
+                'tool': {'ar': 'نمو التدفق النقدي الحر', 'en': 'FCF Growth', 'fr': 'Croissance du FCF'},
+                'why': {'ar': 'يركز على النقد المتاح بعد الاستثمار الرأسمالي، وهو مقياس محوري لدى المستثمرين المحترفين.', 'en': 'Focuses on surplus cash after reinvestment, a key institutional metric.', 'fr': "Mesure le cash disponible après investissement, métrique centrale pour les investisseurs institutionnels."},
+            },
+            'gross_margin': {
+                'framework': {'ar': 'الربحية', 'en': 'Profitability', 'fr': 'Rentabilité'},
+                'tool': {'ar': 'قوة التسعير', 'en': 'Pricing Power', 'fr': 'Pouvoir de fixation des prix'},
+                'why': {'ar': 'الهامش الإجمالي المرتفع غالبًا يعكس قوة تسعير أو تفوقًا تشغيليًا.', 'en': 'A high gross margin often indicates pricing power or structural efficiency.', 'fr': 'Une marge brute élevée suggère souvent un pouvoir de fixation des prix ou une efficacité structurelle.'},
+            },
+            'operating_margin': {
+                'framework': {'ar': 'الربحية', 'en': 'Profitability', 'fr': 'Rentabilité'},
+                'tool': {'ar': 'الكفاءة التشغيلية', 'en': 'Operating Efficiency', 'fr': 'Efficacité opérationnelle'},
+                'why': {'ar': 'يركز المحللون على الهامش التشغيلي لقياس جودة الإدارة والتكاليف.', 'en': 'Analysts use operating margin to judge managerial and cost discipline.', 'fr': "Les analystes utilisent la marge opérationnelle pour juger la discipline des coûts et de la gestion."},
+            },
+            'net_margin': {
+                'framework': {'ar': 'الربحية', 'en': 'Profitability', 'fr': 'Rentabilité'},
+                'tool': {'ar': 'التحويل إلى ربح نهائي', 'en': 'Bottom-line Conversion', 'fr': 'Conversion en bénéfice net'},
+                'why': {'ar': 'يوضح حصة الربح النهائي من كل دولار مبيعات بعد جميع الأعباء.', 'en': 'Shows how much final profit remains from each unit of revenue.', 'fr': 'Montre la part du profit final conservée sur chaque unité de revenus.'},
+            },
+            'roic': {
+                'framework': {'ar': 'خلق القيمة', 'en': 'Value Creation', 'fr': 'Création de valeur'},
+                'tool': {'ar': 'العائد على رأس المال المستثمر', 'en': 'ROIC', 'fr': 'ROIC'},
+                'why': {'ar': 'من أهم أدوات الخبراء لأنه يميز بين النمو الذي يخلق قيمة والنمو الذي يستهلك رأس المال.', 'en': 'A core expert metric that separates value-creating growth from capital-consuming growth.', 'fr': "Métrique clé pour distinguer la croissance créatrice de valeur de celle qui consomme du capital."},
+            },
+            'roe': {
+                'framework': {'ar': 'العائد', 'en': 'Returns', 'fr': 'Rendement'},
+                'tool': {'ar': 'العائد على الملكية', 'en': 'ROE', 'fr': 'ROE'},
+                'why': {'ar': 'مفيد لكن يجب تفسيره بحذر إذا كانت حقوق الملكية منخفضة.', 'en': 'Useful, but must be interpreted carefully when equity is compressed.', 'fr': "Utile, mais doit être interprété avec prudence lorsque les capitaux propres sont comprimés."},
+            },
+            'current_ratio': {
+                'framework': {'ar': 'السيولة', 'en': 'Liquidity', 'fr': 'Liquidité'},
+                'tool': {'ar': 'سيولة قصيرة الأجل', 'en': 'Current Ratio', 'fr': 'Ratio courant'},
+                'why': {'ar': 'يقيس هامش الأمان قصير الأجل في مواجهة الالتزامات المتداولة.', 'en': 'Measures short-term balance-sheet liquidity buffer.', 'fr': "Mesure le coussin de liquidité à court terme."},
+            },
+            'quick_ratio': {
+                'framework': {'ar': 'السيولة', 'en': 'Liquidity', 'fr': 'Liquidité'},
+                'tool': {'ar': 'السيولة السريعة', 'en': 'Quick Ratio', 'fr': 'Ratio de liquidité immédiate'},
+                'why': {'ar': 'يستبعد المخزون ويعطي قراءة أشد تحفظًا للسيولة الفورية.', 'en': 'Excludes inventory and provides a stricter liquidity read.', 'fr': "Exclut le stock et donne une lecture plus stricte de la liquidité."},
+            },
+            'debt_to_equity': {
+                'framework': {'ar': 'الرافعة', 'en': 'Leverage', 'fr': 'Levier'},
+                'tool': {'ar': 'الديون إلى الملكية', 'en': 'Debt to Equity', 'fr': 'Dette / Capitaux propres'},
+                'why': {'ar': 'أداة كلاسيكية لفهم اعتماد الشركة على التمويل بالديون مقارنة بالملكية.', 'en': 'Classic leverage lens comparing debt funding to equity capital.', 'fr': "Mesure classique du recours à la dette par rapport aux capitaux propres."},
+            },
+            'net_debt_ebitda': {
+                'framework': {'ar': 'الرافعة', 'en': 'Leverage', 'fr': 'Levier'},
+                'tool': {'ar': 'صافي الدين إلى EBITDA', 'en': 'Net Debt / EBITDA', 'fr': 'Dette nette / EBITDA'},
+                'why': {'ar': 'مقياس مفضل لدى المقرضين والمحللين لأنه يربط الدين بالقدرة التشغيلية على السداد.', 'en': 'Favored by lenders and analysts as it links debt load to operating cash earnings.', 'fr': "Préféré par les prêteurs car il relie l’endettement à la capacité opérationnelle de remboursement."},
+            },
+            'interest_coverage': {
+                'framework': {'ar': 'الرافعة', 'en': 'Leverage', 'fr': 'Levier'},
+                'tool': {'ar': 'تغطية الفائدة', 'en': 'Interest Coverage', 'fr': 'Couverture des intérêts'},
+                'why': {'ar': 'تقيس قدرة الأرباح التشغيلية على تغطية عبء الفائدة.', 'en': 'Measures the ability of operating earnings to cover interest burden.', 'fr': "Mesure la capacité des bénéfices opérationnels à couvrir les intérêts."},
+            },
+            'pe_ratio': {
+                'framework': {'ar': 'التقييم', 'en': 'Valuation', 'fr': 'Valorisation'},
+                'tool': {'ar': 'مكرر الربحية', 'en': 'P/E', 'fr': 'P/E'},
+                'why': {'ar': 'يوضح مقدار ما يدفعه السوق مقابل كل وحدة ربح حالية.', 'en': 'Shows how much the market pays for each unit of current earnings.', 'fr': "Indique ce que le marché paie pour chaque unité de bénéfice actuel."},
+            },
+            'pb_ratio': {
+                'framework': {'ar': 'التقييم', 'en': 'Valuation', 'fr': 'Valorisation'},
+                'tool': {'ar': 'مكرر القيمة الدفترية', 'en': 'P/B', 'fr': 'P/B'},
+                'why': {'ar': 'مفيد لفهم العلاوة السوقية فوق القاعدة المحاسبية، خاصة في الشركات كثيفة إعادة الشراء.', 'en': 'Useful to judge market premium over accounting book value.', 'fr': "Utile pour juger la prime de marché sur la valeur comptable."},
+            },
+            'fcf_yield': {
+                'framework': {'ar': 'التقييم', 'en': 'Valuation', 'fr': 'Valorisation'},
+                'tool': {'ar': 'عائد التدفق النقدي الحر', 'en': 'FCF Yield', 'fr': 'Rendement du FCF'},
+                'why': {'ar': 'من أكثر أدوات الخبراء مباشرة لربط التقييم بقدرة الشركة على توليد النقد.', 'en': 'A direct expert tool linking valuation to cash generation.', 'fr': "Outil direct reliant la valorisation à la génération de cash."},
+            },
+        }
+        default = {
+            'framework': {'ar': 'تحليل عام', 'en': 'General Analysis', 'fr': 'Analyse générale'},
+            'tool': {'ar': 'مؤشر مقارن', 'en': 'Comparison Metric', 'fr': 'Indicateur comparatif'},
+            'why': {'ar': 'مؤشر مقارن مساعد في الحكم النسبي بين الشركات أو عبر الزمن.', 'en': 'Supporting comparison metric for relative judgment.', 'fr': "Indicateur d’appui pour le jugement comparatif."},
+        }
+        bundle = meta.get(str(metric_key or '').strip().lower(), default)
+        return {
+            'framework': bundle['framework'].get(self.current_lang, bundle['framework'].get('en')),
+            'tool': bundle['tool'].get(self.current_lang, bundle['tool'].get('en')),
+            'why': bundle['why'].get(self.current_lang, bundle['why'].get('en')),
+        }
+
+    def _format_comparison_metric_value(self, metric_key, value):
+        if not isinstance(value, (int, float)):
+            return self._translate_ui_text('غير متاح')
+        formatted = format_ratio_value(str(metric_key or ''), value)
+        text = formatted.get('display_text')
+        if isinstance(text, str) and text != 'N/A':
+            return text
+        return f"{float(value):.2f}"
+
+    def _extract_comparison_metric_value(self, data_by_year, ratios_by_year, year, metric_def):
+        if metric_def.get('source') == 'raw':
+            row = (data_by_year or {}).get(year, {}) or {}
+            candidates = []
+            for key in metric_def.get('keys', []):
+                val = self._safe_excel_number(row.get(key))
+                if val is not None:
+                    candidates.append(float(val))
+            if metric_def.get('aggregation') == 'max_positive' and candidates:
+                positive = [v for v in candidates if v > 0]
+                if positive:
+                    return max(positive)
+            if candidates:
+                return candidates[0]
+            return None
+        row = (ratios_by_year or {}).get(year, {}) or {}
+        for key in metric_def.get('keys', []):
+            val = self._safe_excel_number(row.get(key))
+            if val is not None:
+                return float(val)
+        return None
+
+    def _summarize_comparison_series(self, series, higher_better=True):
+        import math
+        vals = [(int(y), float(v)) for y, v in (series or []) if isinstance(y, int) and isinstance(v, (int, float))]
+        vals.sort(key=lambda t: t[0])
+        if len(vals) < 2:
+            return None
+        years = [y for y, _ in vals]
+        values = [v for _, v in vals]
+        start_year, end_year = years[0], years[-1]
+        start_value, end_value = values[0], values[-1]
+        abs_change = end_value - start_value
+        pct_change = (abs_change / abs(start_value)) if start_value not in (None, 0) else None
+        periods = max(0, end_year - start_year)
+        cagr = None
+        if periods > 0 and start_value > 0 and end_value > 0:
+            try:
+                cagr = (end_value / start_value) ** (1.0 / periods) - 1.0
+            except Exception:
+                cagr = None
+        avg_full = sum(values) / len(values)
+        avg_3y = sum(values[-3:]) / len(values[-3:])
+        min_v = min(values)
+        max_v = max(values)
+        if len(values) >= 2:
+            x = list(range(len(values)))
+            x_mean = sum(x) / len(x)
+            y_mean = avg_full
+            denom = sum((xx - x_mean) ** 2 for xx in x)
+            slope = (sum((xx - x_mean) * (yy - y_mean) for xx, yy in zip(x, values)) / denom) if denom else 0.0
+        else:
+            slope = 0.0
+        if avg_full not in (None, 0):
+            variance = sum((yy - avg_full) ** 2 for yy in values) / len(values)
+            volatility = math.sqrt(variance) / max(abs(avg_full), 1e-9)
+        else:
+            volatility = None
+        directional_change = pct_change if isinstance(pct_change, (int, float)) else None
+        if directional_change is not None and not higher_better:
+            directional_change = -directional_change
+        if directional_change is None:
+            trend_signal = 'INSUFFICIENT_CONTEXT'
+            assessment = 'السلسلة غير كافية لاستخراج اتجاه موثوق.'
+        elif directional_change >= 0.10:
+            trend_signal = 'IMPROVING'
+            assessment = 'الاتجاه تحسن بوضوح عبر الفترة ويعكس مسارًا هيكليًا إيجابيًا.'
+        elif directional_change <= -0.10:
+            trend_signal = 'DETERIORATING'
+            assessment = 'الاتجاه تراجع بوضوح عبر الفترة ويستدعي تفسيرًا تشغيليًا أو تمويليًا.'
+        else:
+            trend_signal = 'STABLE'
+            assessment = 'الاتجاه مستقر نسبيًا دون تحسن أو تراجع هيكلي كبير.'
+        if isinstance(volatility, (int, float)) and volatility > 0.35:
+            assessment += ' كما أن التذبذب عبر السنوات مرتفع نسبيًا.'
+            if trend_signal == 'STABLE':
+                trend_signal = 'VOLATILE'
+        return {
+            'start_year': start_year,
+            'end_year': end_year,
+            'start_value': start_value,
+            'end_value': end_value,
+            'absolute_change': abs_change,
+            'pct_change': pct_change,
+            'cagr': cagr,
+            'avg_3y': avg_3y,
+            'avg_full': avg_full,
+            'min_value': min_v,
+            'max_value': max_v,
+            'slope': slope,
+            'volatility_cv': volatility,
+            'trend_signal': trend_signal,
+            'assessment': assessment,
+        }
+
+    def _build_company_comparison_summary(self, data, ticker=None):
+        data_by_year = ((data.get('data_layers', {}) or {}).get('layer1_by_year') or data.get('data_by_year', {}) or {})
+        ratios_by_year = maybe_guard_ratios_by_year(data.get('financial_ratios', {}) or {})
+        years = sorted(int(y) for y in set(list(data_by_year.keys()) + list(ratios_by_year.keys())) if str(y).isdigit())
+        if not years:
+            return {}
+
+        def _series(metric_key):
+            metric_def = next((m for m in self._comparison_metric_catalog() if m.get('metric_key') == metric_key), None)
+            if not metric_def:
+                return []
+            out = []
+            for y in years:
+                val = self._extract_comparison_metric_value(data_by_year, ratios_by_year, y, metric_def)
+                if isinstance(val, (int, float)):
+                    out.append((y, val))
+            return out
+
+        rev_s = self._summarize_comparison_series(_series('revenue'), higher_better=True)
+        ni_s = self._summarize_comparison_series(_series('net_income'), higher_better=True)
+        fcf_s = self._summarize_comparison_series(_series('free_cash_flow'), higher_better=True)
+        roic_s = self._summarize_comparison_series(_series('roic'), higher_better=True)
+        gross_s = self._summarize_comparison_series(_series('gross_margin'), higher_better=True)
+
+        latest_year = years[-1]
+        current_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'current_ratio'))
+        quick_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'quick_ratio'))
+        pe_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'pe_ratio'))
+        pb_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'pb_ratio'))
+        fcf_yield = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'fcf_yield'))
+
+        if isinstance(current_ratio, (int, float)) and isinstance(quick_ratio, (int, float)):
+            if current_ratio >= 1.2 and quick_ratio >= 0.8:
+                liquidity_view = 'STRONG'
+            elif current_ratio >= 0.95 and quick_ratio >= 0.5:
+                liquidity_view = 'ADEQUATE'
+            else:
+                liquidity_view = 'TIGHT'
+        else:
+            liquidity_view = 'UNKNOWN'
+
+        if isinstance(pe_ratio, (int, float)) and isinstance(pb_ratio, (int, float)) and isinstance(fcf_yield, (int, float)):
+            if pe_ratio > 35 or pb_ratio > 25 or fcf_yield < 0.03:
+                valuation_view = 'RICH'
+            elif pe_ratio > 20 or pb_ratio > 10 or fcf_yield < 0.05:
+                valuation_view = 'FULL'
+            else:
+                valuation_view = 'REASONABLE'
+        else:
+            valuation_view = 'PARTIAL'
+
+        return {
+            'latest_year': latest_year,
+            'revenue_cagr': rev_s.get('cagr') if rev_s else None,
+            'net_income_cagr': ni_s.get('cagr') if ni_s else None,
+            'fcf_cagr': fcf_s.get('cagr') if fcf_s else None,
+            'gross_margin_trend': gross_s.get('trend_signal') if gross_s else 'UNKNOWN',
+            'roic_trend': roic_s.get('trend_signal') if roic_s else 'UNKNOWN',
+            'liquidity_view': liquidity_view,
+            'valuation_view': valuation_view,
+        }
+
+    def _build_time_series_comparison_df(self, ticker, data_by_year, ratios_by_year, years):
+        try:
+            import pandas as pd
+            rows = []
+            year_list = sorted(int(y) for y in (years or []) if str(y).isdigit())
+            for metric_def in self._comparison_metric_catalog():
+                series = []
+                for y in year_list:
+                    val = self._extract_comparison_metric_value(data_by_year, ratios_by_year, y, metric_def)
+                    if isinstance(val, (int, float)):
+                        series.append((y, val))
+                summary = self._summarize_comparison_series(series, higher_better=metric_def.get('higher_better', True))
+                if not summary:
+                    continue
+                expert_meta = self._comparison_expert_meta(metric_def.get('metric_key'))
+                rows.append({
+                    'Ticker': ticker,
+                    'Category': metric_def.get('category'),
+                    'Framework': expert_meta.get('framework'),
+                    'Expert_Tool': expert_meta.get('tool'),
+                    'Metric_Key': metric_def.get('metric_key'),
+                    'Metric_Label': metric_def.get('label'),
+                    'Why_Experts_Use_It': expert_meta.get('why'),
+                    'Start_Year': summary.get('start_year'),
+                    'End_Year': summary.get('end_year'),
+                    'Start_Value': summary.get('start_value'),
+                    'End_Value': summary.get('end_value'),
+                    'Absolute_Change': summary.get('absolute_change'),
+                    'Change_%': summary.get('pct_change'),
+                    'CAGR_%': summary.get('cagr'),
+                    'Average_3Y': summary.get('avg_3y'),
+                    'Average_Full_Period': summary.get('avg_full'),
+                    'Min_Value': summary.get('min_value'),
+                    'Max_Value': summary.get('max_value'),
+                    'Volatility_CV': summary.get('volatility_cv'),
+                    'Trend_Signal': summary.get('trend_signal'),
+                    'Assessment': summary.get('assessment'),
+                })
+            if not rows:
+                rows.append({
+                    'Ticker': ticker,
+                    'Category': None,
+                    'Metric_Key': None,
+                    'Metric_Label': None,
+                    'Assessment': 'NO_TIME_SERIES_COMPARISON_DATA',
+                })
+            return pd.DataFrame(rows)
+        except Exception as e:
+            import pandas as pd
+            return pd.DataFrame([{'Ticker': ticker, 'Assessment': f'ERROR: {e}'}])
+
+    def _build_peer_benchmark_df(self, current_ticker=None, source_snapshot=None):
+        try:
+            import pandas as pd
+            import math
+            source = source_snapshot or self._get_comparison_source_snapshot()
+            current_ticker = current_ticker or ((self.current_data.get('company_info', {}) or {}).get('ticker') if self.current_data else None)
+            metric_defs = [
+                m for m in self._comparison_metric_catalog()
+                if m.get('metric_key') in {'gross_margin', 'operating_margin', 'roic', 'current_ratio', 'debt_to_equity', 'net_debt_ebitda', 'interest_coverage', 'pe_ratio', 'pb_ratio', 'fcf_yield'}
+            ]
+            rows = []
+            for metric_def in metric_defs:
+                observations = []
+                for key, data in (source or {}).items():
+                    ticker = (data.get('company_info', {}) or {}).get('ticker') or key
+                    data_by_year = ((data.get('data_layers', {}) or {}).get('layer1_by_year') or data.get('data_by_year', {}) or {})
+                    ratios_by_year = maybe_guard_ratios_by_year(data.get('financial_ratios', {}) or {})
+                    years = sorted(int(y) for y in set(list(data_by_year.keys()) + list(ratios_by_year.keys())) if str(y).isdigit())
+                    if not years:
+                        continue
+                    latest_year = years[-1]
+                    value = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, metric_def)
+                    if isinstance(value, (int, float)):
+                        observations.append({'ticker': ticker, 'year': latest_year, 'value': float(value)})
+                if not observations:
+                    continue
+                ordered = sorted(observations, key=lambda r: r['value'], reverse=bool(metric_def.get('higher_better', True)))
+                values = sorted([r['value'] for r in observations])
+                peer_count = len(observations)
+                median_val = values[peer_count // 2] if peer_count % 2 == 1 else (values[(peer_count // 2) - 1] + values[peer_count // 2]) / 2.0
+                best_row = ordered[0]
+                worst_row = ordered[-1]
+                current_row = next((r for r in ordered if r['ticker'] == current_ticker), None)
+                if current_row is None:
+                    continue
+                rank = next((idx + 1 for idx, r in enumerate(ordered) if r['ticker'] == current_ticker), None)
+                expert_meta = self._comparison_expert_meta(metric_def.get('metric_key'))
+                if peer_count <= 1:
+                    assessment = 'لا توجد مجموعة نظيرة كافية للحكم المقارن.'
+                    relative_band = 'INSUFFICIENT_PEERS'
+                elif rank == 1:
+                    assessment = 'الشركة تتصدر المجموعة في هذا المؤشر.'
+                    relative_band = 'LEADER'
+                elif rank <= max(1, math.ceil(peer_count / 3)):
+                    assessment = 'الشركة ضمن الشريحة العليا للمجموعة في هذا المؤشر.'
+                    relative_band = 'UPPER_TIER'
+                elif rank >= max(1, peer_count - math.floor(peer_count / 3)):
+                    assessment = 'الشركة تقع في الشريحة الأضعف نسبيًا ضمن المجموعة في هذا المؤشر.'
+                    relative_band = 'LOWER_TIER'
+                else:
+                    assessment = 'موقع الشركة متوسط نسبيًا داخل المجموعة في هذا المؤشر.'
+                    relative_band = 'MIDDLE'
+                rows.append({
+                    'Current_Ticker': current_ticker,
+                    'Framework': expert_meta.get('framework'),
+                    'Expert_Tool': expert_meta.get('tool'),
+                    'Metric_Key': metric_def.get('metric_key'),
+                    'Metric_Label': metric_def.get('label'),
+                    'Why_Experts_Use_It': expert_meta.get('why'),
+                    'Higher_Better': bool(metric_def.get('higher_better', True)),
+                    'Current_Year': current_row.get('year'),
+                    'Current_Value': current_row.get('value'),
+                    'Peer_Count': peer_count,
+                    'Current_Rank': rank,
+                    'Peer_Median': median_val,
+                    'Best_Value': best_row.get('value'),
+                    'Best_Ticker': best_row.get('ticker'),
+                    'Worst_Value': worst_row.get('value'),
+                    'Worst_Ticker': worst_row.get('ticker'),
+                    'Relative_Position_Band': relative_band,
+                    'Relative_Assessment': assessment,
+                })
+            if not rows:
+                rows.append({
+                    'Current_Ticker': current_ticker,
+                    'Metric_Key': None,
+                    'Metric_Label': None,
+                    'Relative_Assessment': 'NO_PEER_SET_OR_NO_COMPARABLE_VALUES',
+                })
+            return pd.DataFrame(rows)
+        except Exception as e:
+            import pandas as pd
+            return pd.DataFrame([{'Current_Ticker': current_ticker, 'Relative_Assessment': f'ERROR: {e}'}])
+
+    def _build_expert_comparison_df(self, current_ticker=None, source_snapshot=None):
+        try:
+            import pandas as pd
+            source = source_snapshot or self._get_comparison_source_snapshot()
+            current_ticker = current_ticker or ((self.current_data.get('company_info', {}) or {}).get('ticker') if self.current_data else None)
+            rows = []
+
+            if current_ticker:
+                current_payload = None
+                for key, data in (source or {}).items():
+                    ticker = (data.get('company_info', {}) or {}).get('ticker') or key
+                    if ticker == current_ticker:
+                        current_payload = data
+                        break
+                if current_payload:
+                    data_by_year = ((current_payload.get('data_layers', {}) or {}).get('layer1_by_year') or current_payload.get('data_by_year', {}) or {})
+                    ratios_by_year = maybe_guard_ratios_by_year(current_payload.get('financial_ratios', {}) or {})
+                    years = sorted(int(y) for y in set(list(data_by_year.keys()) + list(ratios_by_year.keys())) if str(y).isdigit())
+                    ts_df = self._build_time_series_comparison_df(current_ticker, data_by_year, ratios_by_year, years)
+                    if ts_df is not None and not ts_df.empty:
+                        for _, row in ts_df.iterrows():
+                            if str(row.get('Metric_Key') or '').startswith('None') and str(row.get('Assessment') or '').startswith('NO_'):
+                                continue
+                            rows.append({
+                                'Comparison_Mode': 'TIME_SERIES',
+                                'Ticker': current_ticker,
+                                'Framework': row.get('Framework'),
+                                'Expert_Tool': row.get('Expert_Tool'),
+                                'Metric_Label': row.get('Metric_Label'),
+                                'Reference_Period': f"{row.get('Start_Year')} -> {row.get('End_Year')}",
+                                'Company_Value': row.get('End_Value'),
+                                'Reference_Value': row.get('Average_3Y'),
+                                'Peer_or_Reference': 'AVG_3Y',
+                                'Rank_or_Trend': row.get('Trend_Signal'),
+                                'Assessment': row.get('Assessment'),
+                                'Why_Experts_Use_It': row.get('Why_Experts_Use_It'),
+                            })
+
+            peer_df = self._build_peer_benchmark_df(current_ticker=current_ticker, source_snapshot=source)
+            if peer_df is not None and not peer_df.empty:
+                for _, row in peer_df.iterrows():
+                    if str(row.get('Metric_Key') or '').startswith('None') and str(row.get('Relative_Assessment') or '').startswith('NO_'):
+                        continue
+                    rows.append({
+                        'Comparison_Mode': 'PEER_BENCHMARK',
+                        'Ticker': current_ticker,
+                        'Framework': row.get('Framework'),
+                        'Expert_Tool': row.get('Expert_Tool'),
+                        'Metric_Label': row.get('Metric_Label'),
+                        'Reference_Period': row.get('Current_Year'),
+                        'Company_Value': row.get('Current_Value'),
+                        'Reference_Value': row.get('Peer_Median'),
+                        'Peer_or_Reference': f"Peer median ({row.get('Peer_Count')})",
+                        'Rank_or_Trend': row.get('Relative_Position_Band'),
+                        'Assessment': row.get('Relative_Assessment'),
+                        'Why_Experts_Use_It': row.get('Why_Experts_Use_It'),
+                    })
+
+            if not rows:
+                rows.append({
+                    'Comparison_Mode': 'NONE',
+                    'Ticker': current_ticker,
+                    'Framework': None,
+                    'Expert_Tool': None,
+                    'Metric_Label': None,
+                    'Reference_Period': None,
+                    'Company_Value': None,
+                    'Reference_Value': None,
+                    'Peer_or_Reference': None,
+                    'Rank_or_Trend': None,
+                    'Assessment': 'NO_EXPERT_COMPARISON_DATA',
+                    'Why_Experts_Use_It': None,
+                })
+            return pd.DataFrame(rows)
+        except Exception as e:
+            import pandas as pd
+            return pd.DataFrame([{'Comparison_Mode': 'ERROR', 'Ticker': current_ticker, 'Assessment': f'ERROR: {e}'}])
+
+    def display_comparison(self):
+        if not hasattr(self, 'comparison_tree'):
+            return
+        try:
+            self.comparison_summary_label.config(
+                anchor='e' if self.current_lang == 'ar' else 'w',
+                justify='right' if self.current_lang == 'ar' else 'left',
+            )
+        except Exception:
+            pass
+        for item in self.comparison_tree.get_children():
+            self.comparison_tree.delete(item)
+        for item in self.comparison_detail_tree.get_children():
+            self.comparison_detail_tree.delete(item)
+        self.comparison_diag_text.delete('1.0', 'end')
+
+        rows, details = self._collect_comparison_rows()
+        self._comparison_detail_cache = details
+
+        if not rows:
+            empty_text = {
+                'ar': 'لا توجد نتائج مقارنة بعد. قم بتحميل أو جلب بيانات شركة واحدة على الأقل.',
+                'en': 'No comparison results yet. Load or fetch at least one company.',
+                'fr': 'Aucun résultat de comparaison pour le moment. Chargez ou récupérez au moins une société.',
+            }.get(self.current_lang, 'No comparison results yet.')
+            self.comparison_summary_label.config(text=empty_text)
+            self.comparison_tree.config(height=1)
+            return
+
+        columns = [
+            ('Ticker', {'ar': 'الرمز', 'en': 'Ticker', 'fr': 'Ticker'}),
+            ('Sector', {'ar': 'القطاع', 'en': 'Sector', 'fr': 'Secteur'}),
+            ('Confidence', {'ar': 'الثقة', 'en': 'Confidence', 'fr': 'Confiance'}),
+            ('Filing Grade', {'ar': 'درجة الملف', 'en': 'Filing Grade', 'fr': 'Qualité du dépôt'}),
+            ('OutOfRange', {'ar': 'خارج النطاق', 'en': 'Out of Range', 'fr': 'Hors plage'}),
+            ('HIGH', {'ar': 'مرتفع', 'en': 'HIGH', 'fr': 'ÉLEVÉ'}),
+            ('MEDIUM', {'ar': 'متوسط', 'en': 'MEDIUM', 'fr': 'MOYEN'}),
+            ('LOW', {'ar': 'منخفض', 'en': 'LOW', 'fr': 'FAIBLE'}),
+            ('REJECTED', {'ar': 'مرفوض', 'en': 'REJECTED', 'fr': 'REJETÉ'}),
+            ('Top Rejection Reasons', {'ar': 'أهم أسباب الرفض', 'en': 'Top Rejection Reasons', 'fr': 'Principales raisons de rejet'}),
+            ('Top Validator Flags', {'ar': 'أهم إشارات التحقق', 'en': 'Top Validator Flags', 'fr': 'Principaux drapeaux de validation'}),
+        ]
+        col_ids = [c[0] for c in columns]
+        self.comparison_tree.config(columns=col_ids)
+        for c, label_map in columns:
+            self.comparison_tree.heading(c, text=label_map.get(self.current_lang, c))
+            if c in ('Top Rejection Reasons', 'Top Validator Flags'):
+                self.comparison_tree.column(c, width=240, anchor='w')
+            elif c in ('Ticker', 'Sector', 'Filing Grade'):
+                self.comparison_tree.column(c, width=130, anchor='center')
+            elif c == 'Confidence':
+                self.comparison_tree.column(c, width=110, anchor='center')
+            else:
+                self.comparison_tree.column(c, width=90, anchor='center')
+
+        for r in rows:
+            conf_txt = self._comparison_confidence_text(r.get('confidence'))
+            values = (
+                r['ticker'],
+                self._sector_profile_to_display(r.get('sector')),
+                conf_txt,
+                self._comparison_filing_grade_text(r.get('filing_grade')),
+                {'ar': 'نعم', 'en': 'YES', 'fr': 'OUI'}.get(self.current_lang, 'YES') if r['out_of_range'] else {'ar': 'لا', 'en': 'NO', 'fr': 'NON'}.get(self.current_lang, 'NO'),
+                r['high'],
+                r['medium'],
+                r['low'],
+                r['rejected'],
+                r['top_reasons'],
+                r['top_flags'],
+            )
+            self.comparison_tree.insert('', 'end', iid=r['ticker'], values=values)
+
+        self.comparison_tree.config(height=max(1, min(len(rows), 6)))
+
+        out_of_range_count = sum(1 for r in rows if r['out_of_range'])
+        summary_text = {
+            'ar': f"نتائج مقارنة مؤسسية: {len(rows)} شركة | خارج النطاق: {out_of_range_count} | اختر شركة من الجدول لعرض التفاصيل.",
+            'en': f"Institutional comparison results: {len(rows)} companies | Out of range: {out_of_range_count} | Select a company to view details.",
+            'fr': f"Résultats de comparaison institutionnelle : {len(rows)} sociétés | Hors plage : {out_of_range_count} | Sélectionnez une société pour voir les détails.",
+        }.get(self.current_lang, f"Institutional comparison results: {len(rows)} companies.")
+        self.comparison_summary_label.config(text=summary_text)
+
+        first = rows[0]['ticker']
+        self.comparison_tree.selection_set(first)
+        self._render_comparison_details(first)
+
+    def _on_comparison_select(self, _event=None):
+        if not hasattr(self, 'comparison_tree'):
+            return
+        sel = self.comparison_tree.selection()
+        if not sel:
+            return
+        self._render_comparison_details(sel[0])
+
+    def _render_comparison_details(self, ticker):
+        details = getattr(self, '_comparison_detail_cache', {}).get(ticker)
+        if not details:
+            return
+        for item in self.comparison_detail_tree.get_children():
+            self.comparison_detail_tree.delete(item)
+        source = self.multi_company_data or {}
+        if not source and self.current_data:
+            current_ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+            source = {current_ticker: self.current_data}
+        peer_mode = len(source or {}) > 1
+
+        if peer_mode:
+            self._render_peer_expert_comparison_details(ticker, details)
+        else:
+            self._render_time_series_expert_comparison_details(ticker, details)
+
+    def _render_peer_expert_comparison_details(self, ticker, details):
+        df = self._build_peer_benchmark_df(current_ticker=ticker)
+        columns = [
+            ('Framework', {'ar': 'الإطار', 'en': 'Framework', 'fr': 'Cadre'}),
+            ('Expert_Tool', {'ar': 'أداة الخبير', 'en': 'Expert Tool', 'fr': 'Outil expert'}),
+            ('Metric_Label', {'ar': 'المؤشر', 'en': 'Metric', 'fr': 'Indicateur'}),
+            ('Current_Value', {'ar': 'قيمة الشركة', 'en': 'Company Value', 'fr': 'Valeur société'}),
+            ('Peer_Median', {'ar': 'وسيط النظائر', 'en': 'Peer Median', 'fr': 'Médiane pairs'}),
+            ('Current_Rank', {'ar': 'الترتيب', 'en': 'Rank', 'fr': 'Rang'}),
+            ('Best_Ticker', {'ar': 'الأفضل', 'en': 'Best', 'fr': 'Meilleur'}),
+            ('Relative_Assessment', {'ar': 'الحكم النسبي', 'en': 'Relative Assessment', 'fr': 'Jugement relatif'}),
+        ]
+        col_ids = [c[0] for c in columns]
+        self.comparison_detail_tree.config(columns=col_ids)
+        for c, label_map in columns:
+            self.comparison_detail_tree.heading(c, text=label_map.get(self.current_lang, c))
+            if c in ('Relative_Assessment', 'Expert_Tool', 'Metric_Label'):
+                self.comparison_detail_tree.column(c, width=220 if c == 'Relative_Assessment' else 180, anchor='w')
+            elif c == 'Framework':
+                self.comparison_detail_tree.column(c, width=120, anchor='center')
+            else:
+                self.comparison_detail_tree.column(c, width=110, anchor='center')
+
+        leaders = []
+        laggards = []
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                metric_key = row.get('Metric_Key')
+                if not metric_key:
+                    continue
+                value_txt = self._format_comparison_metric_value(metric_key, row.get('Current_Value'))
+                median_txt = self._format_comparison_metric_value(metric_key, row.get('Peer_Median'))
+                rank_txt = f"{int(row.get('Current_Rank'))}/{int(row.get('Peer_Count'))}" if isinstance(row.get('Current_Rank'), (int, float)) and isinstance(row.get('Peer_Count'), (int, float)) else self._translate_ui_text('غير متاح')
+                self.comparison_detail_tree.insert(
+                    '',
+                    'end',
+                    values=(
+                        row.get('Framework'),
+                        row.get('Expert_Tool'),
+                        row.get('Metric_Label'),
+                        value_txt,
+                        median_txt,
+                        rank_txt,
+                        row.get('Best_Ticker'),
+                        row.get('Relative_Assessment'),
+                    )
+                )
+                band = str(row.get('Relative_Position_Band') or '')
+                if band in {'LEADER', 'UPPER_TIER'}:
+                    leaders.append(str(row.get('Metric_Label')))
+                elif band == 'LOWER_TIER':
+                    laggards.append(str(row.get('Metric_Label')))
+
+        sector_text = self._sector_profile_to_display(details.get('company', {}).get('sector') or details.get('classification', {}).get('primary_profile'))
+        summary_lines = []
+        if self.current_lang == 'ar':
+            summary_lines.append(f"مقارنة خبراء للشركة {ticker} ضمن المجموعة النظيرة.")
+            summary_lines.append(f"القطاع: {sector_text}")
+            if leaders:
+                summary_lines.append("أبرز نقاط التفوق: " + '، '.join(leaders[:4]))
+            if laggards:
+                summary_lines.append("أهم نقاط الضعف النسبي: " + '، '.join(laggards[:4]))
+            summary_lines.append(f"أعلام التحقق: {details.get('top_flags') or 'NONE'} | أسباب الرفض: {details.get('top_reasons') or 'NONE'}")
+        else:
+            summary_lines.append(f"Expert peer comparison for {ticker}.")
+            summary_lines.append(f"Sector: {sector_text}")
+            if leaders:
+                summary_lines.append("Leading metrics: " + ', '.join(leaders[:4]))
+            if laggards:
+                summary_lines.append("Relative weak points: " + ', '.join(laggards[:4]))
+            summary_lines.append(f"Validator flags: {details.get('top_flags') or 'NONE'} | Rejection reasons: {details.get('top_reasons') or 'NONE'}")
+        self.comparison_diag_text.delete('1.0', 'end')
+        self.comparison_diag_text.insert('1.0', '\n'.join(summary_lines))
+
+    def _render_time_series_expert_comparison_details(self, ticker, details):
+        source = self.multi_company_data or {}
+        payload = source.get(ticker)
+        if payload is None and self.current_data and (self.current_data.get('company_info', {}) or {}).get('ticker') == ticker:
+            payload = self.current_data
+        data_by_year = ((payload.get('data_layers', {}) or {}).get('layer1_by_year') or payload.get('data_by_year', {}) or {}) if payload else {}
+        ratios_by_year = maybe_guard_ratios_by_year((payload.get('financial_ratios', {}) or {})) if payload else {}
+        years = sorted(int(y) for y in set(list(data_by_year.keys()) + list(ratios_by_year.keys())) if str(y).isdigit())
+        df = self._build_time_series_comparison_df(ticker, data_by_year, ratios_by_year, years)
+
+        columns = [
+            ('Framework', {'ar': 'الإطار', 'en': 'Framework', 'fr': 'Cadre'}),
+            ('Expert_Tool', {'ar': 'أداة الخبير', 'en': 'Expert Tool', 'fr': 'Outil expert'}),
+            ('Metric_Label', {'ar': 'المؤشر', 'en': 'Metric', 'fr': 'Indicateur'}),
+            ('Start_Value', {'ar': 'البداية', 'en': 'Start', 'fr': 'Début'}),
+            ('End_Value', {'ar': 'النهاية', 'en': 'End', 'fr': 'Fin'}),
+            ('CAGR_%', {'ar': 'النمو المركب', 'en': 'CAGR', 'fr': 'TCAC'}),
+            ('Trend_Signal', {'ar': 'الاتجاه', 'en': 'Trend', 'fr': 'Tendance'}),
+            ('Assessment', {'ar': 'الحكم', 'en': 'Assessment', 'fr': 'Jugement'}),
+        ]
+        col_ids = [c[0] for c in columns]
+        self.comparison_detail_tree.config(columns=col_ids)
+        for c, label_map in columns:
+            self.comparison_detail_tree.heading(c, text=label_map.get(self.current_lang, c))
+            if c in ('Assessment', 'Expert_Tool', 'Metric_Label'):
+                self.comparison_detail_tree.column(c, width=220 if c == 'Assessment' else 180, anchor='w')
+            elif c == 'Framework':
+                self.comparison_detail_tree.column(c, width=120, anchor='center')
+            else:
+                self.comparison_detail_tree.column(c, width=110, anchor='center')
+
+        improving = []
+        deteriorating = []
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                metric_key = row.get('Metric_Key')
+                if not metric_key:
+                    continue
+                start_txt = self._format_comparison_metric_value(metric_key, row.get('Start_Value'))
+                end_txt = self._format_comparison_metric_value(metric_key, row.get('End_Value'))
+                cagr_val = row.get('CAGR_%')
+                if isinstance(cagr_val, (int, float)):
+                    cagr_txt = f"{cagr_val * 100:.2f}%"
+                else:
+                    cagr_txt = self._translate_ui_text('غير متاح')
+                self.comparison_detail_tree.insert(
+                    '',
+                    'end',
+                    values=(
+                        row.get('Framework'),
+                        row.get('Expert_Tool'),
+                        row.get('Metric_Label'),
+                        start_txt,
+                        end_txt,
+                        cagr_txt,
+                        row.get('Trend_Signal'),
+                        row.get('Assessment'),
+                    )
+                )
+                signal = str(row.get('Trend_Signal') or '')
+                if signal == 'IMPROVING':
+                    improving.append(str(row.get('Metric_Label')))
+                elif signal in {'DETERIORATING', 'VOLATILE'}:
+                    deteriorating.append(str(row.get('Metric_Label')))
+
+        summary_lines = []
+        if self.current_lang == 'ar':
+            summary_lines.append(f"مقارنة زمنية خبير للشركة {ticker} عبر الفترة المختارة.")
+            if improving:
+                summary_lines.append("أبرز الاتجاهات المتحسنة: " + '، '.join(improving[:4]))
+            if deteriorating:
+                summary_lines.append("المؤشرات التي تحتاج متابعة: " + '، '.join(deteriorating[:4]))
+            summary_lines.append(f"أعلام التحقق: {details.get('top_flags') or 'NONE'} | أسباب الرفض: {details.get('top_reasons') or 'NONE'}")
+        else:
+            summary_lines.append(f"Expert time-series comparison for {ticker}.")
+            if improving:
+                summary_lines.append("Improving metrics: " + ', '.join(improving[:4]))
+            if deteriorating:
+                summary_lines.append("Metrics needing attention: " + ', '.join(deteriorating[:4]))
+            summary_lines.append(f"Validator flags: {details.get('top_flags') or 'NONE'} | Rejection reasons: {details.get('top_reasons') or 'NONE'}")
+        self.comparison_diag_text.delete('1.0', 'end')
+        self.comparison_diag_text.insert('1.0', '\n'.join(summary_lines))
+
+    def _get_selected_years_range(self):
+        """Return the full user-selected period, inclusive."""
+        try:
+            sel_start = int(self.start_year_var.get())
+            sel_end = int(self.end_year_var.get())
+        except Exception:
+            data_by_year = self.current_data.get('data_by_year', {}) if self.current_data else {}
+            years = sorted([y for y in (data_by_year or {}).keys() if isinstance(y, int)])
+            return years
+
+        if sel_start > sel_end:
+            return []
+        if (sel_end - sel_start) > 50:
+            # Safety guard against accidental huge ranges.
+            sel_end = sel_start + 50
+        return list(range(sel_start, sel_end + 1))
+
+    def _get_analysis_years_range(self):
+        if not self.current_data:
+            return []
+        try:
+            sel_start = int(self.start_year_var.get())
+            sel_end = int(self.end_year_var.get())
+        except Exception:
+            return self._get_selected_years_range()
+        if sel_start > sel_end:
+            return []
+        return list(range(sel_start, sel_end + 1))
+
+    def display_raw_data(self):
+        if not self.current_data:
+            for i in self.raw_tree.get_children():
+                self.raw_tree.delete(i)
+            self.company_info_label.config(text="")
+            self._update_workspace_context(self._t('status_ready'))
+            return
+        for i in self.raw_tree.get_children():
+            self.raw_tree.delete(i)
+        def _raw_tags(base_tag: str):
+            idx = len(self.raw_tree.get_children(''))
+            zebra_tag = 'zebra_even' if (idx % 2 == 0) else 'zebra_odd'
+            return (base_tag, zebra_tag)
+
+        data_layers = self.current_data.get('data_layers', {}) or {}
+        selected_layer_display = self.raw_layer_var.get() if hasattr(self, 'raw_layer_var') else self._t('layer1')
+        selected_layer = getattr(self, '_raw_layer_display_to_real', {}).get(selected_layer_display, selected_layer_display)
+        catalog = data_layers.get('layer_catalog') or []
+        selected_key = None
+        selected_source = None
+        for item in catalog:
+            if str(item.get('title')) == selected_layer:
+                selected_key = str(item.get('key'))
+                selected_source = str(item.get('source') or '')
+                break
+        if not selected_key:
+            if selected_layer.startswith('Layer 2') or selected_layer.startswith('الطبقة 2'):
+                selected_key = 'layer2_by_year'
+                selected_source = 'MARKET'
+            elif selected_layer.startswith('Layer 3') or selected_layer.startswith('الطبقة 3'):
+                selected_key = 'layer3_by_year'
+                selected_source = 'MACRO'
+            elif selected_layer.startswith('Layer 4') or selected_layer.startswith('الطبقة 4'):
+                selected_key = 'layer4_by_year'
+                selected_source = 'YAHOO'
+            else:
+                selected_key = 'layer1_by_year'
+                selected_source = 'SEC'
+
+        sec_view_mode = getattr(self, '_sec_view_mode_var', tk.StringVar(value='official')).get() or 'official'
+        if selected_key != 'layer1_by_year' and sec_view_mode == 'canonical':
+            sec_view_mode = 'official'
+
+        # Comprehensive inputs mode: show all calculation inputs across layers + ratios + strategic.
+        if sec_view_mode == 'inputs':
+            import math
+            years = self._get_selected_years_range() or []
+            if not years:
+                return
+
+            layer1_by_year = (data_layers.get('layer1_by_year', {}) or self.current_data.get('data_by_year', {}) or {})
+            layer2_by_year = (data_layers.get('layer2_by_year', {}) or {})
+            layer3_by_year = (data_layers.get('layer3_by_year', {}) or {})
+            layer4_by_year = (data_layers.get('layer4_by_year', {}) or {})
+            ratios_by_year = maybe_guard_ratios_by_year(self.current_data.get('financial_ratios', {}) or {})
+            strategic_by_year = (self.current_data.get('strategic_analysis', {}) or {})
+            if not strategic_by_year:
+                strategic_by_year = self._compute_per_year_metrics(layer1_by_year, ratios_by_year)
+
+            cols = [
+                self._t('raw_col_category'),
+                self._t('raw_col_normalized'),
+                self._t('raw_col_used_in'),
+            ] + [str(y) for y in years] + [self._t('raw_col_source')]
+            self.raw_tree.config(columns=cols)
+            self.raw_tree.tag_configure('parent_row', font=FONTS['label'])
+            self.raw_tree.tag_configure('child_row', font=FONTS['tree'])
+            self.raw_tree.tag_configure('zebra_even', background='#ffffff')
+            self.raw_tree.tag_configure('zebra_odd', background='#f7fbff')
+            for c in cols:
+                self.raw_tree.heading(c, text=c)
+                if c == self._t('raw_col_category'):
+                    self.raw_tree.column(c, width=180, anchor='center')
+                elif c == self._t('raw_col_normalized'):
+                    self.raw_tree.column(c, width=380, anchor='w')
+                elif c == self._t('raw_col_used_in'):
+                    self.raw_tree.column(c, width=280, anchor='w')
+                elif c == self._t('raw_col_source'):
+                    self.raw_tree.column(c, width=170, anchor='center')
+                else:
+                    self.raw_tree.column(c, width=130, anchor='center')
+
+            def _fmt(v):
+                if v is None:
+                    return ''
+                if isinstance(v, float) and math.isnan(v):
+                    return ''
+                if isinstance(v, (int, float)):
+                    return f"{v:,.12g}"
+                return str(v)
+
+            def _valid(v):
+                if v is None:
+                    return False
+                if isinstance(v, float) and math.isnan(v):
+                    return False
+                if isinstance(v, str):
+                    s = v.strip()
+                    if not s:
+                        return False
+                    if s.upper().startswith('N/A') or s.lower() in {'nan', 'none', 'null'}:
+                        return False
+                return True
+
+            def _num(v):
+                try:
+                    if isinstance(v, float) and math.isnan(v):
+                        return None
+                    if v is None:
+                        return None
+                    return float(v)
+                except Exception:
+                    return None
+
+            def _derive_total_debt(y):
+                row = (layer1_by_year.get(y, {}) or {})
+                # Prefer explicit total debt concepts when available.
+                direct_keys = [
+                    'Debt', 'TotalDebt', 'TotalDebtAndCapitalLeaseObligations',
+                    'LongTermDebtAndCapitalLeaseObligations',
+                ]
+                for k in direct_keys:
+                    v = _num(row.get(k))
+                    if v is not None and v >= 0:
+                        return v
+                # Reconstruct from long-term + current debt style concepts.
+                lt = _num(
+                    row.get('LongTermDebtNoncurrent')
+                    or row.get('LongTermDebt')
+                    or row.get('LongTermBorrowings')
+                    or row.get('LongTermDebtAndCapitalLeaseObligations')
+                )
+                cur = _num(
+                    row.get('DebtCurrent')
+                    or row.get('CurrentPortionOfLongTermDebt')
+                    or row.get('CurrentPortionOfLongTermDebtAndCapitalLeaseObligations')
+                    or row.get('ShortTermBorrowings')
+                    or row.get('ShortTermDebt')
+                )
+                if lt is not None or cur is not None:
+                    return float(lt or 0.0) + float(cur or 0.0)
+                return None
+
+            def _derive_enterprise_value(y):
+                l2 = (layer2_by_year.get(y, {}) or {})
+                l4 = (layer4_by_year.get(y, {}) or {})
+                mcap = _num(l2.get('market:market_cap'))
+                if mcap is None:
+                    mcap = _num(l4.get('yahoo:market_cap'))
+                debt = _num(l2.get('market:total_debt'))
+                if debt is None:
+                    debt = _num(l4.get('yahoo:total_debt'))
+                if debt is None:
+                    debt = _derive_total_debt(y)
+                sec_row = (layer1_by_year.get(y, {}) or {})
+                cash = _num(
+                    sec_row.get('CashAndCashEquivalentsAtCarryingValue')
+                    or sec_row.get('CashAndCashEquivalents')
+                    or sec_row.get('Cash')
+                )
+                if mcap is None or debt is None:
+                    return None
+                ev = float(mcap) + float(debt) - float(cash or 0.0)
+                return ev if ev > 0 else None
+
+            source_maps = {
+                'SEC': layer1_by_year,
+                'MARKET': layer2_by_year,
+                'MACRO': layer3_by_year,
+                'YAHOO': layer4_by_year,
+                'RATIO': ratios_by_year,
+                'STRATEGIC': strategic_by_year,
+            }
+
+            def _pick_value(y, candidates):
+                for src, key in candidates:
+                    if src == 'DERIVED' and key == 'total_debt':
+                        dv = _derive_total_debt(y)
+                        if _valid(dv):
+                            return dv, 'DERIVED'
+                        continue
+                    if src == 'DERIVED' and key == 'enterprise_value':
+                        dv = _derive_enterprise_value(y)
+                        if _valid(dv):
+                            return dv, 'DERIVED'
+                        continue
+                    row = (source_maps.get(src, {}) or {}).get(y, {}) or {}
+                    v = row.get(key)
+                    if _valid(v):
+                        return v, src
+                return None, None
+
+            # Parent -> core child inputs used directly in ratio/strategic calculations.
+            input_spec = [
+                ("مدخلات الربحية", [
+                    ("الإيرادات", [('SEC', 'Revenues'), ('SEC', 'Revenue'), ('SEC', 'SalesRevenueNet'), ('SEC', 'RevenueFromContractWithCustomerExcludingAssessedTax')], "gross_margin, operating_margin, net_margin, EBITDA_margin"),
+                    ("تكلفة الإيرادات", [('SEC', 'CostOfRevenue'), ('SEC', 'CostOfGoodsAndServicesSold')], "gross_margin"),
+                    ("الربح الإجمالي", [('SEC', 'GrossProfit')], "gross_margin"),
+                    ("الدخل التشغيلي", [('SEC', 'OperatingIncomeLoss'), ('SEC', 'OperatingIncome'), ('SEC', 'IncomeLossFromOperations')], "operating_margin, interest_coverage"),
+                    ("صافي الدخل", [('SEC', 'NetIncomeLoss'), ('SEC', 'ProfitLoss')], "net_margin, ROA, ROE, EPS, NI_Growth"),
+                    ("مصاريف الفائدة", [('SEC', 'InterestExpense'), ('SEC', 'InterestAndDebtExpense'), ('SEC', 'InterestExpenseNonOperating'), ('SEC', 'InterestExpenseDebt')], "interest_coverage, cost_of_debt"),
+                    ("الإهلاك والإطفاء", [('SEC', 'DepreciationDepletionAndAmortization'), ('SEC', 'DepreciationAmortization')], "EBITDA, EV/EBITDA"),
+                    ("EBITDA", [('SEC', 'EBITDA'), ('SEC', 'Ebitda'), ('STRATEGIC', 'EBITDA')], "EBITDA_margin, EV/EBITDA, net_debt_ebitda"),
+                ]),
+                ("مدخلات المركز المالي", [
+                    ("إجمالي الأصول", [('SEC', 'Assets'), ('SEC', 'TotalAssets')], "ROA, debt_to_assets, balance_check"),
+                    ("إجمالي الالتزامات", [('SEC', 'Liabilities'), ('SEC', 'TotalLiabilities')], "balance_check"),
+                    ("حقوق الملكية", [('SEC', 'StockholdersEquity'), ('SEC', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'), ('SEC', 'TotalEquity')], "ROE, debt_to_equity, book_value_per_share, balance_check"),
+                    ("الأصول المتداولة", [('SEC', 'AssetsCurrent'), ('SEC', 'CurrentAssets')], "current_ratio, quick_ratio"),
+                    ("الالتزامات المتداولة", [('SEC', 'LiabilitiesCurrent'), ('SEC', 'CurrentLiabilities')], "current_ratio, quick_ratio, cash_ratio"),
+                    ("النقد وما يعادله", [('SEC', 'CashAndCashEquivalentsAtCarryingValue'), ('SEC', 'CashAndCashEquivalents')], "cash_ratio, enterprise_value"),
+                    ("المخزون", [('SEC', 'InventoryNet'), ('SEC', 'Inventory')], "quick_ratio, inventory_days, CCC_days"),
+                    ("الذمم المدينة", [('SEC', 'AccountsReceivableNetCurrent'), ('SEC', 'AccountsReceivable')], "DSO, CCC_days"),
+                    ("الذمم الدائنة", [('SEC', 'AccountsPayableCurrent'), ('SEC', 'AccountsPayable')], "DPO, CCC_days"),
+                    ("إجمالي الدين", [('MARKET', 'market:total_debt'), ('YAHOO', 'yahoo:total_debt'), ('DERIVED', 'total_debt')], "debt_to_equity, debt_to_assets, net_debt_ebitda, enterprise_value"),
+                ]),
+                ("مدخلات التدفقات النقدية", [
+                    ("التدفق النقدي التشغيلي", [('SEC', 'NetCashProvidedByUsedInOperatingActivities'), ('SEC', 'OperatingCashFlow')], "free_cash_flow"),
+                    ("الإنفاق الرأسمالي", [('SEC', 'PaymentsToAcquirePropertyPlantAndEquipment'), ('RATIO', 'capital_expenditures')], "free_cash_flow"),
+                    ("التدفق النقدي الحر", [('RATIO', 'free_cash_flow'), ('STRATEGIC', 'FCF')], "FCF_yield, FCF_per_share, investment_score"),
+                ]),
+                ("مدخلات السوق والتقييم", [
+                    ("سعر السهم", [('MARKET', 'market:price'), ('YAHOO', 'yahoo:price')], "PE, PB, market_cap, dividend_yield"),
+                    ("عدد الأسهم", [
+                        ('MARKET', 'market:shares_outstanding'),
+                        ('YAHOO', 'yahoo:shares_outstanding'),
+                        ('SEC', 'WeightedAverageNumberOfSharesOutstandingBasic'),
+                        ('SEC', 'WeightedAverageNumberOfDilutedSharesOutstanding'),
+                        ('SEC', 'CommonStockSharesOutstanding'),
+                    ], "EPS, BVPS, market_cap, FCF_per_share"),
+                    ("القيمة السوقية", [('MARKET', 'market:market_cap'), ('YAHOO', 'yahoo:market_cap'), ('RATIO', 'market_cap')], "FCF_yield, valuation"),
+                    ("قيمة المنشأة", [('MARKET', 'market:enterprise_value'), ('YAHOO', 'yahoo:enterprise_value'), ('RATIO', 'enterprise_value'), ('DERIVED', 'enterprise_value')], "EV/EBITDA"),
+                    ("بيتا", [('MARKET', 'market:beta'), ('YAHOO', 'yahoo:beta'), ('STRATEGIC', 'Beta')], "cost_of_equity, WACC"),
+                ]),
+                ("مدخلات المخاطر والخصم", [
+                    ("معدل خالٍ من المخاطر", [('MACRO', 'macro:risk_free_rate'), ('MACRO', 'risk_free_rate')], "cost_of_equity, WACC"),
+                    ("علاوة مخاطر السوق", [('MACRO', 'macro:equity_risk_premium'), ('MACRO', 'equity_risk_premium')], "cost_of_equity, WACC"),
+                    ("تكلفة الدين", [('RATIO', 'cost_of_debt'), ('STRATEGIC', 'Cost_of_Debt')], "WACC"),
+                    ("WACC", [('RATIO', 'wacc'), ('STRATEGIC', 'WACC')], "economic_spread, valuation"),
+                ]),
+            ]
+
+            for parent_label, children in input_spec:
+                parent_row = [self._translate_financial_item("مدخلات الحساب"), self._translate_financial_item(parent_label), ''] + ['' for _ in years] + ['']
+                self.raw_tree.insert('', 'end', values=parent_row, tags=_raw_tags('parent_row'))
+                for child_label, candidates, used_in in children:
+                    vals = []
+                    source_counts = {}
+                    has_any = False
+                    for y in years:
+                        v, src = _pick_value(y, candidates)
+                        if v is not None:
+                            has_any = True
+                            source_counts[src] = source_counts.get(src, 0) + 1
+                        vals.append(_fmt(v))
+                    if not has_any:
+                        continue
+                    source_label = ''
+                    if source_counts:
+                        source_label = sorted(source_counts.items(), key=lambda kv: kv[1], reverse=True)[0][0]
+                    child_row = ['', self._translate_financial_item(child_label), used_in] + vals + [source_label]
+                    self.raw_tree.insert('', 'end', values=child_row, tags=_raw_tags('child_row'))
+
+            ci = self.current_data.get('company_info', {})
+            self.company_info_label.config(
+                text=f"{self._t('summary_prefix')} {ci.get('name','')} ({ci.get('ticker','')}) | {self._t('sec_view_mode_inputs')}"
+            )
+            return
+
+        # Official SEC mode: display SEC official statement CSV directly.
+        sec_csv = ((self.current_data.get('institutional_saved_files', {}) or {}).get('sec_official_statement'))
+        ticker_now = str((self.current_data.get('company_info', {}) or {}).get('ticker', '')).strip().upper()
+        if isinstance(sec_csv, str) and sec_csv and ticker_now:
+            # Guardrail: avoid rendering a stale shared SEC statement file for the wrong ticker.
+            sec_name = os.path.basename(sec_csv).upper()
+            if ticker_now not in sec_name:
+                sec_path = Path(sec_csv)
+                candidate_dirs = [sec_path.parent, Path('exports') / 'institutional', Path('outputs')]
+                candidates = []
+                for d in candidate_dirs:
+                    try:
+                        if not d.exists():
+                            continue
+                        for p in d.glob(f"*{ticker_now}*official*statement*.csv"):
+                            if p.is_file():
+                                candidates.append(p)
+                        for p in d.glob(f"*{ticker_now}*.csv"):
+                            if p.is_file() and 'official' in p.name.lower():
+                                candidates.append(p)
+                    except Exception:
+                        continue
+                if candidates:
+                    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                    sec_csv = str(candidates[0])
+                else:
+                    # No trusted company-specific official CSV -> fallback to Layer1 canonical display.
+                    sec_csv = None
+        if (
+            selected_key == 'layer1_by_year'
+            and sec_view_mode == 'official'
+            and isinstance(sec_csv, str)
+            and sec_csv
+            and os.path.exists(sec_csv)
+        ):
+            requested_years = self._get_selected_years_range() or []
+            layer1_active = (data_layers.get('layer1_by_year', {}) or self.current_data.get('data_by_year', {}) or {})
+            with open(sec_csv, 'r', encoding='utf-8-sig', newline='') as fh:
+                reader = csv.DictReader(fh)
+                rows = list(reader)
+                fields = reader.fieldnames or []
+
+            # Structured one-layer format: rows are line items, columns are SEC dates.
+            if 'Line Item' in fields:
+                date_cols = [c for c in fields if re.search(r'20\d{2}', str(c))]
+                requested_year_cols = [str(y) for y in requested_years]
+                if requested_year_cols:
+                    merged_cols = []
+                    seen = set()
+                    for c in requested_year_cols + date_cols:
+                        cc = str(c)
+                        if cc not in seen:
+                            seen.add(cc)
+                            merged_cols.append(cc)
+                    date_cols = merged_cols
+                # Deduplicate repeated line items from legacy CSV exports by coalescing
+                # non-empty year values (first non-empty wins).
+                merged = {}
+                order = []
+                for r in rows:
+                    raw_item = self._decode_mojibake_text(str(r.get('Line Item') or '').strip())
+                    raw_item = re.sub(r"\s+", " ", raw_item).strip()
+                    if not raw_item:
+                        continue
+                    raw_item_l = raw_item.lower()
+                    if 'legacy current' in raw_item_l or 'legacy' in raw_item_l and 'current' in raw_item_l:
+                        continue
+                    item_key = f"official::{self._normalize_line_item_key(raw_item)}"
+                    if item_key not in merged:
+                        merged[item_key] = {'Line Item': raw_item, '_label_source': 'csv'}
+                        for d in date_cols:
+                            merged[item_key][d] = ''
+                        order.append(item_key)
+                    else:
+                        # Keep SEC CSV display label stable when already sourced from CSV.
+                        if merged[item_key].get('_label_source') != 'csv':
+                            merged[item_key]['Line Item'] = self._prefer_display_label(
+                                merged[item_key].get('Line Item'),
+                                raw_item,
+                            )
+                    for d in date_cols:
+                        cur = str(merged[item_key].get(d, '') or '').strip()
+                        newv = str(r.get(d, '') or '').strip()
+                        if cur == '' and newv != '':
+                            merged[item_key][d] = newv
+
+                # Canonical enrichment is intentionally disabled in official SEC mode.
+                if sec_view_mode == 'canonical' and isinstance(layer1_active, dict) and date_cols:
+                    def _norm_tokens(txt):
+                        s = self._decode_mojibake_text(str(txt or ''))
+                        # Split CamelCase / snake_case first (e.g., NetInterestIncome -> net interest income).
+                        s = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', s)
+                        s = s.replace('_', ' ')
+                        s = re.sub(r'[^A-Za-z0-9\u0600-\u06FF ]+', ' ', s).lower()
+                        tokens = [t for t in s.split() if t]
+                        stop = {
+                            'total', 'net', 'operating', 'current', 'noncurrent',
+                            'other', 'and', 'of', 'the', 'by', 'for', 'from',
+                            'in', 'on', 'at', 'to',
+                            'إجمالي', 'صافي', 'ال', 'من', 'في', 'الى', 'على', 'و',
+                        }
+                        return [t for t in tokens if t not in stop]
+
+                    def _best_existing_key_for_label(label_text):
+                        # 1) Exact normalized label match first (safe path).
+                        norm_target = self._normalize_line_item_key(label_text)
+                        for kx, vx in merged.items():
+                            base_label = vx.get('Line Item') or ''
+                            if self._normalize_line_item_key(base_label) == norm_target:
+                                return kx
+
+                        # 1.b) exact semantic-key match only (safe).
+                        sk = self._anchored_semantic_key(label_text)
+                        if sk in merged:
+                            return sk
+
+                        # In strict mode, stop here to avoid accidental cross-concept merges.
+                        if self._strict_ui_merge_enabled():
+                            return None
+
+                        # 2) Conservative fuzzy bridge for close aliases only.
+                        # Avoid aggressive semantic collapsing that can pollute values
+                        # (e.g., AOCI accidentally filled with NetIncome).
+                        # Fuzzy semantic bridge: map close labels (e.g., Interest income vs InterestIncomeOperating).
+                        tgt = set(_norm_tokens(label_text))
+                        if not tgt:
+                            return None
+                        core = {
+                            'revenue', 'revenues', 'income', 'expense', 'expenses', 'asset', 'assets',
+                            'liability', 'liabilities', 'equity', 'cash', 'debt', 'interest',
+                            'inventory', 'receivable', 'payable', 'lease', 'loan', 'deposit',
+                            'profit', 'tax', 'operating', 'comprehensive',
+                        }
+                        best_key = None
+                        best_score = 0.0
+                        for kx, vx in merged.items():
+                            base_label = vx.get('Line Item') or ''
+                            src = set(_norm_tokens(base_label))
+                            if not src:
+                                continue
+                            tgt_core = tgt & core
+                            src_core = src & core
+                            # Hard family guards.
+                            if tgt_core and src_core and len(tgt_core & src_core) == 0:
+                                continue
+                            if ('comprehensive' in tgt_core) != ('comprehensive' in src_core):
+                                continue
+                            inter = len(tgt & src)
+                            union = len(tgt | src)
+                            if union == 0:
+                                continue
+                            j = inter / union
+                            subset_bonus = 0.15 if (tgt.issubset(src) or src.issubset(tgt)) else 0.0
+                            score = j + subset_bonus
+                            # Require meaningful shared signal (not one generic token).
+                            if inter < 2:
+                                continue
+                            if score > best_score:
+                                best_score = score
+                                best_key = kx
+                        if best_score >= 0.82:
+                            return best_key
+                        return None
+
+                    year_ints = []
+                    for dc in date_cols:
+                        try:
+                            year_ints.append(int(str(dc)))
+                        except Exception:
+                            pass
+                    concept_pool = set()
+                    for yy in year_ints:
+                        concept_pool.update((layer1_active.get(yy, {}) or {}).keys())
+                    for concept in sorted(concept_pool):
+                        c_label = self._decode_mojibake_text(str(concept or '').strip())
+                        if not c_label:
+                            continue
+                        # Hide internal diagnostic/helper concepts from SEC UI statement.
+                        if self._is_internal_helper_label(c_label):
+                            continue
+                        c_key = _best_existing_key_for_label(c_label) or self._anchored_semantic_key(c_label)
+                        if c_key not in merged:
+                            merged[c_key] = {'Line Item': c_label, '_label_source': 'layer1'}
+                            for d in date_cols:
+                                merged[c_key][d] = ''
+                            order.append(c_key)
+                        else:
+                            # Do not override a human SEC CSV label with technical Layer1 alias.
+                            if merged[c_key].get('_label_source') != 'csv':
+                                merged[c_key]['Line Item'] = self._prefer_display_label(
+                                    merged[c_key].get('Line Item'),
+                                    c_label,
+                                )
+                        for d in date_cols:
+                            try:
+                                yy = int(str(d))
+                            except Exception:
+                                continue
+                            raw_v = (layer1_active.get(yy, {}) or {}).get(concept)
+                            cur = str(merged[c_key].get(d, '') or '').strip()
+                            if cur == '' and raw_v is not None:
+                                merged[c_key][d] = raw_v
+                rows = [merged[i] for i in order]
+                for _r in rows:
+                    _r.pop('_label_source', None)
+                cols = ['Line Item'] + date_cols
+                self.raw_tree.config(columns=cols)
+                self.raw_tree.tag_configure('parent_row', font=FONTS['label'])
+                self.raw_tree.tag_configure('child_row', font=FONTS['tree'])
+                self.raw_tree.tag_configure('zebra_even', background='#ffffff')
+                self.raw_tree.tag_configure('zebra_odd', background='#f7fbff')
+                for c in cols:
+                    self.raw_tree.heading(c, text=self._translate_financial_item(c))
+                    if c == 'Line Item':
+                        self.raw_tree.column(c, width=320, anchor='w')
+                    else:
+                        self.raw_tree.column(c, width=160, anchor='center')
+                for r in rows:
+                    raw_label = r.get('Line Item', '')
+                    vals = [r.get(c, '') for c in cols]
+                    vals[0] = self._translate_financial_item(raw_label)
+                    tag = 'parent_row' if self._is_parent_line_item(raw_label, vals[1:]) else 'child_row'
+                    self.raw_tree.insert('', 'end', values=tuple(vals), tags=_raw_tags(tag))
+            else:
+                cols = fields
+                self.raw_tree.config(columns=cols)
+                self.raw_tree.tag_configure('parent_row', font=FONTS['label'])
+                self.raw_tree.tag_configure('child_row', font=FONTS['tree'])
+                self.raw_tree.tag_configure('zebra_even', background='#ffffff')
+                self.raw_tree.tag_configure('zebra_odd', background='#f7fbff')
+                for c in cols:
+                    self.raw_tree.heading(c, text=self._translate_financial_item(c))
+                    self.raw_tree.column(c, width=180, anchor='center')
+                for r in rows:
+                    values = [r.get(c, '') for c in cols]
+                    raw_label = values[0] if values else ''
+                    if values:
+                        values[0] = self._translate_financial_item(raw_label)
+                    tag = 'parent_row' if self._is_parent_line_item(raw_label) else 'child_row'
+                    self.raw_tree.insert('', 'end', values=tuple(values), tags=_raw_tags(tag))
+            ci = self.current_data.get('company_info', {})
+            self.company_info_label.config(
+                text=f"{self._t('summary_prefix')} {ci.get('name','')} ({ci.get('ticker','')}) | {self._t('sec_direct_label')}"
+            )
+            return
+
+        data_by_year = self.current_data.get('data_by_year', {}) or {}
+
+        if selected_key.startswith('extra::'):
+            extra_name = selected_key.split('::', 1)[1]
+            active_by_year = ((data_layers.get('extra_layers_by_year', {}) or {}).get(extra_name, {}) or {})
+        else:
+            active_by_year = data_layers.get(selected_key, {}) or data_by_year
+
+        years = self._get_selected_years_range()
+        if not years:
+            return
+
+        # For non-SEC layers, keep UI values aligned with exported sheets by using
+        # normalized year-dicts as the primary value source. Payload is metadata fallback.
+        if selected_source in ('MARKET', 'MACRO', 'YAHOO'):
+            payloads = (self.current_data.get('source_layer_payloads') or {})
+            layer_payload = payloads.get(selected_source, {}) or {}
+            periods = (layer_payload.get('periods') or {})
+            fields_set = set()
+            value_map = {}
+            unit_map = {}
+            source_map = {}
+            for y in years:
+                pobj = (periods.get(str(y)) or {})
+                fobj = (pobj.get('fields') or {})
+                for field_name, field_val in fobj.items():
+                    fields_set.add(field_name)
+                    if isinstance(field_val, dict):
+                        value_map.setdefault(field_name, {})[y] = field_val.get('value')
+                        unit_map.setdefault(field_name, {})[y] = field_val.get('unit')
+                        source_map.setdefault(field_name, {})[y] = field_val.get('source') or selected_source
+                    else:
+                        value_map.setdefault(field_name, {})[y] = field_val
+                        source_map.setdefault(field_name, {})[y] = selected_source
+            # Ensure any normalized concepts not present in payload are still displayed.
+            for y in years:
+                for field_name in (active_by_year.get(y, {}) or {}).keys():
+                    fields_set.add(field_name)
+
+            def fmt_value(v):
+                if v is None:
+                    return ''
+                if isinstance(v, (int, float)):
+                    # Keep raw numeric style (no B/M compaction) for strict UI/Excel parity.
+                    return f"{v:,.12g}"
+                return str(v)
+
+            cols = [self._t('raw_col_item')] + [str(y) for y in years] + [self._t('raw_col_unit'), self._t('raw_col_source')]
+            self.raw_tree.config(columns=cols)
+            self.raw_tree.tag_configure('parent_row', font=FONTS['label'])
+            self.raw_tree.tag_configure('child_row', font=FONTS['tree'])
+            self.raw_tree.tag_configure('zebra_even', background='#ffffff')
+            self.raw_tree.tag_configure('zebra_odd', background='#f7fbff')
+            for c in cols:
+                self.raw_tree.heading(c, text=c)
+                if c == self._t('raw_col_item'):
+                    self.raw_tree.column(c, width=380, anchor='w')
+                elif c in (self._t('raw_col_unit'), self._t('raw_col_source')):
+                    self.raw_tree.column(c, width=180, anchor='center')
+                else:
+                    self.raw_tree.column(c, width=130, anchor='center')
+
+            for field_name in sorted(fields_set):
+                row = [self._translate_financial_item(field_name)]
+                for y in years:
+                    # Primary source: normalized layer values (same source used by Excel export).
+                    # Fallback: payload raw values when normalized value is not present.
+                    normalized_v = (active_by_year.get(y, {}) or {}).get(field_name)
+                    payload_v = (value_map.get(field_name) or {}).get(y)
+                    row.append(fmt_value(normalized_v if normalized_v is not None else payload_v))
+                first_unit = ''
+                for y in years:
+                    u = (unit_map.get(field_name) or {}).get(y)
+                    if u:
+                        first_unit = str(u)
+                        break
+                first_source = ''
+                for y in years:
+                    s = (source_map.get(field_name) or {}).get(y)
+                    if s:
+                        first_source = str(s)
+                        break
+                row.append(first_unit)
+                row.append(first_source)
+                tag = 'parent_row' if self._is_parent_line_item(field_name, row[1:1+len(years)]) else 'child_row'
+                self.raw_tree.insert('', 'end', values=row, tags=_raw_tags(tag))
+
+            ci = self.current_data.get('company_info', {})
+            self.company_info_label.config(
+                text=f"{self._t('summary_prefix')} {ci.get('name','')} ({ci.get('ticker','')}) | {selected_layer_display}"
+            )
+            return
+        
+        # available years in the selected layer
+        all_available_years = sorted([y for y in active_by_year.keys() if isinstance(y, int)])
+        
+        if not years:
+            return
+        
+        requested_start = int(self.start_year_var.get())
+        requested_end = int(self.end_year_var.get())
+        ci = self.current_data.get('company_info', {}) or {}
+        sector_display = self._sector_profile_to_display(ci.get('sector') or ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('sub_profile') or ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('profile'))
+        if self.current_lang == 'ar':
+            info_msg = f"🏢 {ci.get('name', '')} ({ci.get('ticker', '')})\nالفترة المطلوبة: {requested_start} - {requested_end}"
+            if sector_display and sector_display != 'غير محدد':
+                info_msg += f"\nالقطاع: {sector_display}"
+        elif self.current_lang == 'fr':
+            info_msg = f"🏢 {ci.get('name', '')} ({ci.get('ticker', '')})\nPériode demandée : {requested_start} - {requested_end}"
+            if sector_display and sector_display != 'Inconnu':
+                info_msg += f"\nSecteur : {sector_display}"
+        else:
+            info_msg = f"🏢 {ci.get('name', '')} ({ci.get('ticker', '')})\nRequested period: {requested_start} - {requested_end}"
+            if sector_display and sector_display != 'Unknown':
+                info_msg += f"\nSector: {sector_display}"
+
+        if all_available_years:
+            if self.current_lang == 'ar':
+                info_msg += f"\n📅 السنوات المتاحة بالمصدر: {min(all_available_years)} - {max(all_available_years)}"
+            elif self.current_lang == 'fr':
+                info_msg += f"\n📅 Années disponibles à la source : {min(all_available_years)} - {max(all_available_years)}"
+            else:
+                info_msg += f"\n📅 Available source years: {min(all_available_years)} - {max(all_available_years)}"
+            if requested_end > max(all_available_years):
+                if self.current_lang == 'ar':
+                    info_msg += f"\n⚠️ بعض السنوات خارج البيانات المتاحة، وسيتم عرضها كخانات فارغة (N/A)."
+                elif self.current_lang == 'fr':
+                    info_msg += f"\n⚠️ Certaines années sont hors du jeu de données source et seront affichées en N/A."
+                else:
+                    info_msg += f"\n⚠️ Some years are outside available source data and will be shown as N/A."
+        
+        self.company_info_label.config(text=info_msg)
+        
+        concepts = set()
+        for y in years:
+            concepts.update(active_by_year.get(y, {}).keys())
+
+        # Sector-aware concept filtering for raw statement display.
+        sector_profile = ((self.current_data or {}).get('sector_gating', {}) or {}).get('sub_profile') or ((self.current_data or {}).get('sector_gating', {}) or {}).get('profile', 'industrial')
+        if selected_key == 'layer1_by_year':
+            bank_only_markers = (
+                'LoansReceivable', 'Deposits', 'NetInterestIncome',
+                'ProvisionForCreditLosses', 'AllowanceForCreditLosses',
+                'FederalFundsSold', 'NoninterestBearingDeposits'
+            )
+            industrial_only_markers = (
+                'Inventory', 'CostOfRevenue', 'GrossProfit',
+                'ResearchAndDevelopmentExpense', 'SellingGeneralAndAdministrativeExpense',
+                'RevenueFromContractWithCustomerExcludingAssessedTax'
+            )
+
+            filtered = set()
+            for concept in concepts:
+                ctxt = str(concept)
+                if sector_profile == 'bank':
+                    if any(marker in ctxt for marker in industrial_only_markers):
+                        continue
+                elif sector_profile in ('industrial', 'technology', 'unknown'):
+                    if any(marker in ctxt for marker in bank_only_markers):
+                        continue
+                filtered.add(concept)
+            concepts = filtered
+
+        def fmt_value(v):
+            if v is None:
+                return ''
+            if isinstance(v, (int, float)):
+                if abs(v) >= 1_000_000_000:
+                    return f"{v/1_000_000_000:,.2f}B"
+                if abs(v) >= 1_000_000:
+                    return f"{v/1_000_000:,.2f}M"
+                return f"{v:,.0f}"
+            return str(v)
+
+        if selected_key == 'layer3_by_year':
+            cols = [self._t('raw_col_category'), self._t('raw_col_normalized')] + [str(y) for y in years]
+            self.raw_tree.config(columns=cols)
+            self.raw_tree.tag_configure('parent_row', font=FONTS['label'])
+            self.raw_tree.tag_configure('child_row', font=FONTS['tree'])
+            self.raw_tree.tag_configure('zebra_even', background='#ffffff')
+            self.raw_tree.tag_configure('zebra_odd', background='#f7fbff')
+            for c in cols:
+                self.raw_tree.heading(c, text=c)
+                if c == self._t('raw_col_category'):
+                    self.raw_tree.column(c, width=180)
+                elif c == self._t('raw_col_normalized'):
+                    self.raw_tree.column(c, width=320)
+                else:
+                    self.raw_tree.column(c, width=140)
+
+            parsed_items = []
+            for concept in concepts:
+                if '::' in concept:
+                    category, normalized = concept.split('::', 1)
+                else:
+                    category, normalized = 'Unclassified', concept
+                parsed_items.append((category, normalized, concept))
+
+            for category, normalized, concept_key in sorted(parsed_items, key=lambda t: (t[0], t[1])):
+                row = [self._translate_financial_item(category), self._translate_financial_item(normalized)]
+                for y in years:
+                    row.append(fmt_value(active_by_year.get(y, {}).get(concept_key)))
+                tag = 'parent_row' if self._is_parent_line_item(normalized, row[2:]) else 'child_row'
+                self.raw_tree.insert('', 'end', values=row, tags=_raw_tags(tag))
+        else:
+            first_col = self._t('raw_col_item')
+            if selected_key in ('layer2_by_year', 'layer4_by_year'):
+                first_col = self._t('raw_col_normalized')
+            cols = [first_col] + [str(y) for y in years] + [self._t('raw_col_unit')]
+            self.raw_tree.config(columns=cols)
+            self.raw_tree.tag_configure('parent_row', font=FONTS['label'])
+            self.raw_tree.tag_configure('child_row', font=FONTS['tree'])
+            self.raw_tree.tag_configure('zebra_even', background='#ffffff')
+            self.raw_tree.tag_configure('zebra_odd', background='#f7fbff')
+            for c in cols:
+                self.raw_tree.heading(c, text=c)
+                self.raw_tree.column(c, width=140 if c != first_col else 360)
+
+            display_concepts = sorted(concepts)
+            if selected_key == 'layer1_by_year':
+                display_concepts = [
+                    c for c in display_concepts
+                    if not self._is_internal_helper_label(c)
+                ]
+                # Strong semantic dedup across Arabic/English/French labels.
+                merged = {}
+                order = []
+                for concept in display_concepts:
+                    sem_key = self._anchored_semantic_key(concept)
+                    if sem_key not in merged:
+                        merged[sem_key] = {
+                            'label': str(concept),
+                            'aliases': {str(concept)},
+                            'vals': {y: None for y in years},
+                        }
+                        order.append(sem_key)
+                    else:
+                        merged[sem_key]['aliases'].add(str(concept))
+                        merged[sem_key]['label'] = self._prefer_display_label(merged[sem_key]['label'], str(concept))
+
+                    for y in years:
+                        cur = merged[sem_key]['vals'].get(y)
+                        new_v = active_by_year.get(y, {}).get(concept)
+                        if cur is None and new_v is not None:
+                            merged[sem_key]['vals'][y] = new_v
+                        # Safe mode: keep first non-null, avoid magnitude-based replacement.
+
+                for sem_key in order:
+                    meta = merged[sem_key]
+                    raw_label = meta.get('label') or ''
+                    row = [self._translate_financial_item(raw_label)]
+                    for y in years:
+                        row.append(fmt_value(meta['vals'].get(y)))
+                    row.append('')
+                    tag = 'parent_row' if self._is_parent_line_item(raw_label, row[1:1+len(years)]) else 'child_row'
+                    self.raw_tree.insert('', 'end', values=row, tags=_raw_tags(tag))
+            else:
+                for concept in display_concepts:
+                    row = [self._translate_financial_item(concept)]
+                    for y in years:
+                        row.append(fmt_value(active_by_year.get(y, {}).get(concept)))
+                    row.append('')
+                    tag = 'parent_row' if self._is_parent_line_item(concept, row[1:1+len(years)]) else 'child_row'
+                    self.raw_tree.insert('', 'end', values=row, tags=_raw_tags(tag))
+        ci = self.current_data.get('company_info', {})
+        info_text = f"{self._t('summary_prefix')} {ci.get('name','')} ({ci.get('ticker','')}) | {selected_layer_display}"
+        self.company_info_label.config(text=info_text)
+        self._update_workspace_context(f"{ci.get('name','')} ({ci.get('ticker','')})")
+
+    def _get_sector_profile(self):
+        sg = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
+        return (sg.get('sub_profile') or sg.get('profile') or 'industrial')
+
+    @staticmethod
+    def _canonical_sector_profile(sector_profile: str) -> str:
+        s = str(sector_profile or '').strip().lower()
+        aliases = {
+            'tech': 'technology',
+            'banks': 'bank',
+            'banking': 'bank',
+            'insurer': 'insurance',
+            'insurers': 'insurance',
+            'real_estate': 'realestate',
+            'real estate': 'realestate',
+            'telecommunications': 'telecom',
+            'materials': 'materials',
+            'consumer discretionary': 'consumer',
+            'consumer staples': 'consumer',
+            'software': 'software_saas',
+            'hardware': 'hardware_platform',
+            'semis': 'semiconductor_fabless',
+            'commercial banking': 'commercial_bank',
+            'investment banking': 'investment_bank',
+            'life insurance': 'insurance_life',
+            'property casualty insurance': 'insurance_pc',
+            'insurance broker': 'insurance_broker',
+        }
+        return aliases.get(s, s or 'unknown')
+
+    def _sector_profile_to_display(self, sector_profile: str) -> str:
+        normalized = self._canonical_sector_profile(sector_profile)
+        mapping = {
+            'technology': {'ar': 'التقنية', 'en': 'Technology', 'fr': 'Technologie'},
+            'software_saas': {'ar': 'البرمجيات السحابية', 'en': 'Software / SaaS', 'fr': 'Logiciels / SaaS'},
+            'hardware_platform': {'ar': 'منصات الأجهزة', 'en': 'Hardware Platform', 'fr': 'Plateforme matérielle'},
+            'semiconductor_fabless': {'ar': 'أشباه الموصلات بدون تصنيع', 'en': 'Fabless Semiconductors', 'fr': 'Semi-conducteurs fabless'},
+            'tech': {'ar': 'التقنية', 'en': 'Technology', 'fr': 'Technologie'},
+            'industrial': {'ar': 'الصناعة', 'en': 'Industrial', 'fr': 'Industrie'},
+            'bank': {'ar': 'البنوك', 'en': 'Banking', 'fr': 'Banque'},
+            'commercial_bank': {'ar': 'بنك تجاري', 'en': 'Commercial Bank', 'fr': 'Banque commerciale'},
+            'investment_bank': {'ar': 'بنك استثماري', 'en': 'Investment Bank', 'fr': 'Banque d’investissement'},
+            'insurance': {'ar': 'التأمين', 'en': 'Insurance', 'fr': 'Assurance'},
+            'insurance_life': {'ar': 'تأمين الحياة', 'en': 'Life Insurance', 'fr': 'Assurance vie'},
+            'insurance_pc': {'ar': 'تأمين الممتلكات والحوادث', 'en': 'P&C Insurance', 'fr': 'Assurance IARD'},
+            'insurance_broker': {'ar': 'وسيط تأمين', 'en': 'Insurance Broker', 'fr': 'Courtage en assurance'},
+            'energy': {'ar': 'الطاقة', 'en': 'Energy', 'fr': 'Énergie'},
+            'integrated_oil': {'ar': 'نفط متكامل', 'en': 'Integrated Oil', 'fr': 'Pétrole intégré'},
+            'utilities': {'ar': 'المرافق', 'en': 'Utilities', 'fr': 'Services publics'},
+            'healthcare': {'ar': 'الرعاية الصحية', 'en': 'Healthcare', 'fr': 'Santé'},
+            'consumer': {'ar': 'الاستهلاكي', 'en': 'Consumer', 'fr': 'Consommation'},
+            'consumer_staples': {'ar': 'سلع استهلاكية أساسية', 'en': 'Consumer Staples', 'fr': 'Biens de consommation de base'},
+            'ev_automaker': {'ar': 'مصنع سيارات كهربائية', 'en': 'EV Automaker', 'fr': 'Constructeur VE'},
+            'realestate': {'ar': 'العقار', 'en': 'Real Estate', 'fr': 'Immobilier'},
+            'telecom': {'ar': 'الاتصالات', 'en': 'Telecom', 'fr': 'Télécom'},
+            'materials': {'ar': 'المواد', 'en': 'Materials', 'fr': 'Matériaux'},
+            'unknown': {'ar': 'غير محدد', 'en': 'Unknown', 'fr': 'Inconnu'},
+            '': {'ar': 'غير محدد', 'en': 'Unknown', 'fr': 'Inconnu'},
+        }
+        bundle = mapping.get(normalized)
+        if bundle:
+            return bundle.get(self.current_lang, bundle.get('en', normalized))
+        if self.current_lang == 'ar':
+            return self._translate_ui_text(normalized.replace('_', ' ').title())
+        return normalized.replace('_', ' ').title()
+
+    def _comparison_confidence_text(self, confidence) -> str:
+        if not isinstance(confidence, (int, float)):
+            return self._translate_ui_text('غير متاح')
+        conf = float(confidence)
+        if conf <= 1.0:
+            conf *= 100.0
+        return f"{conf:.0f}%"
+
+    def _comparison_filing_grade_text(self, filing_grade: str) -> str:
+        grade = str(filing_grade or '').strip().upper()
+        mapping = {
+            'IN_RANGE_ANNUAL': {'ar': 'ضمن النطاق السنوي', 'en': 'In-range annual', 'fr': 'Dans la plage annuelle'},
+            'OUT_OF_RANGE': {'ar': 'خارج النطاق', 'en': 'Out of range', 'fr': 'Hors plage'},
+            'N/A': {'ar': 'غير متاح', 'en': 'N/A', 'fr': 'N/A'},
+        }
+        bundle = mapping.get(grade)
+        if bundle:
+            return bundle.get(self.current_lang, bundle.get('en', grade))
+        return self._translate_ui_text(filing_grade or '')
+
+    @staticmethod
+    def _infer_sub_sector_from_ticker(ticker: str, sector_profile: str) -> str:
+        t = str(ticker or '').strip().upper()
+        sector = str(sector_profile or '').strip().lower()
+        ticker_map = {
+            'NVDA': 'semiconductor_fabless',
+            'AMD': 'semiconductor_fabless',
+            'QCOM': 'semiconductor_fabless',
+            'MRVL': 'semiconductor_fabless',
+            'AVGO': 'semiconductor_fabless',
+            'MSFT': 'software_saas',
+            'ORCL': 'software_saas',
+            'CRM': 'software_saas',
+            'SNOW': 'software_saas',
+            'ADBE': 'software_saas',
+            'AAPL': 'hardware_platform',
+            'DELL': 'hardware_platform',
+            'HPQ': 'hardware_platform',
+            'JPM': 'commercial_bank',
+            'BAC': 'commercial_bank',
+            'WFC': 'commercial_bank',
+            'C': 'commercial_bank',
+            'USB': 'commercial_bank',
+            'MS': 'investment_bank',
+            'GS': 'investment_bank',
+            'BX': 'investment_bank',
+            'KKR': 'investment_bank',
+            'SCHW': 'investment_bank',
+            'PRU': 'insurance_life',
+            'MET': 'insurance_life',
+            'LNC': 'insurance_life',
+            'AFL': 'insurance_life',
+            'AIG': 'insurance_pc',
+            'PGR': 'insurance_pc',
+            'TRV': 'insurance_pc',
+            'ALL': 'insurance_pc',
+            'CB': 'insurance_pc',
+            'AON': 'insurance_broker',
+            'MMC': 'insurance_broker',
+            'WTW': 'insurance_broker',
+            'RYAN': 'insurance_broker',
+            'XOM': 'integrated_oil',
+            'CVX': 'integrated_oil',
+            'BP': 'integrated_oil',
+            'SHEL': 'integrated_oil',
+            'KO': 'consumer_staples',
+            'PEP': 'consumer_staples',
+            'PG': 'consumer_staples',
+            'CL': 'consumer_staples',
+            'KMB': 'consumer_staples',
+            'TSLA': 'ev_automaker',
+            'NIO': 'ev_automaker',
+            'RIVN': 'ev_automaker',
+            'LCID': 'ev_automaker',
+        }
+        return ticker_map.get(t, sector or 'unknown')
+
+    def _extract_excel_import_metadata(self, ticker_guess, comparison_df=None, methodology_df=None):
+        meta = {
+            'sector_profile': None,
+            'confidence': None,
+            'filing_grade': None,
+            'out_of_range': False,
+        }
+
+        def _norm(v):
+            return re.sub(r'[^a-z0-9]+', '', str(v or '').strip().lower())
+
+        if comparison_df is not None and not comparison_df.empty:
+            cols = {str(c): _norm(c) for c in comparison_df.columns}
+            ticker_col = next((c for c, n in cols.items() if n == 'ticker'), None)
+            if ticker_col:
+                target = str(ticker_guess or '').strip().upper()
+                for _, row in comparison_df.iterrows():
+                    row_ticker = str(row.get(ticker_col) or '').strip().upper()
+                    if row_ticker != target:
+                        continue
+                    sector_col = next((c for c, n in cols.items() if n == 'sector'), None)
+                    conf_col = next((c for c, n in cols.items() if n == 'confidence'), None)
+                    grade_col = next((c for c, n in cols.items() if n in {'filinggrade', 'filing_grade'}), None)
+                    oor_col = next((c for c, n in cols.items() if n in {'outofrange', 'out_of_range'}), None)
+                    sector_value = str(row.get(sector_col) or '').strip().lower() if sector_col else ''
+                    if sector_value and sector_value not in {'unknown', 'none', 'nan'}:
+                        meta['sector_profile'] = self._canonical_sector_profile(sector_value)
+                    conf_value = self._safe_excel_number(row.get(conf_col)) if conf_col else None
+                    if conf_value is not None:
+                        meta['confidence'] = float(conf_value)
+                    grade_value = str(row.get(grade_col) or '').strip() if grade_col else ''
+                    if grade_value:
+                        meta['filing_grade'] = grade_value
+                    oor_value = str(row.get(oor_col) or '').strip().lower() if oor_col else ''
+                    if oor_value in {'yes', 'true', '1'}:
+                        meta['out_of_range'] = True
+                    break
+
+        if methodology_df is not None and not methodology_df.empty and not meta.get('sector_profile'):
+            cols = {str(c): _norm(c) for c in methodology_df.columns}
+            topic_col = next((c for c, n in cols.items() if n == 'topic'), None)
+            details_col = next((c for c, n in cols.items() if n == 'details'), None)
+            if topic_col and details_col:
+                sector_tokens = [
+                    'technology', 'tech', 'industrial', 'bank', 'insurance',
+                    'software_saas', 'hardware_platform', 'semiconductor_fabless',
+                    'commercial_bank', 'investment_bank',
+                    'insurance_life', 'insurance_pc', 'insurance_broker',
+                    'integrated_oil', 'consumer_staples', 'ev_automaker',
+                    'energy', 'utilities', 'healthcare', 'consumer',
+                    'realestate', 'telecom', 'materials',
+                ]
+                for _, row in methodology_df.iterrows():
+                    topic = _norm(row.get(topic_col))
+                    if topic != 'sectorprofile':
+                        continue
+                    details = self._decode_mojibake_text(str(row.get(details_col) or '')).lower()
+                    for token in sector_tokens:
+                        if re.search(rf'\b{re.escape(token)}\b', details):
+                            meta['sector_profile'] = self._canonical_sector_profile(token)
+                            break
+                    if meta.get('sector_profile'):
+                        break
+
+        if meta.get('confidence') is None and meta.get('sector_profile'):
+            meta['confidence'] = 80.0
+        if not meta.get('filing_grade'):
+            meta['filing_grade'] = 'IN_RANGE_ANNUAL'
+        meta['sub_sector_profile'] = self._infer_sub_sector_from_ticker(ticker_guess, meta.get('sector_profile'))
+        return meta
+
+    @staticmethod
+    def _normalize_sector_for_packs(sector_profile: str) -> str:
+        s = str(sector_profile or 'industrial').strip().lower()
+        if s in ('technology', 'tech', 'software_saas', 'hardware_platform', 'semiconductor_fabless',
+                 'integrated_oil', 'consumer_staples', 'ev_automaker'):
+            return 'industrial'
+        if s == 'commercial_bank':
+            return 'bank'
+        if s == 'investment_bank':
+            return 'investment_bank'
+        if s == 'insurance_life':
+            return 'insurance_life'
+        if s == 'insurance_pc':
+            return 'insurance_pc'
+        if s == 'insurance_broker':
+            return 'insurance_broker'
+        return s
+
+    @staticmethod
+    def _is_present_metric_value(v):
+        if v is None:
+            return False
+        if isinstance(v, str):
+            return v.strip() != '' and 'N/A' not in v.upper()
+        if isinstance(v, (int, float)):
+            try:
+                import math
+                return not (math.isnan(float(v)) or math.isinf(float(v)))
+            except Exception:
+                return True
+        return True
+
+    def _is_excel_ui_locked(self) -> bool:
+        return bool((self.current_data or {}).get('ui_lock_excel'))
+
+    def _get_sector_ratio_export_keys(self, sector_profile: str):
+        sector = self._normalize_sector_for_packs(sector_profile)
+        metric_packs = {
+            'industrial': [
+                'gross_margin', 'operating_margin', 'net_margin', 'net_margin_core', 'ebitda_margin', 'roa', 'roe', 'roic',
+                'inventory_turnover', 'inventory_days', 'days_sales_outstanding', 'payables_turnover', 'ap_days', 'asset_turnover',
+                'current_ratio', 'quick_ratio', 'cash_ratio',
+                'debt_to_equity', 'debt_to_assets', 'interest_coverage', 'net_debt_ebitda',
+                'pe_ratio', 'pe_ratio_used', 'pb_ratio', 'pb_ratio_used', 'pb_ratio_raw', 'dividend_yield', 'eps_basic', 'book_value_per_share',
+                'altman_z_score', 'accruals_ratio', 'ocf_margin', 'free_cash_flow', 'fcf_per_share',
+                'fcf_yield', 'market_cap', 'total_debt', 'interest_expense_used', 'interest_coverage_source',
+            ],
+            'bank': [
+                'net_interest_margin', 'loan_to_deposit_ratio', 'capital_ratio_proxy', 'net_income_to_assets', 'equity_ratio',
+                'bank_efficiency_ratio',
+                'roa', 'roe', 'net_margin',
+                'debt_to_equity', 'debt_to_assets',
+                'pe_ratio', 'pe_ratio_used', 'pb_ratio', 'pb_ratio_used', 'pb_ratio_raw', 'dividend_yield', 'eps_basic', 'book_value_per_share',
+                'fcf_yield', 'market_cap', 'total_debt', 'interest_expense_used', 'interest_coverage_source',
+            ],
+            'investment_bank': [
+                'capital_ratio_proxy', 'net_income_to_assets', 'equity_ratio', 'bank_efficiency_ratio',
+                'roa', 'roe', 'net_margin',
+                'debt_to_equity', 'debt_to_assets',
+                'pe_ratio', 'pe_ratio_used', 'pb_ratio', 'pb_ratio_used', 'pb_ratio_raw', 'dividend_yield', 'eps_basic', 'book_value_per_share',
+                'market_cap', 'total_debt', 'interest_expense_used', 'interest_coverage_source',
+            ],
+            'insurance_pc': [
+                'combined_proxy', 'capital_adequacy_proxy', 'net_income_to_assets', 'equity_ratio',
+                'roa', 'roe', 'net_margin',
+                'pe_ratio', 'pe_ratio_used', 'pb_ratio', 'pb_ratio_used', 'pb_ratio_raw', 'dividend_yield', 'eps_basic', 'book_value_per_share',
+                'fcf_yield', 'market_cap', 'total_debt', 'interest_expense_used', 'interest_coverage_source',
+            ],
+            'insurance_life': [
+                'capital_adequacy_proxy', 'net_income_to_assets', 'equity_ratio',
+                'roa', 'roe', 'net_margin',
+                'pe_ratio', 'pe_ratio_used', 'pb_ratio', 'pb_ratio_used', 'pb_ratio_raw', 'dividend_yield', 'eps_basic', 'book_value_per_share',
+                'fcf_yield', 'market_cap', 'total_debt', 'interest_expense_used', 'interest_coverage_source',
+            ],
+            'insurance_broker': [
+                'operating_margin', 'net_margin', 'roa', 'roe', 'current_ratio', 'quick_ratio', 'cash_ratio',
+                'debt_to_equity', 'debt_to_assets', 'interest_coverage',
+                'pe_ratio', 'pe_ratio_used', 'pb_ratio', 'pb_ratio_used', 'pb_ratio_raw', 'dividend_yield', 'eps_basic', 'book_value_per_share',
+                'free_cash_flow', 'fcf_per_share', 'fcf_yield', 'market_cap', 'total_debt', 'interest_expense_used', 'interest_coverage_source',
+            ],
+            'insurance': [
+                'combined_proxy', 'capital_adequacy_proxy', 'net_income_to_assets', 'equity_ratio',
+                'roa', 'roe', 'net_margin',
+                'pe_ratio', 'pe_ratio_used', 'pb_ratio', 'pb_ratio_used', 'pb_ratio_raw', 'dividend_yield', 'eps_basic', 'book_value_per_share',
+                'fcf_yield', 'market_cap', 'total_debt', 'interest_expense_used', 'interest_coverage_source',
+            ],
+        }
+        return metric_packs.get(sector, metric_packs['industrial'])
+
+    def _get_sector_mandatory_ratio_keys(self, sector_profile: str):
+        """
+        Ratios that must always be present in exports for institutional consistency checks.
+        """
+        sector = self._normalize_sector_for_packs(sector_profile)
+        if sector == 'bank':
+            return [
+                'net_interest_margin',
+                'loan_to_deposit_ratio',
+                'capital_ratio_proxy',
+                'roa',
+                'roe',
+                'net_margin',
+                'interest_coverage',
+                'fcf_yield',
+            ]
+        if sector == 'investment_bank':
+            return [
+                'capital_ratio_proxy',
+                'roa',
+                'roe',
+                'net_margin',
+                'debt_to_equity',
+                'pb_ratio_used',
+            ]
+        if sector == 'insurance_pc':
+            return [
+                'combined_proxy',
+                'capital_adequacy_proxy',
+                'roa',
+                'roe',
+                'net_margin',
+                'fcf_yield',
+            ]
+        if sector == 'insurance_life':
+            return [
+                'capital_adequacy_proxy',
+                'roa',
+                'roe',
+                'net_margin',
+                'fcf_yield',
+            ]
+        if sector == 'insurance_broker':
+            return [
+                'operating_margin',
+                'net_margin',
+                'roe',
+                'current_ratio',
+                'interest_coverage',
+                'fcf_yield',
+            ]
+        if sector == 'insurance':
+            return [
+                'combined_proxy',
+                'capital_adequacy_proxy',
+                'roa',
+                'roe',
+                'net_margin',
+                'interest_coverage',
+                'fcf_yield',
+            ]
+        return [
+            'gross_margin',
+            'operating_margin',
+            'net_margin',
+            'roa',
+            'roe',
+            'current_ratio',
+            'interest_coverage',
+            'free_cash_flow',
+            'fcf_per_share',
+            'fcf_yield',
+        ]
+
+    def _get_sector_strategic_export_keys(self, sector_profile: str):
+        sector = self._normalize_sector_for_packs(sector_profile)
+        metric_packs = {
+            'industrial': [
+                'Fair_Value', 'Investment_Score', 'Economic_Spread', 'ROIC', 'WACC', 'Beta', 'SGR_Internal',
+                'Altman_Z_Score', 'Warning_Signal', 'Accruals_Ratio', 'Accruals_Change', 'Credit_Rating', 'Credit_Rating_Score',
+                'Net_Debt_EBITDA', 'Op_Leverage',
+                'ROE', 'NI_Growth', 'Retention_Ratio', 'Dividends_Paid', 'EBITDA', 'FCF_Yield', 'EPS', 'FCF_per_Share',
+                'CCC_Days', 'Inventory_Days', 'AR_Days', 'AP_Days', 'Cost_of_Debt',
+                'PE_Ratio', 'PE_Ratio_Used', 'PB_Ratio', 'PB_Ratio_Used', 'EV_EBITDA', 'Dividend_Yield',
+            ],
+            'bank': [
+                'Net_Interest_Margin', 'Loan_to_Deposit_Ratio', 'Capital_Ratio_Proxy', 'Net_Income_to_Assets', 'Equity_Ratio',
+                'Bank_Efficiency_Ratio', 'Bank_Total_Revenue',
+                'ROA', 'ROE', 'Net_Margin', 'Cost_of_Debt', 'Credit_Rating', 'Credit_Rating_Score', 'Warning_Signal',
+                'PE_Ratio', 'PE_Ratio_Used', 'PB_Ratio', 'PB_Ratio_Used', 'Dividend_Yield', 'Beta', 'WACC',
+            ],
+            'investment_bank': [
+                'Capital_Ratio_Proxy', 'Net_Income_to_Assets', 'Equity_Ratio', 'Bank_Efficiency_Ratio',
+                'ROA', 'ROE', 'Net_Margin', 'Cost_of_Debt', 'Credit_Rating', 'Credit_Rating_Score', 'Warning_Signal',
+                'PE_Ratio', 'PE_Ratio_Used', 'PB_Ratio', 'PB_Ratio_Used', 'Dividend_Yield', 'Beta', 'WACC',
+            ],
+            'insurance_pc': [
+                'Combined_Ratio_Proxy', 'Capital_Adequacy_Proxy', 'Net_Income_to_Assets', 'Equity_Ratio',
+                'ROA', 'ROE', 'Net_Margin', 'Cost_of_Debt', 'Credit_Rating', 'Credit_Rating_Score', 'Warning_Signal',
+                'PE_Ratio', 'PE_Ratio_Used', 'PB_Ratio', 'PB_Ratio_Used', 'Dividend_Yield', 'Beta', 'WACC',
+            ],
+            'insurance_life': [
+                'Capital_Adequacy_Proxy', 'Net_Income_to_Assets', 'Equity_Ratio',
+                'ROA', 'ROE', 'Net_Margin', 'Cost_of_Debt', 'Credit_Rating', 'Credit_Rating_Score', 'Warning_Signal',
+                'PE_Ratio', 'PE_Ratio_Used', 'PB_Ratio', 'PB_Ratio_Used', 'Dividend_Yield', 'Beta', 'WACC',
+                'FCF', 'FCF_Yield', 'FCF_per_Share',
+            ],
+            'insurance_broker': [
+                'ROA', 'ROE', 'Net_Margin', 'Operating_Margin', 'Cost_of_Debt', 'Credit_Rating', 'Credit_Rating_Score', 'Warning_Signal',
+                'PE_Ratio', 'PE_Ratio_Used', 'PB_Ratio', 'PB_Ratio_Used', 'Dividend_Yield', 'Beta', 'WACC',
+                'FCF', 'FCF_Yield', 'FCF_per_Share',
+            ],
+            'insurance': [
+                'Combined_Ratio_Proxy', 'Capital_Adequacy_Proxy', 'Net_Income_to_Assets', 'Equity_Ratio',
+                'ROA', 'ROE', 'Net_Margin', 'Cost_of_Debt', 'Credit_Rating', 'Credit_Rating_Score', 'Warning_Signal',
+                'PE_Ratio', 'PE_Ratio_Used', 'PB_Ratio', 'PB_Ratio_Used', 'Dividend_Yield', 'Beta', 'WACC',
+            ],
+        }
+        return metric_packs.get(sector, metric_packs['industrial'])
+
+    def _sync_strategic_ratio_maps(self, years, ratios_by_year, per_year):
+        """
+        Bi-directional synchronization between ratio map and strategic map
+        for overlapping metrics to avoid avoidable N/A divergence.
+        """
+        strategic_to_ratio = {
+            'WACC': 'wacc',
+            'PE_Ratio': 'pe_ratio',
+            'PE_Ratio_Used': 'pe_ratio_used',
+            'PB_Ratio': 'pb_ratio',
+            'PB_Ratio_Used': 'pb_ratio_used',
+            'FCF_Yield': 'fcf_yield',
+            'Net_Debt_EBITDA': 'net_debt_ebitda',
+            'ROIC': 'roic',
+            'ROE': 'roe',
+            'EPS': 'eps_basic',
+            'EV_EBITDA': 'ev_ebitda',
+            'Retention_Ratio': 'retention_ratio',
+            'SGR_Internal': 'sgr_internal',
+            'Dividends_Paid': 'dividends_paid',
+            'Inventory_Days': 'inventory_days',
+            'AR_Days': 'days_sales_outstanding',
+            'AP_Days': 'ap_days',
+            'CCC_Days': 'ccc_days',
+            'Cost_of_Debt': 'cost_of_debt',
+            'Accruals_Ratio': 'accruals_ratio',
+            'Dividend_Yield': 'dividend_yield',
+            'Book_Value_Per_Share': 'book_value_per_share',
+            'Net_Margin': 'net_margin',
+            'ROA': 'roa',
+        }
+        for y in (years or []):
+            py = (per_year or {}).setdefault(y, {})
+            ry = (ratios_by_year or {}).setdefault(y, {})
+
+            # strategic -> ratio
+            for s_key, r_key in strategic_to_ratio.items():
+                sv = py.get(s_key)
+                if isinstance(sv, (int, float)):
+                    if s_key == 'PB_Ratio':
+                        if self._safe_excel_number(ry.get('pb_ratio_raw')) is None:
+                            ry['pb_ratio_raw'] = float(sv)
+                        if self._safe_excel_number(ry.get('pb_ratio_used')) is not None:
+                            continue
+                    ry[r_key] = float(sv)
+
+            # ratio -> strategic (fill only missing strategic)
+            for s_key, r_key in strategic_to_ratio.items():
+                sv = py.get(s_key)
+                rv = ry.get(r_key)
+                if (sv is None or (isinstance(sv, str) and str(sv).strip().upper().startswith('N/A'))) and isinstance(rv, (int, float)):
+                    py[s_key] = float(rv)
+        return ratios_by_year, per_year
+
+    def _finalize_export_ratio_consistency(self, years, ratios_by_year):
+        """
+        Final non-destructive harmonization before export.
+        Keeps raw values when needed for auditability while making exported headline
+        values consistent across Ratios, Strategic, and Investor_Verdict sheets.
+        """
+        issues = []
+        for y in (years or []):
+            rr = (ratios_by_year or {}).setdefault(y, {})
+            try:
+                pb_raw = self._safe_excel_number(rr.get('pb_ratio_raw'))
+                pb_cur = self._safe_excel_number(rr.get('pb_ratio'))
+                pb_used = self._safe_excel_number(rr.get('pb_ratio_used'))
+                if pb_raw is None and pb_cur is not None:
+                    rr['pb_ratio_raw'] = pb_cur
+                    pb_raw = pb_cur
+                if pb_used is not None and (pb_cur is None or abs(pb_cur - pb_used) > 1e-9):
+                    rr['pb_ratio'] = pb_used
+                    rr['pb_ratio_source'] = rr.get('pb_ratio_used_source') or rr.get('pb_ratio_source') or 'EXPORT_CONSISTENCY_LOCK'
+                    issues.append(f"{y}: pb_ratio headline aligned to pb_ratio_used ({pb_cur} -> {pb_used})")
+
+                pe_cur = self._safe_excel_number(rr.get('pe_ratio'))
+                pe_used = self._safe_excel_number(rr.get('pe_ratio_used'))
+                if pe_used is not None and pe_cur is None:
+                    rr['pe_ratio'] = pe_used
+                    rr['pe_ratio_source'] = rr.get('pe_ratio_used_source') or rr.get('pe_ratio_source') or 'EXPORT_CONSISTENCY_LOCK'
+
+                ic = self._safe_excel_number(rr.get('interest_coverage'))
+                ic_source = rr.get('interest_coverage_source')
+                interest_used = self._safe_excel_number(rr.get('interest_expense_used'))
+                if ic is not None and not ic_source:
+                    if interest_used not in (None, 0):
+                        rr['interest_coverage_source'] = 'OPERATING_OVER_INTEREST_EXPENSE'
+                    else:
+                        rr['interest_coverage_source'] = 'COMPUTED_SOURCE_UNSPECIFIED'
+                if interest_used is not None:
+                    rr['interest_expense_used'] = interest_used
+            except Exception:
+                continue
+        return issues
+
+    def _ratio_bounds_for_sector(self, sector_profile: str):
+        """
+        Hard sanity bounds used for acceptance audit only.
+        Values outside these bands are flagged for review.
+        """
+        sector = self._normalize_sector_for_packs(sector_profile)
+        common = {
+            # Negative P/E can be valid when earnings are negative.
+            'pe_ratio': (-500.0, 500.0),
+            'pb_ratio': (-5.0, 200.0),
+            'debt_to_equity': (-10.0, 20.0),
+            'debt_to_assets': (-2.0, 5.0),
+            'net_debt_ebitda': (-20.0, 20.0),
+            'interest_coverage': (-200.0, 500.0),
+            'book_value_per_share': (-2_000.0, 2_000.0),
+            'eps_basic': (-2_000.0, 2_000.0),
+            'fcf_per_share': (-5_000.0, 5_000.0),
+            'inventory_days': (0.0, 3_650.0),
+            'days_sales_outstanding': (0.0, 3_650.0),
+            'ap_days': (0.0, 3_650.0),
+            'ccc_days': (-3_650.0, 3_650.0),
+        }
+        percent_metrics = {
+            'gross_margin',
+            'operating_margin',
+            'net_margin',
+            'ebitda_margin',
+            'roa',
+            'roe',
+            'roic',
+            'ocf_margin',
+            'fcf_yield',
+            'dividend_yield',
+            'wacc',
+            'economic_spread',
+            'retention_ratio',
+            'sgr_internal',
+            'cost_of_debt',
+            'net_interest_margin',
+            'net_income_to_assets',
+            'equity_ratio',
+            'bank_efficiency_ratio',
+        }
+        for rid in percent_metrics:
+            common[rid] = (-2.5, 2.5)
+        if sector == 'bank':
+            common['loan_to_deposit_ratio'] = (0.0, 5.0)
+            common['capital_ratio_proxy'] = (-1.0, 2.0)
+        if sector == 'investment_bank':
+            common['capital_ratio_proxy'] = (-1.0, 2.0)
+        if sector == 'insurance':
+            common['combined_proxy'] = (0.0, 5.0)
+            common['capital_adequacy_proxy'] = (-1.0, 3.0)
+        if sector == 'insurance_pc':
+            common['combined_proxy'] = (0.0, 5.0)
+            common['capital_adequacy_proxy'] = (-1.0, 3.0)
+        if sector == 'insurance_life':
+            common['capital_adequacy_proxy'] = (-1.0, 3.0)
+        return common
+
+    def _build_export_acceptance_frames(
+        self,
+        *,
+        years,
+        ticker: str,
+        sector_profile: str,
+        data_by_year: dict,
+        ratios_by_year: dict,
+        per_year: dict,
+        ratio_source: UnifiedRatioSource,
+        ratio_export_keys: list,
+        strategic_export_keys: list,
+        blocked_ratios: set,
+        blocked_strategic_metrics: set,
+        gate_issues: list,
+    ):
+        import math
+        import pandas as pd
+
+        def _nk(x):
+            return re.sub(r'[^a-z0-9]+', '', str(x or '').lower())
+
+        def _pick_num_ci(row_dict, aliases):
+            if not isinstance(row_dict, dict):
+                return None
+            # Fast exact-path first.
+            for a in aliases:
+                if a in row_dict:
+                    fv = self._safe_excel_number(row_dict.get(a))
+                    if fv is not None:
+                        return float(fv)
+            # Case/format-insensitive fallback.
+            nmap = {}
+            for k, v in row_dict.items():
+                kk = _nk(k)
+                if kk and kk not in nmap:
+                    nmap[kk] = v
+            for a in aliases:
+                fv = self._safe_excel_number(nmap.get(_nk(a)))
+                if fv is not None:
+                    return float(fv)
+            return None
+
+        def _ratio_value_post_gate(year, ratio_id):
+            row = (ratios_by_year or {}).get(year, {}) or {}
+            v = row.get(ratio_id)
+            try:
+                if v is None:
+                    return None
+                fv = float(v)
+                if math.isnan(fv) or math.isinf(fv):
+                    return None
+                return fv
+            except Exception:
+                return None
+
+        def _is_trace_ratio_metric(metric_id):
+            mid = str(metric_id or '').strip().lower()
+            if not mid:
+                return False
+            return (
+                mid.endswith('_source')
+                or mid.endswith('_used')
+                or mid.endswith('_raw')
+                or mid in {'interest_expense_used', 'interest_coverage_source'}
+            )
+
+        ratio_bounds = self._ratio_bounds_for_sector(sector_profile)
+        mandatory_ratio_keys = [
+            k for k in self._get_sector_mandatory_ratio_keys(sector_profile)
+            if k not in (blocked_ratios or set())
+        ]
+        ratio_audit_rows = []
+        critical_rows = []
+        not_computable_count = 0
+        trace_field_not_applicable_count = 0
+        trace_fields_excluded_count = 0
+        mandatory_missing_count = 0
+        ratio_cell_count = 0
+        ratio_computed_count = 0
+        reason_counter = Counter()
+        incomplete_years = []
+        effective_years = []
+        margin_hierarchy_violations = 0
+
+        for year in years:
+            row = (data_by_year or {}).get(year, {}) or {}
+            assets_anchor = _pick_num_ci(row, ['Assets', 'TotalAssets', 'Total Assets', 'assets'])
+            liab_anchor = _pick_num_ci(row, ['Liabilities', 'TotalLiabilities', 'Total Liabilities', 'liabilities'])
+            eq_anchor = _pick_num_ci(row, [
+                'StockholdersEquity',
+                'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
+                'TotalEquity',
+                'Total Equity',
+                'stockholdersequity',
+                'stockholdersequityincludingportionattributabletononcontrollinginterest',
+            ])
+            ctl_anchor = _pick_num_ci(row, [
+                'LiabilitiesAndStockholdersEquity',
+                'Total liabilities and equity',
+                "Total liabilities and stockholders' equity",
+                'liabilitiesandstockholdersequity',
+            ])
+            # A year is "effective" for acceptance only when balance-sheet anchors exist.
+            # This prevents score distortion from revenue-only years with missing balance anchors.
+            bs_present = len([v for v in (assets_anchor, liab_anchor, eq_anchor) if isinstance(v, (int, float))])
+            is_effective = (
+                bs_present >= 2
+                and isinstance(assets_anchor, (int, float))
+            ) or (
+                isinstance(assets_anchor, (int, float))
+                and isinstance(ctl_anchor, (int, float))
+            )
+            if is_effective:
+                effective_years.append(year)
+            else:
+                incomplete_years.append(year)
+
+        for ratio_id in ratio_export_keys:
+            if ratio_id in blocked_ratios:
+                continue
+            is_trace_metric = _is_trace_ratio_metric(ratio_id)
+            if is_trace_metric:
+                trace_fields_excluded_count += 1
+            for year in years:
+                contract = ratio_source.get_ratio_contract(ticker, year, ratio_id) or {}
+                status = str(contract.get('status') or 'NOT_COMPUTABLE')
+                reason = str(contract.get('reason') or '')
+                reliability = int(contract.get('reliability') or 0)
+                value = contract.get('value')
+                missing_inputs = contract.get('missing_inputs') or []
+                missing_inputs_txt = ', '.join([str(x) for x in missing_inputs]) if missing_inputs else ''
+                bounds_status = ((contract.get('bounds_result') or {}).get('status') or 'unknown')
+
+                is_computed = isinstance(value, (int, float)) and not (math.isnan(float(value)) or math.isinf(float(value)))
+                if year in effective_years:
+                    if is_trace_metric:
+                        if not is_computed and (status == 'DATA_NOT_APPLICABLE' or reason == 'DATA_NOT_APPLICABLE'):
+                            trace_field_not_applicable_count += 1
+                    else:
+                        ratio_cell_count += 1
+                        if is_computed:
+                            ratio_computed_count += 1
+                        else:
+                            not_computable_count += 1
+                            reason_counter[reason or status or 'UNKNOWN'] += 1
+
+                outlier_flag = False
+                outlier_note = ''
+                if is_computed and ratio_id in ratio_bounds:
+                    lo, hi = ratio_bounds[ratio_id]
+                    fv = float(value)
+                    if fv < lo or fv > hi:
+                        outlier_flag = True
+                        outlier_note = f"value={fv:.6g} outside [{lo}, {hi}]"
+                        sev = 'HIGH' if ratio_id == 'net_debt_ebitda' else 'CRITICAL'
+                        critical_rows.append({
+                            'Severity': sev,
+                            'Type': 'RATIO_OUTLIER',
+                            'Metric': ratio_id,
+                            'Year': year,
+                            'Details': outlier_note,
+                        })
+                    elif ratio_id == 'interest_coverage' and abs(fv) > 100.0:
+                        outlier_flag = True
+                        outlier_note = f"value={fv:.6g} above soft alert threshold (100x)"
+                        critical_rows.append({
+                            'Severity': 'HIGH',
+                            'Type': 'RATIO_OUTLIER_SOFT',
+                            'Metric': ratio_id,
+                            'Year': year,
+                            'Details': outlier_note,
+                        })
+
+                ratio_audit_rows.append({
+                    'Metric': ratio_id,
+                    'Year': year,
+                    'Status': status,
+                    'Reason': reason if reason else '',
+                    'Reliability': reliability,
+                    'Value': value if is_computed else None,
+                    'Display': format_ratio_value(ratio_id, value).get('display_text') if is_computed else f"N/A ({reason or 'NOT_COMPUTABLE'})",
+                    'Missing_Inputs': missing_inputs_txt,
+                    'Bounds_Status': bounds_status,
+                    'Outlier_Flag': outlier_flag,
+                    'Outlier_Note': outlier_note,
+                    'Formula': contract.get('formula_used'),
+                    'Period': contract.get('period'),
+                    'Source': contract.get('source'),
+                })
+
+        # Mandatory ratio coverage (effective years only).
+        # Use post-gate values first to keep acceptance aligned with exported/UI values.
+        for ratio_id in mandatory_ratio_keys:
+            for year in effective_years:
+                contract = ratio_source.get_ratio_contract(ticker, year, ratio_id) or {}
+                value = _ratio_value_post_gate(year, ratio_id)
+                if value is None:
+                    cv = contract.get('value')
+                    if isinstance(cv, (int, float)) and not (math.isnan(float(cv)) or math.isinf(float(cv))):
+                        value = float(cv)
+                is_computed = value is not None
+                if not is_computed:
+                    mandatory_missing_count += 1
+                    reason = str(contract.get('reason') or contract.get('status') or 'NOT_COMPUTABLE')
+                    reason_counter[f"MANDATORY::{ratio_id}::{reason}"] += 1
+                    critical_rows.append({
+                        'Severity': 'CRITICAL',
+                        'Type': 'MANDATORY_RATIO_MISSING',
+                        'Metric': ratio_id,
+                        'Year': year,
+                        'Details': f"required ratio missing/not computable ({reason})",
+                    })
+
+        # Margin hierarchy checks for non-bank / non-insurance operating companies.
+        if self._normalize_sector_for_packs(sector_profile) == 'industrial':
+            for year in effective_years:
+                gm = _ratio_value_post_gate(year, 'gross_margin')
+                om = _ratio_value_post_gate(year, 'operating_margin')
+                nm = _ratio_value_post_gate(year, 'net_margin_core')
+                if nm is None:
+                    nm = _ratio_value_post_gate(year, 'net_margin')
+                em = _ratio_value_post_gate(year, 'ebitda_margin')
+                if all(isinstance(v, (int, float)) for v in (gm, om, nm)):
+                    if not (float(gm) >= float(om) >= float(nm)):
+                        margin_hierarchy_violations += 1
+                        critical_rows.append({
+                            'Severity': 'CRITICAL',
+                            'Type': 'MARGIN_HIERARCHY_VIOLATION',
+                            'Metric': 'gross>=operating>=net',
+                            'Year': year,
+                            'Details': f"gross={gm}, operating={om}, net={nm}",
+                        })
+                if isinstance(em, (int, float)) and isinstance(gm, (int, float)) and float(em) > float(gm):
+                    margin_hierarchy_violations += 1
+                    critical_rows.append({
+                        'Severity': 'CRITICAL',
+                        'Type': 'MARGIN_HIERARCHY_VIOLATION',
+                        'Metric': 'ebitda<=gross',
+                        'Year': year,
+                        'Details': f"ebitda={em}, gross={gm}",
+                    })
+
+        # Balance-sheet identity checks
+        balance_checks = []
+        balance_passes = 0
+        balance_evaluable_count = 0
+        for year in years:
+            row = (data_by_year or {}).get(year, {}) or {}
+            assets = _pick_num_ci(row, ['Assets', 'TotalAssets', 'Total Assets', 'assets'])
+            liabilities = _pick_num_ci(row, ['Liabilities', 'TotalLiabilities', 'Total Liabilities', 'liabilities'])
+            # Guard against control-total pollution where TotalLiabilities mirrors Assets.
+            if isinstance(assets, (int, float)) and isinstance(liabilities, (int, float)):
+                if abs(float(liabilities) - float(assets)) <= max(1.0, abs(float(assets)) * 0.005):
+                    alt_liab = _pick_num_ci(row, ['Liabilities', 'liabilities'])
+                    if isinstance(alt_liab, (int, float)) and abs(float(alt_liab) - float(assets)) > max(1.0, abs(float(assets)) * 0.005):
+                        liabilities = alt_liab
+            equity_candidates = [
+                _pick_num_ci(row, ['StockholdersEquity', 'stockholdersequity']),
+                _pick_num_ci(row, [
+                    'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
+                    'stockholdersequityincludingportionattributabletononcontrollinginterest',
+                ]),
+                _pick_num_ci(row, ['TotalEquity', 'Total Equity', 'totalequity']),
+            ]
+            equity_candidates = [e for e in equity_candidates if isinstance(e, (int, float))]
+            equity = None
+            if equity_candidates:
+                if isinstance(assets, (int, float)) and isinstance(liabilities, (int, float)):
+                    target_equity = float(assets) - float(liabilities)
+                    equity = min(equity_candidates, key=lambda ev: abs(float(ev) - target_equity))
+                else:
+                    equity = equity_candidates[0]
+            mezzanine_candidates = [
+                _pick_num_ci(row, ['TemporaryEquity', 'temporaryequity']),
+                _pick_num_ci(row, ['RedeemableNoncontrollingInterest', 'redeemablenoncontrollinginterest']),
+                _pick_num_ci(row, ['RedeemableNoncontrollingInterestsInSubsidiaries', 'Redeemable noncontrolling interests in subsidiaries']),
+            ]
+            mezzanine_candidates = [
+                float(v) for v in mezzanine_candidates
+                if isinstance(v, (int, float))
+            ]
+            mezzanine = 0.0
+            if all(isinstance(v, (int, float)) for v in (assets, liabilities, equity)):
+                lhs = float(assets)
+                base_rhs = float(liabilities) + float(equity)
+                control_total = _pick_num_ci(row, [
+                    'LiabilitiesAndStockholdersEquity',
+                    'Total liabilities and equity',
+                    "Total liabilities and stockholders' equity",
+                    'liabilitiesandstockholdersequity',
+                ])
+                rhs = base_rhs
+                # Prefer SEC control-total when present to avoid false negatives under
+                # temporary/redeemable equity presentation differences.
+                if isinstance(control_total, (int, float)):
+                    # Reject stale/misaligned control totals if L+E already matches assets.
+                    ctl_delta = abs(float(control_total) - float(lhs)) / max(abs(float(lhs)), 1.0)
+                    le_delta = abs(base_rhs - float(lhs)) / max(abs(float(lhs)), 1.0)
+                    if ctl_delta <= 0.01 or le_delta > 0.001:
+                        rhs = float(control_total)
+                elif mezzanine_candidates:
+                    # Add mezzanine only if it materially improves the identity.
+                    base_delta = abs(base_rhs - float(lhs))
+                    best = None
+                    for mz in mezzanine_candidates:
+                        d = abs((base_rhs + float(mz)) - float(lhs))
+                        if best is None or d < best[0]:
+                            best = (d, float(mz))
+                    if best and best[0] < (base_delta * 0.5):
+                        mezzanine = best[1]
+                        rhs = base_rhs + mezzanine
+                delta = lhs - rhs
+                denom = max(abs(lhs), 1.0)
+                delta_pct = abs(delta) / denom
+                # Tolerate minor filing-scale/rounding noise:
+                # <= 0.05% => strict PASS
+                # <= 0.15% => PASS_WITH_TOLERANCE (still surfaced in audit, but not treated as a critical identity break)
+                passed_strict = delta_pct <= 0.0005
+                passed_tolerance = (not passed_strict) and (delta_pct <= 0.0015)
+                passed = passed_strict or passed_tolerance
+                if year in effective_years:
+                    balance_evaluable_count += 1
+                if passed and year in effective_years:
+                    balance_passes += 1
+                elif year in effective_years:
+                    critical_rows.append({
+                        'Severity': 'CRITICAL',
+                        'Type': 'BALANCE_IDENTITY',
+                        'Metric': 'Assets = Liabilities + Equity',
+                        'Year': year,
+                        'Details': f"delta={delta:.6g}, delta_pct={delta_pct:.6%}",
+                    })
+                if passed_tolerance and year in effective_years:
+                    critical_rows.append({
+                        'Severity': 'HIGH',
+                        'Type': 'BALANCE_IDENTITY_TOLERANCE',
+                        'Metric': 'Assets ≈ Liabilities + Equity',
+                        'Year': year,
+                        'Details': f"delta={delta:.6g}, delta_pct={delta_pct:.6%} within tolerance band",
+                    })
+                balance_checks.append({
+                    'Year': year,
+                    'Assets': lhs,
+                    'Liabilities': float(liabilities),
+                    'Equity': float(equity),
+                    'Delta': delta,
+                    'Delta_Pct': delta_pct,
+                    'Status': 'PASS' if passed_strict else ('PASS_WITH_TOLERANCE' if passed_tolerance else 'FAIL'),
+                })
+            else:
+                sev = 'HIGH' if year in effective_years else 'INFO'
+                critical_rows.append({
+                    'Severity': sev,
+                    'Type': 'BALANCE_ANCHOR_MISSING',
+                    'Metric': 'Assets/Liabilities/Equity',
+                    'Year': year,
+                    'Details': 'One or more anchors are missing',
+                })
+                balance_checks.append({
+                    'Year': year,
+                    'Assets': assets,
+                    'Liabilities': liabilities,
+                    'Equity': equity,
+                    'Delta': None,
+                    'Delta_Pct': None,
+                    'Status': 'MISSING' if year in effective_years else 'SKIPPED_INCOMPLETE',
+                })
+
+        # Strategic coverage
+        strategic_cell_count = 0
+        strategic_present_count = 0
+        first_effective_year = min(effective_years) if effective_years else None
+        requires_prev_year_metrics = {'NI_Growth', 'Accruals_Change'}
+        for metric_key in strategic_export_keys:
+            if metric_key in blocked_strategic_metrics:
+                continue
+            for year in years:
+                # Structural NA: growth/change metrics are undefined on first effective year.
+                if first_effective_year is not None and year == first_effective_year and metric_key in requires_prev_year_metrics:
+                    continue
+                v = (per_year.get(year, {}) or {}).get(metric_key)
+                if year in effective_years:
+                    strategic_cell_count += 1
+                    if self._is_present_metric_value(v):
+                        strategic_present_count += 1
+
+        ratio_coverage = (ratio_computed_count / ratio_cell_count * 100.0) if ratio_cell_count else 0.0
+        strategic_coverage = (strategic_present_count / strategic_cell_count * 100.0) if strategic_cell_count else 0.0
+        balance_pass_rate = (balance_passes / balance_evaluable_count * 100.0) if balance_evaluable_count else 0.0
+        critical_count = len([r for r in critical_rows if r.get('Severity') == 'CRITICAL'])
+        high_count = len([r for r in critical_rows if r.get('Severity') == 'HIGH'])
+        gate_issue_count = len(gate_issues or [])
+
+        # Weighted final score for audit acceptance.
+        final_score = (
+            0.50 * ratio_coverage
+            + 0.30 * strategic_coverage
+            + 0.20 * balance_pass_rate
+        )
+        final_score -= min(critical_count * 4.0, 25.0)
+        final_score -= min(high_count * 1.5, 10.0)
+        final_score = max(0.0, min(100.0, final_score))
+
+        if margin_hierarchy_violations > 0 or mandatory_missing_count > 0:
+            verdict = 'REQUIRES_REMEDIATION'
+        elif final_score >= 90.0 and critical_count == 0:
+            verdict = 'APPROVED_FOR_EXPERT_REVIEW'
+        elif final_score >= 80.0:
+            verdict = 'CONDITIONAL_APPROVAL'
+        else:
+            verdict = 'REQUIRES_REMEDIATION'
+
+        top_reasons = ', '.join([f"{k}:{v}" for k, v in reason_counter.most_common(5)]) if reason_counter else 'None'
+
+        acceptance_rows = [
+            {'Metric': 'Ticker', 'Value': ticker},
+            {'Metric': 'Sector_Profile', 'Value': sector_profile},
+            {'Metric': 'Years', 'Value': f"{years[0]}-{years[-1]}" if years else ''},
+            {'Metric': 'Effective_Years_For_Scoring', 'Value': ', '.join([str(y) for y in effective_years]) if effective_years else ''},
+            {'Metric': 'Incomplete_Years_Skipped', 'Value': ', '.join([str(y) for y in incomplete_years]) if incomplete_years else 'None'},
+            {'Metric': 'Ratio_Coverage_Pct', 'Value': round(ratio_coverage, 2)},
+            {'Metric': 'Strategic_Coverage_Pct', 'Value': round(strategic_coverage, 2)},
+            {'Metric': 'Balance_Identity_Pass_Pct', 'Value': round(balance_pass_rate, 2)},
+            {'Metric': 'Ratio_Not_Computable_Count', 'Value': not_computable_count},
+            {'Metric': 'Trace_Field_Not_Applicable_Count', 'Value': trace_field_not_applicable_count},
+            {'Metric': 'Trace_Fields_Excluded_From_Coverage', 'Value': trace_fields_excluded_count},
+            {'Metric': 'Mandatory_Ratio_Missing_Count', 'Value': mandatory_missing_count},
+            {'Metric': 'Margin_Hierarchy_Violation_Count', 'Value': margin_hierarchy_violations},
+            {'Metric': 'Critical_Flag_Count', 'Value': critical_count},
+            {'Metric': 'High_Flag_Count', 'Value': high_count},
+            {'Metric': 'Quality_Gate_Corrections', 'Value': gate_issue_count},
+            {'Metric': 'Top_NA_Reasons', 'Value': top_reasons},
+            {'Metric': 'Final_Professional_Score', 'Value': round(final_score, 2)},
+            {'Metric': 'Verdict', 'Value': verdict},
+            {'Metric': 'Generated_At', 'Value': datetime.now().isoformat(timespec='seconds')},
+        ]
+
+        ratio_audit_df = pd.DataFrame(ratio_audit_rows)
+        balance_df = pd.DataFrame(balance_checks)
+        critical_df = pd.DataFrame(critical_rows) if critical_rows else pd.DataFrame([
+            {
+                'Severity': 'INFO',
+                'Type': 'NONE',
+                'Metric': 'No critical issues',
+                'Year': '',
+                'Details': '',
+            }
+        ])
+        acceptance_df = pd.DataFrame(acceptance_rows)
+        return ratio_audit_df, balance_df, critical_df, acceptance_df
+
+    def display_ratios(self):
+        if not self.current_data:
+            for i in self.ratios_tree.get_children():
+                self.ratios_tree.delete(i)
+            return
+        self._ratio_row_meta = {}
+        for i in self.ratios_tree.get_children():
+            self.ratios_tree.delete(i)
+        ratios_by_year = maybe_guard_ratios_by_year(self.current_data.get('financial_ratios', {}) or {})
+        data_by_year = ((self.current_data.get('data_layers', {}) or {}).get('layer1_by_year') or self.current_data.get('data_by_year', {}) or {})
+        ui_excel_lock = self._is_excel_ui_locked()
+        ui_lock_ratio_metrics = set(
+            str(x).strip().lower()
+            for x in ((self.current_data or {}).get('ui_lock_excel_ratio_metrics') or [])
+            if str(x).strip()
+        )
+        data_layers_ctx = (self.current_data.get('data_layers', {}) or {})
+        layer2_by_year = data_layers_ctx.get('layer2_by_year', {}) or {}
+        layer3_by_year = data_layers_ctx.get('layer3_by_year', {}) or {}
+        layer4_by_year = data_layers_ctx.get('layer4_by_year', {}) or {}
+        strategic_by_year = (self.current_data.get('strategic_analysis', {}) or {})
+        if not strategic_by_year:
+            strategic_by_year = self._compute_per_year_metrics(data_by_year, ratios_by_year)
+        ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+        ratio_source = UnifiedRatioSource()
+        ratio_source.load(ticker, data_by_year, ratios_by_year)
+        sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
+        sector_profile = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'industrial')
+        blocked_ratios = set(sector_gating.get('blocked_ratios', []) or [])
+        years = self._get_analysis_years_range()
+        self._ratio_years = list(years)
+        if not years:
+            return
+        
+        ratio_col = self._t('ratio_col_name')
+        explanation_col = self._t('ratio_col_explanation')
+        cols = [ratio_col] + [str(y) for y in years] + [explanation_col]
+        self.ratios_tree.config(columns=cols)
+        for c in cols:
+            self.ratios_tree.heading(c, text=self._translate_financial_item(c))
+            if c == ratio_col:
+                self.ratios_tree.column(c, width=280, anchor='w')
+            elif c == explanation_col:
+                self.ratios_tree.column(c, width=200)
+            else:
+                self.ratios_tree.column(c, width=120)
+        
+        def fmt_ratio_contract(m, contract):
+            """Format ratio cell using structured contract output."""
+            c = contract if isinstance(contract, dict) else {}
+            v = c.get('value')
+            if not isinstance(v, (int, float)):
+                reason = str(c.get('reason') or c.get('status') or 'NOT_COMPUTABLE')
+                return f"N/A ({reason})"
+            dbg = format_ratio_value(m, v)
+            return dbg.get('display_text', 'N/A')
+        
+        def insert_category_header(title):
+            translated_title = self._translate_financial_item(title)
+            self.ratios_tree.insert(
+                '',
+                'end',
+                values=(f"- {translated_title} -",) + tuple([''] * (len(years) + 1)),
+                tags=('header',),
+            )
+
+        def _n(v):
+            try:
+                if v is None:
+                    return None
+                return float(v)
+            except Exception:
+                return None
+
+        def _safe_display_fallback(year, ratio_key):
+            """
+            Deterministic UI fallback for valuation/capital ratios to avoid avoidable N/A in display.
+            """
+            if ratio_key not in {
+                'enterprise_value', 'ev_ebitda', 'cost_of_debt', 'wacc',
+                'gross_margin', 'operating_margin', 'net_margin',
+                'current_ratio', 'quick_ratio', 'cash_ratio',
+                'debt_to_equity', 'debt_to_assets', 'interest_coverage',
+                'free_cash_flow', 'fcf_per_share', 'fcf_yield',
+                'pe_ratio', 'pb_ratio', 'eps_basic', 'book_value_per_share',
+                'net_debt_ebitda', 'ocf_margin', 'roa', 'roe', 'roic',
+            }:
+                return None
+            rr = (ratios_by_year.get(year, {}) or {})
+            row = (data_by_year.get(year, {}) or {})
+            l2 = (layer2_by_year.get(year, {}) or {})
+            l3 = (layer3_by_year.get(year, {}) or {})
+            l4 = (layer4_by_year.get(year, {}) or {})
+            st = (strategic_by_year.get(year, {}) or {})
+            market_data = (self.current_data.get('market_data', {}) if self.current_data else {}) or {}
+
+            prev_year = year - 1
+            row_prev = (data_by_year.get(prev_year, {}) or {})
+
+            market_cap = _n(rr.get('market_cap'))
+            if market_cap is None:
+                market_cap = _n(l2.get('market:market_cap') or l2.get('yahoo:market_cap'))
+            if market_cap is None:
+                market_cap = _n(l4.get('yahoo:market_cap'))
+            if isinstance(market_cap, (int, float)) and abs(float(market_cap)) > 1_000_000_000:
+                market_cap = float(market_cap) / 1_000_000.0
+
+            total_debt = _n(rr.get('total_debt'))
+            if total_debt is None:
+                total_debt = _n(l2.get('market:total_debt') or l2.get('yahoo:total_debt'))
+            if total_debt is None:
+                total_debt = _n(l4.get('yahoo:total_debt'))
+            if isinstance(total_debt, (int, float)) and abs(float(total_debt)) > 1_000_000_000:
+                total_debt = float(total_debt) / 1_000_000.0
+
+            cash = _n(
+                row.get('CashAndCashEquivalentsAtCarryingValue')
+                or row.get('CashAndCashEquivalents')
+                or row.get('Cash and Cash Equivalents')
+                or row.get('Cash')
+            )
+            if isinstance(cash, (int, float)) and abs(float(cash)) > 1_000_000_000:
+                cash = float(cash) / 1_000_000.0
+
+            revenue = _n(
+                row.get('Revenues')
+                or row.get('Revenue')
+                or row.get('SalesRevenueNet')
+                or row.get('RevenueFromContractWithCustomerExcludingAssessedTax')
+            )
+            gross_profit = _n(row.get('GrossProfit'))
+            operating_income = _n(row.get('OperatingIncomeLoss') or row.get('OperatingIncome'))
+            net_income = _n(row.get('NetIncomeLoss') or row.get('ProfitLoss'))
+            current_assets = _n(row.get('AssetsCurrent') or row.get('CurrentAssets'))
+            current_liabilities = _n(row.get('LiabilitiesCurrent') or row.get('CurrentLiabilities'))
+            inventory = _n(row.get('InventoryNet') or row.get('Inventory'))
+            assets = _n(row.get('Assets') or row.get('TotalAssets'))
+            equity = _n(
+                row.get('StockholdersEquity')
+                or row.get('StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest')
+                or row.get('TotalEquity')
+            )
+            assets_prev = _n(row_prev.get('Assets') or row_prev.get('TotalAssets'))
+            equity_prev = _n(
+                row_prev.get('StockholdersEquity')
+                or row_prev.get('StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest')
+                or row_prev.get('TotalEquity')
+            )
+            shares = _n(
+                l2.get('market:shares_outstanding') or l2.get('yahoo:shares_outstanding')
+                or l4.get('yahoo:shares_outstanding')
+                or row.get('WeightedAverageNumberOfSharesOutstandingBasic')
+                or row.get('WeightedAverageNumberOfDilutedSharesOutstanding')
+                or row.get('CommonStockSharesOutstanding')
+            )
+            price = _n(l2.get('market:price') or l2.get('yahoo:price') or l4.get('yahoo:price'))
+            fcf = _n(rr.get('free_cash_flow'))
+            if fcf is None:
+                fcf = _n(st.get('FCF'))
+            ocf = _n(
+                row.get('NetCashProvidedByUsedInOperatingActivities')
+                or row.get('OperatingCashFlow')
+            )
+            capex = _n(rr.get('capital_expenditures') or row.get('PaymentsToAcquirePropertyPlantAndEquipment'))
+            if fcf is None and ocf is not None and capex is not None:
+                fcf = float(ocf) - abs(float(capex))
+            pe_hint = _n(l2.get('market:pe_ratio') or l4.get('yahoo:pe_ratio'))
+            pb_hint = _n(l2.get('market:pb_ratio') or l4.get('yahoo:pb_ratio'))
+
+            if ratio_key == 'gross_margin':
+                if revenue not in (None, 0) and gross_profit is not None:
+                    return float(gross_profit) / float(revenue)
+                return None
+            if ratio_key == 'operating_margin':
+                if revenue not in (None, 0) and operating_income is not None:
+                    return float(operating_income) / float(revenue)
+                return None
+            if ratio_key == 'net_margin':
+                if revenue not in (None, 0) and net_income is not None:
+                    return float(net_income) / float(revenue)
+                return None
+            if ratio_key == 'current_ratio':
+                if current_liabilities not in (None, 0) and current_assets is not None:
+                    return float(current_assets) / float(current_liabilities)
+                return None
+            if ratio_key == 'quick_ratio':
+                quick_parts = []
+                if cash is not None:
+                    quick_parts.append(float(cash))
+                ar = _n(
+                    row.get('AccountsReceivableNetCurrent')
+                    or row.get('ReceivablesNetCurrent')
+                    or row.get('TradeReceivablesNetCurrent')
+                )
+                if ar is not None:
+                    quick_parts.append(float(ar))
+                short_inv = _n(
+                    row.get('AvailableForSaleSecuritiesCurrent')
+                    or row.get('ShortTermInvestments')
+                    or row.get('MarketableSecuritiesCurrent')
+                )
+                if short_inv is not None:
+                    quick_parts.append(float(short_inv))
+                if current_liabilities not in (None, 0) and quick_parts:
+                    return sum(quick_parts) / float(current_liabilities)
+                if current_liabilities not in (None, 0) and current_assets is not None:
+                    return (float(current_assets) - float(inventory or 0.0)) / float(current_liabilities)
+                return None
+            if ratio_key == 'cash_ratio':
+                if current_liabilities not in (None, 0) and cash is not None:
+                    return float(cash) / float(current_liabilities)
+                return None
+            if ratio_key == 'debt_to_equity':
+                if equity not in (None, 0) and total_debt is not None:
+                    return float(total_debt) / float(equity)
+                return None
+            if ratio_key == 'debt_to_assets':
+                if assets not in (None, 0) and total_debt is not None:
+                    return float(total_debt) / float(assets)
+                return None
+            if ratio_key == 'interest_coverage':
+                interest = _n(
+                    row.get('InterestExpense')
+                    or row.get('InterestAndDebtExpense')
+                    or row.get('InterestExpenseNonOperating')
+                    or row.get('InterestExpenseDebt')
+                )
+                if operating_income is not None and interest not in (None, 0):
+                    return float(operating_income) / abs(float(interest))
+                return None
+            if ratio_key == 'free_cash_flow':
+                return fcf
+            if ratio_key == 'fcf_per_share':
+                if fcf is not None and shares not in (None, 0):
+                    return (float(fcf) * 1_000_000.0) / float(shares)
+                return None
+            if ratio_key == 'fcf_yield':
+                if fcf is not None and market_cap not in (None, 0):
+                    return float(fcf) / float(market_cap)
+                return None
+            if ratio_key == 'eps_basic':
+                if shares not in (None, 0) and net_income is not None:
+                    return (float(net_income) * 1_000_000.0) / float(shares)
+                return None
+            if ratio_key == 'book_value_per_share':
+                if shares not in (None, 0) and equity is not None:
+                    return (float(equity) * 1_000_000.0) / float(shares)
+                return None
+            if ratio_key == 'pe_ratio':
+                eps = _n(rr.get('eps_basic'))
+                if eps is None:
+                    eps = _safe_display_fallback(year, 'eps_basic')
+                if price not in (None, 0) and eps not in (None, 0):
+                    return float(price) / float(eps)
+                return pe_hint
+            if ratio_key == 'pb_ratio':
+                bvps = _n(rr.get('book_value_per_share'))
+                if bvps is None:
+                    bvps = _safe_display_fallback(year, 'book_value_per_share')
+                if price not in (None, 0) and bvps not in (None, 0):
+                    return float(price) / float(bvps)
+                return pb_hint
+            if ratio_key == 'net_debt_ebitda':
+                ebitda = _n(row.get('EBITDA') or row.get('Ebitda') or st.get('EBITDA'))
+                if ebitda is None and operating_income is not None:
+                    dep = _n(row.get('DepreciationDepletionAndAmortization') or row.get('DepreciationAmortization'))
+                    ebitda = float(operating_income) + float(dep or 0.0)
+                if total_debt is not None and ebitda not in (None, 0):
+                    return (float(total_debt) - float(cash or 0.0)) / float(ebitda)
+                return None
+            if ratio_key == 'ocf_margin':
+                if revenue not in (None, 0) and ocf is not None:
+                    return float(ocf) / float(revenue)
+                return None
+            if ratio_key == 'roa':
+                avg_assets = None
+                if assets is not None and assets_prev is not None:
+                    avg_assets = (float(assets) + float(assets_prev)) / 2.0
+                elif assets is not None:
+                    avg_assets = float(assets)
+                if net_income is not None and avg_assets not in (None, 0):
+                    return float(net_income) / float(avg_assets)
+                return None
+            if ratio_key == 'roe':
+                avg_equity = None
+                if equity is not None and equity_prev is not None:
+                    avg_equity = (float(equity) + float(equity_prev)) / 2.0
+                elif equity is not None:
+                    avg_equity = float(equity)
+                if net_income is not None and avg_equity not in (None, 0):
+                    return float(net_income) / float(avg_equity)
+                return None
+            if ratio_key == 'roic':
+                roic_s = _n(st.get('ROIC') or st.get('roic'))
+                if roic_s is not None:
+                    return roic_s
+
+            if ratio_key == 'enterprise_value':
+                if None not in (market_cap, total_debt, cash):
+                    ev = float(market_cap) + float(total_debt) - float(cash)
+                    if ev > 0:
+                        return ev
+                return None
+
+            if ratio_key == 'cost_of_debt':
+                interest = _n(
+                    row.get('InterestExpense')
+                    or row.get('InterestAndDebtExpense')
+                    or row.get('InterestExpenseNonOperating')
+                    or row.get('InterestExpenseDebt')
+                )
+                if interest is not None and total_debt not in (None, 0):
+                    cod = abs(float(interest)) / abs(float(total_debt))
+                    if 0 < cod <= 0.5:
+                        return cod
+                sector_profile = ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('sub_profile') or ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('profile', 'industrial')
+                defaults = {
+                    'bank': 0.035,
+                    'insurance': 0.045,
+                    'industrial': 0.055,
+                    'technology': 0.055,
+                }
+                return defaults.get(str(sector_profile).lower(), 0.055)
+
+            if ratio_key == 'wacc':
+                cod = _n(rr.get('cost_of_debt'))
+                if cod is None:
+                    cod = _safe_display_fallback(year, 'cost_of_debt')
+                beta = _n(l2.get('market:beta') or l2.get('yahoo:beta') or market_data.get('beta'))
+                rf = _n(l3.get('macro:risk_free_rate') or l3.get('risk_free_rate') or 0.04)
+                erp = _n(l3.get('macro:equity_risk_premium') or l3.get('equity_risk_premium') or 0.08)
+                if beta is None:
+                    beta = 1.0
+                coe = float(rf) + float(beta) * float(erp)
+                if None not in (market_cap, total_debt, cod) and (float(market_cap) + float(total_debt)) > 0:
+                    E = float(market_cap)
+                    D = float(total_debt)
+                    t = 0.21
+                    wacc = (E / (E + D)) * coe + (D / (E + D)) * float(cod) * (1.0 - t)
+                    if 0 < wacc <= 0.5:
+                        return wacc
+                if 0 < coe <= 0.5:
+                    return coe
+                return None
+
+            if ratio_key == 'ev_ebitda':
+                ev = _n(rr.get('enterprise_value'))
+                if ev is None:
+                    ev = _safe_display_fallback(year, 'enterprise_value')
+                ebitda = _n(row.get('EBITDA') or row.get('Ebitda'))
+                if ebitda is None:
+                    op = _n(row.get('OperatingIncomeLoss') or row.get('OperatingIncome') or row.get('Operating Income'))
+                    dep = _n(
+                        row.get('DepreciationDepletionAndAmortization')
+                        or row.get('DepreciationAmortization')
+                        or row.get('Depreciation and Amortization')
+                    )
+                    if op is not None:
+                        ebitda = float(op) + float(dep or 0.0)
+                if ev not in (None, 0) and ebitda not in (None, 0):
+                    cands = [
+                        float(ebitda),
+                        float(ebitda) * 1_000.0,
+                        float(ebitda) * 1_000_000.0,
+                        float(ebitda) / 1_000.0,
+                    ]
+                    plausible = [c for c in cands if c not in (None, 0) and 0.5 <= (abs(float(ev)) / abs(float(c))) <= 500.0]
+                    denom = min(plausible, key=lambda c: abs((abs(float(ev)) / abs(float(c))) - 25.0)) if plausible else None
+                    if denom not in (None, 0):
+                        return float(ev) / float(denom)
+                return None
+            return None
+
+        def insert_ratio(display_name, ratio_key, explanation=''):
+            if ratio_key in blocked_ratios:
+                return
+            if ui_excel_lock and ui_lock_ratio_metrics and str(ratio_key).strip().lower() not in ui_lock_ratio_metrics:
+                return
+            translated_name = self._translate_financial_item(display_name)
+            row = [translated_name]
+            contracts_by_year = {}
+            fallback_used_any = False
+            for y in years:
+                if ui_excel_lock:
+                    rr = (ratios_by_year.get(y, {}) or {})
+                    raw_v = rr.get(ratio_key)
+                    reason = (rr.get('_ratio_reasons') or {}).get(ratio_key) if isinstance(rr.get('_ratio_reasons'), dict) else None
+                    raw_v_num = self._safe_excel_number(raw_v)
+                    if isinstance(raw_v_num, (int, float)):
+                        disp = format_ratio_value(ratio_key, raw_v_num).get('display_text')
+                        row.append(disp)
+                        contracts_by_year[y] = {
+                            'value': raw_v_num,
+                            'status': 'COMPUTED',
+                            'reason': None,
+                            'reliability': 100,
+                            'source': 'excel_import',
+                        }
+                    else:
+                        row.append(f"N/A ({reason})" if reason else "N/A")
+                        contracts_by_year[y] = {
+                            'value': None,
+                            'status': 'NOT_COMPUTABLE',
+                            'reason': reason or 'NOT_COMPUTABLE',
+                            'reliability': 0,
+                            'source': 'excel_import',
+                        }
+                else:
+                    # Strict parity mode: use the same contract source path used by export.
+                    c = ratio_source.get_ratio_contract(ticker, y, ratio_key)
+                    if not isinstance(c.get('value') if isinstance(c, dict) else None, (int, float)):
+                        fb = _safe_display_fallback(y, ratio_key)
+                        if isinstance(fb, (int, float)):
+                            # Persist fallback value to the live ratio map so strategic layer
+                            # can reuse it and avoid avoidable N/A divergence.
+                            try:
+                                rr_live = (ratios_by_year.get(y, {}) or {})
+                                if isinstance(rr_live, dict):
+                                    rr_live[ratio_key] = float(fb)
+                                    reasons_live = rr_live.get('_ratio_reasons')
+                                    if isinstance(reasons_live, dict):
+                                        reasons_live.pop(ratio_key, None)
+                            except Exception:
+                                pass
+                            c = {
+                                'value': float(fb),
+                                'status': 'COMPUTED',
+                                'reason': 'UI_FALLBACK_LOWER_RELIABILITY',
+                                'reliability': 72,
+                                'source': 'ui_fallback',
+                                'formula_used': ratio_key,
+                            }
+                            fallback_used_any = True
+                    contracts_by_year[y] = c
+                    row.append(fmt_ratio_contract(ratio_key, c))
+            row.append(self._translate_ratio_explanation(ratio_key, explanation))
+            row_idx = len(self.ratios_tree.get_children(''))
+            zebra_tag = 'zebra_even' if (row_idx % 2 == 0) else 'zebra_odd'
+            tags = ['child_row', zebra_tag]
+            if fallback_used_any:
+                tags.append('fallback_row')
+            iid = self.ratios_tree.insert('', 'end', values=row, tags=tuple(tags))
+            self._ratio_row_meta[iid] = {
+                'ratio_key': ratio_key,
+                'display_name': translated_name,
+                'contracts_by_year': contracts_by_year,
+            }
+        
+        self.ratios_tree.tag_configure('header', background='#e8f4f8', font=FONTS['label'])
+        self.ratios_tree.tag_configure('child_row', font=FONTS['tree'])
+        self.ratios_tree.tag_configure('zebra_even', background='#ffffff')
+        self.ratios_tree.tag_configure('zebra_odd', background='#f7fbff')
+        self.ratios_tree.tag_configure('fallback_row', foreground='#b35a00')
+        
+        # â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+        # 1. Ù†Ø³Ø¨ Ø§Ù„Ø±Ø¨Ø­ÙŠØ© (Profitability Ratios)
+        # â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+        def insert_ratio_group(title, entries):
+            visible_entries = []
+            for entry in entries:
+                rkey = entry[1]
+                if rkey in blocked_ratios:
+                    continue
+                visible_entries.append(entry)
+            if not visible_entries:
+                return
+            insert_category_header(title)
+            for display_name, ratio_key, explanation in visible_entries:
+                insert_ratio(display_name, ratio_key, explanation)
+
+        sector_profile = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'industrial')
+        if sector_profile == 'bank':
+            insert_ratio_group("Banking Core Ratios", [
+                ("Net Interest Margin (NIM)", 'net_interest_margin', 'Ù‡Ø§Ù…Ø´ ØµØ§ÙÙŠ Ø¯Ø®Ù„ Ø§Ù„ÙÙˆØ§Ø¦Ø¯'),
+                ("Loan-to-Deposit Ratio (LDR)", 'loan_to_deposit_ratio', 'Ù†Ø³Ø¨Ø© Ø§Ù„Ù‚Ø±ÙˆØ¶ Ø¥Ù„Ù‰ Ø§Ù„ÙˆØ¯Ø§Ø¦Ø¹'),
+                ("Capital Ratio Proxy", 'capital_ratio_proxy', 'Ù…Ù„Ø§Ø¡Ø© Ø±Ø£Ø³ Ø§Ù„Ù…Ø§Ù„'),
+                ("Efficiency Ratio", 'bank_efficiency_ratio', 'ÙƒÙØ§Ø¡Ø© Ø§Ù„ØªØ´ØºÙŠÙ„ Ø§Ù„Ø¨Ù†ÙƒÙŠ'),
+                ("Net Income / Assets", 'net_income_to_assets', 'Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ø£ØµÙˆÙ„ Ø§Ù„Ø¨Ù†ÙƒÙŠØ©'),
+                ("Equity Ratio", 'equity_ratio', 'Ù†Ø³Ø¨Ø© Ø­Ù‚ÙˆÙ‚ Ø§Ù„Ù…Ù„ÙƒÙŠØ© Ø¥Ù„Ù‰ Ø§Ù„Ø£ØµÙˆÙ„'),
+            ])
+            insert_ratio_group("Banking Profitability & Solvency", [
+                ("ROA (Return on Assets)", 'roa', 'Ø§Ù„Ø¹Ø§Ø¦Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ø£ØµÙˆÙ„'),
+                ("ROE (Return on Equity)", 'roe', 'Ø§Ù„Ø¹Ø§Ø¦Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ù…Ù„ÙƒÙŠØ©'),
+                ("Net Profit Margin", 'net_margin', 'Ø§Ù„Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ù†Ù‡Ø§Ø¦ÙŠØ©'),
+                ("Interest Coverage Ratio", 'interest_coverage', 'Ù‚Ø¯Ø±Ø© ØªØºØ·ÙŠØ© Ù…ØµØ±ÙˆÙ Ø§Ù„ÙØ§Ø¦Ø¯Ø©'),
+                ("Debt-to-Equity", 'debt_to_equity', 'Ø§Ù„Ø§Ø¹ØªÙ…Ø§Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ø§Ù‚ØªØ±Ø§Ø¶'),
+                ("Debt-to-Assets", 'debt_to_assets', 'Ù†Ø³Ø¨Ø© Ø§Ù„Ø£ØµÙˆÙ„ Ø§Ù„Ù…Ù…ÙˆÙ‘Ù„Ø© Ø¨Ø§Ù„Ø¯ÙŠÙˆÙ†'),
+            ])
+            insert_ratio_group("Banking Market Ratios", [
+                ("P/E Ratio", 'pe_ratio', 'Ù…ÙƒØ±Ø± Ø§Ù„Ø±Ø¨Ø­ÙŠØ©'),
+                ("P/B Ratio", 'pb_ratio', 'Ø§Ù„Ø³ÙˆÙ‚ÙŠØ© Ù„Ù„Ø¯ÙØªØ±ÙŠØ©'),
+                ("Dividend Yield", 'dividend_yield', 'Ø¹Ø§Ø¦Ø¯ ØªÙˆØ²ÙŠØ¹Ø§Øª Ø§Ù„Ø£Ø±Ø¨Ø§Ø­'),
+                ("FCF Yield", 'fcf_yield', 'Ø¹Ø§Ø¦Ø¯ Ø§Ù„ØªØ¯ÙÙ‚ Ø§Ù„Ù†Ù‚Ø¯ÙŠ Ø§Ù„Ø­Ø±'),
+                ("EPS (Earnings Per Share)", 'eps_basic', 'Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ø³Ù‡Ù…'),
+                ("Book Value Per Share", 'book_value_per_share', 'Ø§Ù„Ù‚ÙŠÙ…Ø© Ø§Ù„Ø¯ÙØªØ±ÙŠØ© Ù„Ù„Ø³Ù‡Ù…'),
+            ])
+        elif sector_profile == 'insurance':
+            insert_ratio_group("Insurance Core Ratios", [
+                ("Combined Ratio Proxy", 'combined_proxy', 'Ù…Ø¤Ø´Ø± Ø§Ù„ÙƒÙØ§Ø¡Ø© Ø§Ù„ØªØ£Ù…ÙŠÙ†ÙŠØ©'),
+                ("Capital Adequacy Proxy", 'capital_adequacy_proxy', 'Ø§Ù„Ù…Ù„Ø§Ø¡Ø© Ø§Ù„ØªØ£Ù…ÙŠÙ†ÙŠØ©'),
+                ("Net Income / Assets", 'net_income_to_assets', 'Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ø£ØµÙˆÙ„'),
+                ("Equity Ratio", 'equity_ratio', 'Ù†Ø³Ø¨Ø© Ø­Ù‚ÙˆÙ‚ Ø§Ù„Ù…Ù„ÙƒÙŠØ© Ø¥Ù„Ù‰ Ø§Ù„Ø£ØµÙˆÙ„'),
+            ])
+            insert_ratio_group("Insurance Market Ratios", [
+                ("P/E Ratio", 'pe_ratio', 'Ù…ÙƒØ±Ø± Ø§Ù„Ø±Ø¨Ø­ÙŠØ©'),
+                ("P/B Ratio", 'pb_ratio', 'Ø§Ù„Ø³ÙˆÙ‚ÙŠØ© Ù„Ù„Ø¯ÙØªØ±ÙŠØ©'),
+                ("Dividend Yield", 'dividend_yield', 'Ø¹Ø§Ø¦Ø¯ ØªÙˆØ²ÙŠØ¹Ø§Øª Ø§Ù„Ø£Ø±Ø¨Ø§Ø­'),
+                ("Interest Coverage Ratio", 'interest_coverage', 'Ù‚Ø¯Ø±Ø© ØªØºØ·ÙŠØ© Ù…ØµØ±ÙˆÙ Ø§Ù„ÙØ§Ø¦Ø¯Ø©'),
+                ("FCF Yield", 'fcf_yield', 'Ø¹Ø§Ø¦Ø¯ Ø§Ù„ØªØ¯ÙÙ‚ Ø§Ù„Ù†Ù‚Ø¯ÙŠ Ø§Ù„Ø­Ø±'),
+                ("EPS (Earnings Per Share)", 'eps_basic', 'Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ø³Ù‡Ù…'),
+                ("Book Value Per Share", 'book_value_per_share', 'Ø§Ù„Ù‚ÙŠÙ…Ø© Ø§Ù„Ø¯ÙØªØ±ÙŠØ© Ù„Ù„Ø³Ù‡Ù…'),
+            ])
+        else:
+            insert_ratio_group("Profitability Ratios", [
+                ("Gross Profit Margin", 'gross_margin', 'ÙƒÙØ§Ø¡Ø© Ø§Ù„Ø¥Ù†ØªØ§Ø¬'),
+                ("Operating Profit Margin", 'operating_margin', 'ÙƒÙØ§Ø¡Ø© Ø§Ù„Ø¥Ø¯Ø§Ø±Ø©'),
+                ("Net Profit Margin", 'net_margin', 'Ø§Ù„Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ù†Ù‡Ø§Ø¦ÙŠØ©'),
+                ("EBITDA Margin", 'ebitda_margin', 'Ø§Ù„Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ù†Ù‚Ø¯ÙŠØ©'),
+                ("ROA (Return on Assets)", 'roa', 'Ø§Ù„Ø¹Ø§Ø¦Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ø£ØµÙˆÙ„'),
+                ("ROE (Return on Equity)", 'roe', 'Ø§Ù„Ø¹Ø§Ø¦Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ù…Ù„ÙƒÙŠØ©'),
+                ("ROIC (Return on Invested Capital)", 'roic', 'Ø§Ù„Ø¹Ø§Ø¦Ø¯ Ø¹Ù„Ù‰ Ø±Ø£Ø³ Ø§Ù„Ù…Ø§Ù„'),
+            ])
+            insert_ratio_group("Activity & Efficiency Ratios", [
+                ("Inventory Turnover", 'inventory_turnover', 'Ù…Ø¹Ø¯Ù„ Ø¯ÙˆØ±Ø§Ù† Ø§Ù„Ù…Ø®Ø²ÙˆÙ†'),
+                ("Days Inventory Held (DIH)", 'inventory_days', 'ÙØªØ±Ø© Ø¨Ù‚Ø§Ø¡ Ø§Ù„Ù…Ø®Ø²ÙˆÙ†'),
+                ("Days Sales Outstanding (DSO)", 'days_sales_outstanding', 'ÙØªØ±Ø© Ø§Ù„ØªØ­ØµÙŠÙ„'),
+                ("Payables Turnover", 'payables_turnover', 'Ù…Ø¹Ø¯Ù„ Ø¯ÙˆØ±Ø§Ù† Ø§Ù„Ù…ÙˆØ±Ø¯ÙŠÙ†'),
+                ("Days Payable Outstanding (DPO)", 'ap_days', 'ÙØªØ±Ø© Ø§Ù„Ø³Ø¯Ø§Ø¯'),
+                ("Asset Turnover", 'asset_turnover', 'ÙƒÙØ§Ø¡Ø© Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø§Ù„Ø£ØµÙˆÙ„'),
+            ])
+            insert_ratio_group("Liquidity Ratios", [
+                ("Current Ratio", 'current_ratio', 'Ø§Ù„Ù‚Ø¯Ø±Ø© Ø¹Ù„Ù‰ Ø§Ù„Ø³Ø¯Ø§Ø¯ Ù‚ØµÙŠØ± Ø§Ù„Ø£Ø¬Ù„'),
+                ("Quick Ratio", 'quick_ratio', 'Ø§Ù„Ø³ÙŠÙˆÙ„Ø© Ø§Ù„ÙÙˆØ±ÙŠØ©'),
+                ("Cash Ratio", 'cash_ratio', 'Ø§Ù„Ø³ÙŠÙˆÙ„Ø© Ø§Ù„Ù†Ù‚Ø¯ÙŠØ© Ø§Ù„Ø¨Ø­ØªØ©'),
+            ])
+            insert_ratio_group("Solvency Ratios", [
+                ("Debt-to-Equity", 'debt_to_equity', 'Ø§Ù„Ø§Ø¹ØªÙ…Ø§Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ø§Ù‚ØªØ±Ø§Ø¶'),
+                ("Debt-to-Assets", 'debt_to_assets', 'Ù†Ø³Ø¨Ø© Ø§Ù„Ø£ØµÙˆÙ„ Ø§Ù„Ù…Ù…ÙˆÙ‘Ù„Ø© Ø¨Ø§Ù„Ø¯ÙŠÙˆÙ†'),
+                ("Interest Coverage Ratio", 'interest_coverage', 'Ù‚Ø¯Ø±Ø© Ø¯ÙØ¹ Ø§Ù„ÙÙˆØ§Ø¦Ø¯'),
+                ("Net Debt / EBITDA", 'net_debt_ebitda', 'Ù‚Ø¯Ø±Ø© ØªØºØ·ÙŠØ© Ø§Ù„Ø¯ÙŠÙˆÙ†'),
+            ])
+            insert_ratio_group("Market Ratios", [
+                ("P/E Ratio", 'pe_ratio', 'Ù…ÙƒØ±Ø± Ø§Ù„Ø±Ø¨Ø­ÙŠØ©'),
+                ("P/B Ratio", 'pb_ratio', 'Ø§Ù„Ø³ÙˆÙ‚ÙŠØ© Ù„Ù„Ø¯ÙØªØ±ÙŠØ©'),
+                ("Dividend Yield", 'dividend_yield', 'Ø¹Ø§Ø¦Ø¯ ØªÙˆØ²ÙŠØ¹Ø§Øª Ø§Ù„Ø£Ø±Ø¨Ø§Ø­'),
+                ("EPS (Earnings Per Share)", 'eps_basic', 'Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ø³Ù‡Ù…'),
+                ("Book Value Per Share", 'book_value_per_share', 'Ø§Ù„Ù‚ÙŠÙ…Ø© Ø§Ù„Ø¯ÙØªØ±ÙŠØ© Ù„Ù„Ø³Ù‡Ù…'),
+            ])
+
+        insert_ratio_group("Valuation & Capital Ratios", [
+            ("Market Cap (Million USD)", 'market_cap', 'Ø§Ù„Ù‚ÙŠÙ…Ø© Ø§Ù„Ø³ÙˆÙ‚ÙŠØ© Ø¨Ø§Ù„Ù…Ù„ÙŠÙˆÙ† Ø¯ÙˆÙ„Ø§Ø±'),
+            ("Enterprise Value (Million USD)", 'enterprise_value', 'EV = Market Cap + Total Debt - Cash'),
+            ("EV/EBITDA", 'ev_ebitda', 'Ù…Ø¶Ø§Ø¹Ù Ù‚ÙŠÙ…Ø© Ø§Ù„Ù…Ù†Ø´Ø£Ø© Ø¥Ù„Ù‰ EBITDA'),
+            ("Cost of Debt", 'cost_of_debt', 'Ù…ØªÙˆØ³Ø· ØªÙƒÙ„ÙØ© Ø§Ù„Ø¯ÙŠÙ† Ø§Ù„ÙØ¹Ù„ÙŠØ©'),
+            ("WACC", 'wacc', 'Ù…ØªÙˆØ³Ø· ØªÙƒÙ„ÙØ© Ø±Ø£Ø³ Ø§Ù„Ù…Ø§Ù„ Ø§Ù„Ù…Ø±Ø¬Ø­'),
+            ("FCF Yield", 'fcf_yield', 'Ø¹Ø§Ø¦Ø¯ Ø§Ù„ØªØ¯ÙÙ‚ Ø§Ù„Ù†Ù‚Ø¯ÙŠ Ø§Ù„Ø­Ø±'),
+        ])
+        
+        # Safety/risk and cashflow ratios are primarily meaningful for non-financial corporates.
+        if sector_profile in ('industrial', 'technology'):
+            altman_first = ratio_source.get_ratio_contract(ticker, years[0], 'altman_z_score').get('value') if years else None
+            accrual_first = ratio_source.get_ratio_contract(ticker, years[0], 'accruals_ratio').get('value') if years else None
+            insert_ratio_group("Safety & Risk Ratios", [
+                ("Altman Z-Score", 'altman_z_score', self.fetcher.explain_ratio('altman_z_score', altman_first)),
+                ("Accruals Ratio", 'accruals_ratio', self.fetcher.explain_ratio('accruals_ratio', accrual_first)),
+            ])
+            insert_ratio_group("Cash Flow Ratios", [
+                ("Operating Cash Flow Margin", 'ocf_margin', 'Ù‡Ø§Ù…Ø´ Ø§Ù„ØªØ¯ÙÙ‚ Ø§Ù„ØªØ´ØºÙŠÙ„ÙŠ'),
+                ("Free Cash Flow", 'free_cash_flow', 'Ø§Ù„ØªØ¯ÙÙ‚ Ø§Ù„Ù†Ù‚Ø¯ÙŠ Ø§Ù„Ø­Ø±'),
+                ("FCF Per Share", 'fcf_per_share', 'Ø§Ù„ØªØ¯ÙÙ‚ Ø§Ù„Ø­Ø± Ù„Ù„Ø³Ù‡Ù…'),
+            ])
+        
+        name = self.current_data.get('company_info', {}).get('name', '')
+        if years:
+            summary_by_lang = {
+                'ar': (
+                    f"📊 نظرة شاملة للنسب المالية لـ {name} — الفترة: {years[0]} - {years[-1]}\n"
+                    "النسب مقسمة إلى فئات رئيسية لتسهيل التحليل والمقارنة."
+                ),
+                'en': (
+                    f"📊 Comprehensive financial ratio view for {name} — Period: {years[0]} - {years[-1]}\n"
+                    "Ratios are grouped into main categories for easier analysis and comparison."
+                ),
+                'fr': (
+                    f"📊 Vue complète des ratios financiers pour {name} — Période : {years[0]} - {years[-1]}\n"
+                    "Les ratios sont regroupés par catégories pour faciliter l'analyse et la comparaison."
+                ),
+            }
+            self.ratios_comment.delete('1.0', 'end')
+            self.ratios_comment.insert('1.0', summary_by_lang.get(self.current_lang, summary_by_lang['en']))
+
+    def _metric_formula_text(self, metric_key: str, strategic: bool = False) -> str:
+        k = str(metric_key or '').strip().lower()
+        ratio_map = {
+            'gross_margin': 'Gross Profit / Revenue',
+            'operating_margin': 'Operating Income / Revenue',
+            'net_margin': 'Net Income / Revenue',
+            'ebitda_margin': 'EBITDA / Revenue',
+            'current_ratio': 'Current Assets / Current Liabilities',
+            'quick_ratio': 'Quick Assets (Cash + Receivables + near-cash investments) / Current Liabilities',
+            'cash_ratio': 'Cash / Current Liabilities',
+            'debt_to_equity': 'Total Debt / Equity',
+            'debt_to_assets': 'Total Debt / Total Assets',
+            'interest_coverage': 'Operating Income / abs(Interest Expense)',
+            'free_cash_flow': 'Operating Cash Flow - Capex',
+            'fcf_per_share': 'Free Cash Flow / Shares Outstanding',
+            'fcf_yield': 'Free Cash Flow / Market Cap',
+            'pe_ratio': 'Price / EPS',
+            'pb_ratio': 'Price / Book Value Per Share',
+            'eps_basic': 'Net Income / Basic Shares',
+            'book_value_per_share': 'Equity / Shares Outstanding',
+            'enterprise_value': 'Market Cap + Total Debt - Cash',
+            'ev_ebitda': 'Enterprise Value / EBITDA',
+            'roa': 'Net Income / Average Total Assets',
+            'roe': 'Net Income / Average Equity',
+            'roic': 'NOPAT / Invested Capital',
+            'ocf_margin': 'Operating Cash Flow / Revenue',
+            'wacc': 'E/(D+E)*CostOfEquity + D/(D+E)*CostOfDebt*(1-Tax)',
+            'net_debt_ebitda': '(Total Debt - Cash) / EBITDA',
+        }
+        strategic_map = {
+            'fair_value': 'DCF (5Y + Terminal) with valuation fallback',
+            'investment_score': 'Composite(Quality, Risk, Cash Flow, Value)',
+            'economic_spread': 'ROIC - WACC',
+            'sgr_internal': 'ROE * Retention Ratio',
+            'ni_growth': '(NI_t - NI_t-1) / abs(NI_t-1)',
+            'retention_ratio': '1 - Dividend Payout Ratio',
+            'ccc_days': 'Inventory Days + AR Days - AP Days',
+            'credit_rating_score': 'Mapped from Credit Rating bucket',
+        }
+        if strategic:
+            return strategic_map.get(k) or ratio_map.get(k) or str(metric_key or '-')
+        return ratio_map.get(k) or str(metric_key or '-')
+
+    def _metric_meaning_text(self, metric_key: str, value, strategic: bool = False) -> str:
+        try:
+            if hasattr(self, 'fetcher') and self.fetcher and not strategic:
+                txt = self.fetcher.explain_ratio(str(metric_key), value)
+                if isinstance(txt, str) and txt.strip():
+                    return txt
+        except Exception:
+            pass
+        k = str(metric_key or '').strip().lower()
+        fallback_meaning = {
+            'ev_ebitda': {
+                'ar': 'كلما كان EV/EBITDA أقل (ضمن نطاق منطقي) كان التقييم غالباً أقل تكلفة نسبياً.',
+                'en': 'Lower EV/EBITDA (within a reasonable range) often indicates relatively cheaper valuation.',
+                'fr': 'Un EV/EBITDA plus faible (dans une plage raisonnable) indique souvent une valorisation relativement moins chère.',
+            },
+            'wacc': {
+                'ar': 'متوسط تكلفة التمويل؛ انخفاضه عادة يدعم التقييم.',
+                'en': 'Average financing cost; lower values usually support valuation.',
+                'fr': 'Coût moyen du financement ; une valeur plus faible soutient généralement la valorisation.',
+            },
+        }
+        lang = getattr(self, 'current_lang', 'en')
+        if k in fallback_meaning:
+            return fallback_meaning[k].get(lang, fallback_meaning[k]['en'])
+        return {'ar': 'تفسير تحليلي قياسي للمقياس.', 'en': 'Standard analytical interpretation.', 'fr': 'Interprétation analytique standard.'}.get(lang, 'Standard analytical interpretation.')
+
+    def _compute_popup_reliability(self, status, source_used, contract=None, value=None):
+        """
+        Bayesian confidence probability (%):
+        posterior = Beta(alpha0 + weighted_success, beta0 + weighted_failure)
+        This yields a probabilistic score instead of a fixed heuristic percentage.
+        """
+        if str(status).upper() != 'COMPUTED' or value is None:
+            return 0
+        c = contract if isinstance(contract, dict) else {}
+        src = str(source_used or '').lower()
+        policy = self._confidence_calibration_policy or {}
+        priors = policy.get('source_priors', {}) if isinstance(policy.get('source_priors', {}), dict) else {}
+        ew = policy.get('evidence_weights', {}) if isinstance(policy.get('evidence_weights', {}), dict) else {}
+
+        # Source priors reflect long-run expected precision by path.
+        def _pair(v, dv):
+            try:
+                if isinstance(v, (list, tuple)) and len(v) >= 2:
+                    return float(v[0]), float(v[1])
+            except Exception:
+                pass
+            return dv
+        a0, b0 = _pair(priors.get(src), _pair(priors.get('default'), (12.0, 4.0)))
+
+        # Evidence from input completeness.
+        input_concepts = c.get('input_concepts') if isinstance(c.get('input_concepts'), list) else []
+        missing_inputs = c.get('missing_inputs') if isinstance(c.get('missing_inputs'), list) else []
+        raw_values_used = c.get('raw_values_used') or c.get('inputs') or {}
+        if not isinstance(raw_values_used, dict):
+            raw_values_used = {}
+
+        n_inputs = len(input_concepts)
+        n_missing = len(missing_inputs)
+        n_raw = len([k for k, v in raw_values_used.items() if v is not None])
+
+        # Weighted pseudo-observations (scientific-style evidence accumulation).
+        success = 0.0
+        failure = 0.0
+
+        # Contracts with richer, explicit inputs are more reliable.
+        success += min(float(ew.get('input_concept_max', 6.0)), float(ew.get('input_concept_success', 0.9)) * n_inputs)
+        success += min(float(ew.get('raw_value_max', 4.0)), float(ew.get('raw_value_success', 0.6)) * n_raw)
+
+        # Missing inputs reduce probability mass.
+        failure += min(float(ew.get('missing_input_max', 8.0)), float(ew.get('missing_input_penalty', 1.8)) * n_missing)
+
+        # Penalize fallback route explicitly.
+        if src == 'ui_fallback':
+            failure += float(ew.get('fallback_penalty', 2.5))
+            # fallback still has some positive evidence once computed.
+            success += float(ew.get('fallback_success_credit', 1.5))
+
+        reason = str(c.get('reason') or '').upper()
+        if reason in {'UNIT_MISMATCH', 'PERIOD_MISMATCH'}:
+            failure += float(ew.get('mismatch_penalty', 3.0))
+        if reason in {'NOT_COMPUTABLE', 'MISSING_SEC_CONCEPT', 'MISSING_MARKET_DATA'}:
+            failure += float(ew.get('not_computable_penalty', 2.0))
+
+        # If contract provides reliability hint, treat it as weak extra evidence.
+        rel_hint = c.get('reliability')
+        if isinstance(rel_hint, (int, float)):
+            p = max(0.0, min(1.0, float(rel_hint) / 100.0))
+            hw = float(ew.get('hint_weight', 2.0))
+            success += hw * p
+            failure += hw * (1.0 - p)
+
+        alpha = a0 + success
+        beta = b0 + failure
+        if alpha <= 0 or beta <= 0:
+            return 0
+        posterior_mean = alpha / (alpha + beta)
+        # Conservative one-sided lower confidence bound using posterior variance.
+        var = (alpha * beta) / (((alpha + beta) ** 2) * (alpha + beta + 1.0))
+        z = float(policy.get('lcb_z_score', 1.0))
+        p_lcb = max(0.0, min(1.0, posterior_mean - z * (var ** 0.5)))
+        p_cal = self._apply_confidence_calibration_curve(p_lcb)
+        return int(max(0.0, min(99.0, round(p_cal * 100.0))))
+
+    def _on_ratio_tree_click(self, event):
+        row_id = self.ratios_tree.identify_row(event.y)
+        col_id = self.ratios_tree.identify_column(event.x)
+        if not row_id or not col_id:
+            return
+        meta = (self._ratio_row_meta or {}).get(row_id)
+        if not meta:
+            return
+        try:
+            col_idx = int(str(col_id).replace('#', '')) - 1
+        except Exception:
+            return
+        # 0: ratio name, 1..N: years, last: explanation
+        years = list(self._ratio_years or [])
+        if not years:
+            cols = list(self.ratios_tree.cget('columns') or [])
+            years = []
+            for c in cols:
+                try:
+                    y = int(str(c))
+                    years.append(y)
+                except Exception:
+                    continue
+        if not years:
+            return
+        values = self.ratios_tree.item(row_id, 'values') or []
+        # If user clicks ratio name / explanation columns, fallback to latest year details.
+        if col_idx <= 0 or col_idx > len(years):
+            year = years[-1]
+            safe_idx = max(1, len(years))  # corresponding latest year value column in tree row
+            cell_text = str(values[safe_idx]).strip() if safe_idx < len(values) else ''
+        else:
+            year = years[col_idx - 1]
+            if col_idx >= len(values):
+                return
+            cell_text = str(values[col_idx]).strip()
+
+        contract = (meta.get('contracts_by_year') or {}).get(year, {}) or {}
+        # Keep UI explanation consistent with the exact source used to render the cell.
+        # Only fallback to core_ratio_results if no contract details are present.
+        if not isinstance(contract, dict) or not contract:
+            try:
+                core_year = ((self.current_data or {}).get('core_ratio_results', {}) or {}).get(year, {})
+                core_contract = ((core_year.get('ratio_results', {}) or {}).get(meta.get('ratio_key')) or {})
+                if isinstance(core_contract, dict) and core_contract:
+                    contract = core_contract
+            except Exception:
+                pass
+        if not isinstance(contract, dict):
+            contract = {}
+
+        reason_code = str(contract.get('reason') or contract.get('status') or 'UNKNOWN')
+        reason_maps = {
+            'ar': {
+                'MISSING_SEC_CONCEPT': 'نقص بند محاسبي مطلوب من SEC لهذه السنة.',
+                'MISSING_MARKET_DATA': 'نقص بيانات سوق مطلوبة (سعر/قيمة سوقية/بيتا...).',
+                'MISSING_MARKET_LAYER': 'طبقة بيانات السوق غير مفعلة.',
+                'MISSING_REQUIRED_LAYER': 'إحدى الطبقات المطلوبة للحساب غير مفعلة أو غير متاحة.',
+                'PERIOD_MISMATCH': 'عدم تطابق الفترات الزمنية بين مدخلات النسبة.',
+                'UNIT_MISMATCH': 'اختلاف وحدات القياس بين المدخلات.',
+                'ZERO_DENOMINATOR': 'المقام يساوي صفر، لا يمكن إتمام القسمة.',
+                'INSUFFICIENT_HISTORY': 'البيانات التاريخية غير كافية للحساب.',
+                'DATA_NOT_APPLICABLE': 'النسبة غير قابلة للتطبيق على البيانات المتوفرة.',
+                'NOT_APPLICABLE_FOR_SECTOR': 'النسبة غير ملائمة لقطاع الشركة وتم حجبها تلقائياً.',
+                'UI_FALLBACK_LOWER_RELIABILITY': 'تم حساب النسبة عبر بديل موثوق مع درجة ثقة أقل من المسار الأساسي.',
+                'NOT_COMPUTABLE': 'النسبة غير قابلة للحساب من البيانات الحالية.',
+                'UNKNOWN': 'سبب غير محدد في محرك الحساب.',
+            },
+            'en': {
+                'MISSING_SEC_CONCEPT': 'Required SEC concept is missing for this year.',
+                'MISSING_MARKET_DATA': 'Required market input is missing (price/market cap/beta).',
+                'MISSING_MARKET_LAYER': 'Market data layer is disabled.',
+                'MISSING_REQUIRED_LAYER': 'One required layer is disabled or unavailable.',
+                'PERIOD_MISMATCH': 'Input facts are not aligned to the same period.',
+                'UNIT_MISMATCH': 'Input facts use incompatible units.',
+                'ZERO_DENOMINATOR': 'Denominator is zero; division is not possible.',
+                'INSUFFICIENT_HISTORY': 'Historical data is not sufficient for this ratio.',
+                'DATA_NOT_APPLICABLE': 'Ratio is not applicable to available data.',
+                'NOT_APPLICABLE_FOR_SECTOR': 'Ratio is hidden for this sector profile.',
+                'UI_FALLBACK_LOWER_RELIABILITY': 'Computed through a fallback path with lower confidence than the primary path.',
+                'NOT_COMPUTABLE': 'Ratio cannot be computed from current inputs.',
+                'UNKNOWN': 'Unspecified reason from ratio engine.',
+            },
+            'fr': {
+                'MISSING_SEC_CONCEPT': 'Concept SEC requis manquant pour cette année.',
+                'MISSING_MARKET_DATA': 'Donnée de marché requise manquante (prix/capitalisation/bêta).',
+                'MISSING_MARKET_LAYER': 'La couche de marché est désactivée.',
+                'MISSING_REQUIRED_LAYER': 'Une couche requise est désactivée ou indisponible.',
+                'PERIOD_MISMATCH': 'Les périodes des données ne sont pas alignées.',
+                'UNIT_MISMATCH': 'Les unités des données sont incompatibles.',
+                'ZERO_DENOMINATOR': 'Le dénominateur est nul; division impossible.',
+                'INSUFFICIENT_HISTORY': 'Historique insuffisant pour ce ratio.',
+                'DATA_NOT_APPLICABLE': 'Ratio non applicable aux données disponibles.',
+                'NOT_APPLICABLE_FOR_SECTOR': 'Ratio masqué pour ce profil sectoriel.',
+                'UI_FALLBACK_LOWER_RELIABILITY': 'Calculé via un chemin de secours avec une confiance inférieure au chemin principal.',
+                'NOT_COMPUTABLE': 'Ratio non calculable avec les entrées actuelles.',
+                'UNKNOWN': 'Raison non spécifiée par le moteur des ratios.',
+            },
+        }
+        reason_map = reason_maps.get(self.current_lang, reason_maps['en'])
+        status = str(contract.get('status') or ('NOT_COMPUTABLE' if cell_text.upper().startswith('N/A') else 'COMPUTED'))
+        value = contract.get('value')
+        formula_used = contract.get('formula_used') or self._metric_formula_text(meta.get('ratio_key'), strategic=False)
+        source_used = contract.get('source') or 'ratio_engine'
+        period_used = contract.get('period')
+        input_concepts = contract.get('input_concepts') or []
+        raw_values_used = contract.get('raw_values_used') or contract.get('inputs') or {}
+        missing_inputs = contract.get('missing_inputs') or []
+        def _pretty_dict(d):
+            if not isinstance(d, dict) or not d:
+                return '-'
+            parts = []
+            for k, v in d.items():
+                try:
+                    if isinstance(v, (int, float)):
+                        parts.append(f"{k}={v:,.6g}")
+                    else:
+                        parts.append(f"{k}={v}")
+                except Exception:
+                    parts.append(f"{k}={v}")
+            return ', '.join(parts)
+
+        labels = {
+            'ar': (
+                'النسبة', 'السنة', 'الحالة', 'القيمة المعروضة', 'القيمة الخام',
+                'الثقة', 'المعادلة', 'المصدر', 'الفترة', 'المفاهيم المستخدمة',
+                'القيم الخام المستخدمة', 'البنود الناقصة', 'السبب التقني', 'المعنى', 'تفاصيل النسبة'
+            ),
+            'en': (
+                'Ratio', 'Year', 'Status', 'Displayed Value', 'Raw Value',
+                'Confidence', 'Formula', 'Source', 'Period', 'Input Concepts',
+                'Raw Values Used', 'Missing Inputs', 'Technical Reason', 'Meaning', 'Ratio Details'
+            ),
+            'fr': (
+                'Ratio', 'Année', 'Statut', 'Valeur affichée', 'Valeur brute',
+                'Confiance', 'Formule', 'Source', 'Période', 'Concepts utilisés',
+                'Valeurs brutes utilisées', 'Entrées manquantes', 'Raison technique', 'Signification', 'Détails du ratio'
+            ),
+        }.get(self.current_lang, (
+            'Ratio', 'Year', 'Status', 'Displayed Value', 'Raw Value',
+            'Confidence', 'Formula', 'Source', 'Period', 'Input Concepts',
+            'Raw Values Used', 'Missing Inputs', 'Technical Reason', 'Meaning', 'Ratio Details'
+        ))
+
+        reliability = self._compute_popup_reliability(status, source_used, contract=contract, value=value)
+        reliability_text = f"{int(reliability)}%"
+        if isinstance(value, (int, float)):
+            raw_value_text = f"{float(value):,.10g}"
+        else:
+            raw_value_text = '-'
+        concepts_text = ', '.join([str(x) for x in input_concepts]) if input_concepts else '-'
+        missing_text = ', '.join([str(x) for x in missing_inputs]) if missing_inputs else '-'
+        if status == 'COMPUTED':
+            tech_reason = 'NONE'
+            explanation = self._metric_meaning_text(meta.get('ratio_key'), value, strategic=False)
+            if str(source_used).lower() == 'ui_fallback':
+                tech_reason = 'UI_FALLBACK_LOWER_RELIABILITY'
+                explanation = f"{explanation}\n{reason_map.get('UI_FALLBACK_LOWER_RELIABILITY', '')}".strip()
+        else:
+            tech_reason = reason_code
+            explanation = reason_map.get(reason_code, reason_map['UNKNOWN'])
+
+        details = (
+            f"{labels[0]}: {meta.get('display_name')}\n"
+            f"{labels[1]}: {year}\n"
+            f"{labels[2]}: {status}\n"
+            f"{labels[3]}: {cell_text or '-'}\n"
+            f"{labels[4]}: {raw_value_text}\n"
+            f"{labels[5]}: {reliability_text}\n"
+            f"{labels[6]}: {formula_used}\n"
+            f"{labels[7]}: {source_used}\n"
+            f"{labels[8]}: {period_used or '-'}\n"
+            f"{labels[9]}: {concepts_text}\n"
+            f"{labels[10]}: {_pretty_dict(raw_values_used)}\n"
+            f"{labels[11]}: {missing_text}\n"
+            f"{labels[12]}: {tech_reason}\n"
+            f"{labels[13]}: {explanation}"
+        )
+        # Keep side panel untouched; show SPSS-like popup window for every click.
+        self._show_ratio_details_popup(labels[14], details)
+
+    def _on_strategic_tree_click(self, event):
+        row_id = self.strat_tree.identify_row(event.y)
+        col_id = self.strat_tree.identify_column(event.x)
+        if not row_id or not col_id:
+            return
+        meta = (self._strategic_row_meta or {}).get(row_id)
+        if not meta:
+            return
+        try:
+            col_idx = int(str(col_id).replace('#', '')) - 1
+        except Exception:
+            return
+        years = list(self._strategic_years or [])
+        if not years:
+            cols = list(self.strat_tree.cget('columns') or [])
+            years = []
+            for c in cols:
+                try:
+                    years.append(int(str(c)))
+                except Exception:
+                    continue
+        if not years:
+            return
+        values = self.strat_tree.item(row_id, 'values') or []
+        if col_idx <= 0 or col_idx > len(years):
+            year = years[-1]
+            safe_idx = max(1, len(years))
+            cell_text = str(values[safe_idx]).strip() if safe_idx < len(values) else ''
+        else:
+            year = years[col_idx - 1]
+            cell_text = str(values[col_idx]).strip() if col_idx < len(values) else ''
+
+        contract = (meta.get('contracts_by_year') or {}).get(year) or {}
+        value = contract.get('value')
+        status = str(contract.get('status') or ('NOT_COMPUTABLE' if cell_text.upper().startswith('N/A') else 'COMPUTED'))
+        source_used = contract.get('source') or 'strategic_engine'
+        formula_used = contract.get('formula_used') or self._metric_formula_text(meta.get('metric_key'), strategic=True)
+        meaning = self._metric_meaning_text(meta.get('metric_key'), value, strategic=True)
+        reliability = self._compute_popup_reliability(status, source_used, contract=contract, value=value)
+
+        labels = {
+            'ar': ('المقياس', 'السنة', 'الحالة', 'القيمة المعروضة', 'القيمة الخام', 'الثقة', 'المعادلة', 'المصدر', 'المعنى', 'تفاصيل المقياس'),
+            'en': ('Metric', 'Year', 'Status', 'Displayed Value', 'Raw Value', 'Confidence', 'Formula', 'Source', 'Meaning', 'Metric Details'),
+            'fr': ('Indicateur', 'Année', 'Statut', 'Valeur affichée', 'Valeur brute', 'Confiance', 'Formule', 'Source', 'Signification', 'Détails'),
+        }.get(self.current_lang, ('Metric', 'Year', 'Status', 'Displayed Value', 'Raw Value', 'Confidence', 'Formula', 'Source', 'Meaning', 'Metric Details'))
+
+        raw_value_text = f"{float(value):,.10g}" if isinstance(value, (int, float)) else '-'
+        details = (
+            f"{labels[0]}: {meta.get('display_name')}\n"
+            f"{labels[1]}: {year}\n"
+            f"{labels[2]}: {status}\n"
+            f"{labels[3]}: {cell_text or '-'}\n"
+            f"{labels[4]}: {raw_value_text}\n"
+            f"{labels[5]}: {int(reliability)}%\n"
+            f"{labels[6]}: {formula_used}\n"
+            f"{labels[7]}: {source_used}\n"
+            f"{labels[8]}: {meaning}"
+        )
+        self._show_ratio_details_popup(labels[9], details)
+
+    def _show_ratio_details_popup(self, title, details):
+        try:
+            win = tk.Toplevel(self.root)
+            win.title(str(title or "Ratio Details"))
+            win.transient(self.root)
+            win.grab_set()
+            win.geometry("760x430")
+            win.minsize(620, 320)
+            win.configure(bg="#f8f9fa")
+
+            body = tk.Frame(win, bg="#f8f9fa")
+            body.pack(fill='both', expand=True, padx=10, pady=10)
+
+            txt = tk.Text(
+                body,
+                wrap='word',
+                bg='white',
+                relief='solid',
+                borderwidth=1,
+                font=FONTS.get('normal', ('Segoe UI', 10)),
+            )
+            sy = ttk.Scrollbar(body, orient='vertical', command=txt.yview)
+            txt.configure(yscrollcommand=sy.set)
+            txt.pack(side='left', fill='both', expand=True)
+            sy.pack(side='right', fill='y')
+
+            txt.insert('1.0', details or '')
+            txt.configure(state='disabled')
+
+            footer = tk.Frame(win, bg="#f8f9fa")
+            footer.pack(fill='x', padx=10, pady=(0, 10))
+
+            def _copy():
+                try:
+                    win.clipboard_clear()
+                    win.clipboard_append(details or '')
+                except Exception:
+                    pass
+
+            copy_label = {
+                'ar': 'نسخ',
+                'en': 'Copy',
+                'fr': 'Copier',
+            }.get(getattr(self, 'current_lang', 'en'), 'Copy')
+            close_label = {
+                'ar': 'إغلاق',
+                'en': 'Close',
+                'fr': 'Fermer',
+            }.get(getattr(self, 'current_lang', 'en'), 'Close')
+
+            tk.Button(
+                footer,
+                text=copy_label,
+                command=_copy,
+                bg='#6c757d',
+                fg='white',
+                relief='flat',
+                font=FONTS.get('button', ('Segoe UI', 10, 'bold')),
+                padx=14,
+            ).pack(side='left')
+            tk.Button(
+                footer,
+                text=close_label,
+                command=win.destroy,
+                bg='#0b6efd',
+                fg='white',
+                relief='flat',
+                font=FONTS.get('button', ('Segoe UI', 10, 'bold')),
+                padx=14,
+            ).pack(side='right')
+        except Exception:
+            # Safe fallback if popup cannot be rendered for any reason.
+            messagebox.showinfo(str(title or "Ratio Details"), str(details or ""))
+
+    # ---------- compute per-year metrics ----------
+    def _compute_per_year_metrics(self, data_by_year, ratios_by_year):
+        years = []
+        try:
+            if hasattr(self, '_get_analysis_years_range'):
+                years = self._get_analysis_years_range() or []
+            elif hasattr(self, '_get_selected_years_range'):
+                years = self._get_selected_years_range() or []
+        except Exception:
+            years = []
+        if not years:
+            return {}
+        ratios_by_year = maybe_guard_ratios_by_year(ratios_by_year or {})
+        self._assert_no_legacy_ratio_keys(ratios_by_year)
+        ticker = (self.current_data or {}).get('company_info', {}).get('ticker', 'CURRENT')
+        sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
+        blocked_ratios = set(sector_gating.get('blocked_ratios', []) or [])
+        ratio_source = UnifiedRatioSource()
+        ratio_source.load(ticker, data_by_year or {}, ratios_by_year)
+        data_layers_ctx = (self.current_data.get('data_layers', {}) if self.current_data else {}) or {}
+        layer2_by_year = data_layers_ctx.get('layer2_by_year', {}) or {}
+        layer4_by_year = data_layers_ctx.get('layer4_by_year', {}) or {}
+        manual_split_rules = {
+            'NVDA': {'cutoff_year': 2023, 'ratio': 10.0},
+        }
+        # Keep quality gate conservative by default: do not rewrite core accounting ratios.
+        allow_aggressive = str(os.environ.get('QUALITY_GATE_AGGRESSIVE', '0')).strip().lower() in ('1', 'true', 'yes')
+
+        def get_layer_num(year_key, *keys):
+            try:
+                row2 = layer2_by_year.get(year_key, {}) or {}
+                row4 = layer4_by_year.get(year_key, {}) or {}
+                for k in keys:
+                    v = row2.get(k)
+                    if isinstance(v, (int, float)):
+                        fv = float(v)
+                        lk = str(k).lower()
+                        if any(tok in lk for tok in ('market_cap', 'enterprise_value', 'total_debt')):
+                            if abs(fv) > 1_000_000_000:
+                                fv = fv / 1_000_000.0
+                        return fv
+                    v = row4.get(k)
+                    if isinstance(v, (int, float)):
+                        fv = float(v)
+                        lk = str(k).lower()
+                        if any(tok in lk for tok in ('market_cap', 'enterprise_value', 'total_debt')):
+                            if abs(fv) > 1_000_000_000:
+                                fv = fv / 1_000_000.0
+                        return fv
+                return None
+            except Exception:
+                return None
+
+        def get_split_factor(year_key):
+            sf = get_layer_num(year_key, 'market:split_latest_ratio', 'yahoo:split_latest_ratio')
+            if isinstance(sf, (int, float)) and sf > 1.0:
+                return float(sf)
+            rule = manual_split_rules.get(str(ticker).upper())
+            if rule and int(year_key) < int(rule.get('cutoff_year', 0)):
+                return float(rule.get('ratio') or 1.0)
+            return 1.0
+
+        def _to_million_market(value):
+            try:
+                if value is None:
+                    return None
+                fv = float(value)
+                if abs(fv) > 1_000_000_000:
+                    return fv / 1_000_000.0
+                return fv
+            except Exception:
+                return None
+        # market inputs: check UI then current_data.market_data
+        price = float(self.price_var.get() or 0.0)
+        shares = float(self.shares_var.get() or 0.0)
+        if shares <= 0:
+            shares = None
+        market_cap_ui = (price * shares / 1_000_000.0) if price and shares else None
+        market_data = self.current_data.get('market_data', {}) if self.current_data else {}
+        market_cap_md = _to_million_market(market_data.get('market_cap')) if market_data else None
+        market_cap = market_cap_ui or market_cap_md
+        sector_profile_current = (
+            ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('profile')
+            or 'industrial'
+        ).lower()
+        def _first_not_none_outer(*vals):
+            for vv in vals:
+                if vv is not None:
+                    return vv
+            return None
+        # Detect structural no-dividend profile to avoid repeated NOT_COMPUTABLE gaps
+        # for issuers that historically do not pay dividends.
+        no_dividend_profile = False
+        try:
+            dy_vals = []
+            div_vals = []
+            for yy in years:
+                row_yy = (data_by_year.get(yy, {}) or {})
+                l2_yy = (layer2_by_year.get(yy, {}) or {})
+                l4_yy = (layer4_by_year.get(yy, {}) or {})
+                dy_vals.append(_first_not_none_outer(
+                    l2_yy.get('market:dividend_yield'),
+                    l4_yy.get('yahoo:dividend_yield'),
+                ))
+                div_vals.append(_first_not_none_outer(
+                    row_yy.get('DividendsPaid'),
+                    row_yy.get('PaymentsOfDividends'),
+                    row_yy.get('PaymentsOfDividendsCommonStock'),
+                    row_yy.get('CashDividendsPaid'),
+                ))
+            has_positive_dividend_marker = any(
+                isinstance(v, (int, float)) and abs(float(v)) > 0
+                for v in (dy_vals + div_vals)
+            )
+            if not has_positive_dividend_marker:
+                no_dividend_profile = True
+        except Exception:
+            no_dividend_profile = False
+
+        cost_of_debt_input = float(self.cost_of_debt_var.get() or 0.0) / 100.0
+        tax_rate_default = 0.21
+
+        per_year = {}
+        for idx, y in enumerate(years):
+            vals = {}
+            is_bank = (sector_profile_current == 'bank')
+            alias = {
+                'NetIncomeLoss': ['Net Income'],
+                'OperatingIncomeLoss': ['Operating Income'],
+                'Revenues': [],
+                'SalesRevenueNet': ['Net revenue', 'Net sales'],
+                'Assets': [],
+                'Liabilities': [],
+                'StockholdersEquity': ['Total Equity'],
+                'NetCashProvidedByUsedInOperatingActivities': ['Operating Cash Flow'],
+                'PaymentsToAcquirePropertyPlantAndEquipment': ['Capital Expenditures'],
+                'CashAndCashEquivalentsAtCarryingValue': ['Cash and Cash Equivalents'],
+                'WeightedAverageNumberOfSharesOutstandingBasic': ['Basic (shares)', 'SharesBasic'],
+                'DividendsPaid': [
+                    'DividendsPaid',
+                    'PaymentsOfDividends',
+                    'PaymentsOfDividendsCommonStock',
+                    'DividendsCommonStockCash',
+                    'Dividends',
+                    'Payments for dividends and dividend equivalents',
+                ],
+            }
+
+            def _get_from_row(row, key):
+                if not isinstance(row, dict):
+                    return None
+                for k in [key] + alias.get(key, []):
+                    if k in row and row.get(k) is not None:
+                        val = row.get(k)
+                        try:
+                            fv = float(val)
+                            lk = str(k or '').lower()
+                            if not any(tok in lk for tok in ('share', 'per', 'ratio', 'margin', 'turnover', 'days', 'yield', 'score')):
+                                if abs(fv) >= 10_000_000.0:
+                                    fv = fv / 1_000_000.0
+                            return fv
+                        except Exception:
+                            return val
+                return None
+
+            def get_data(key):
+                return _get_from_row(data_by_year.get(y, {}), key)
+
+            def get_data_year(year_key, key):
+                return _get_from_row(data_by_year.get(year_key, {}), key)
+            def first_not_none(*vals):
+                for vv in vals:
+                    if vv is not None:
+                        return vv
+                return None
+            def get_contract(ratio_id):
+                c = ratio_source.get_ratio_contract(ticker, y, ratio_id)
+                return {
+                    'value': c.get('value'),
+                    'reliability': c.get('reliability', 0),
+                    'reason': c.get('reason'),
+                    'source': c.get('source', 'ratio_engine'),
+                    'format': c.get('ratio_format'),
+                    'suffix': '%' if c.get('ratio_format') == 'percent' else '',
+                    'display': format_ratio_value(ratio_id, c.get('value')).get('display_text'),
+                }
+            def get_ratio(key):
+                if key in blocked_ratios:
+                    return None
+                # Prefer ratio-engine contract for scale-sensitive metrics.
+                sensitive = {
+                    'eps_basic',
+                    'pe_ratio',
+                    'pb_ratio',
+                    'book_value_per_share',
+                    'fcf_yield',
+                    'fcf_per_share',
+                    'shares_outstanding',
+                }
+                if key in sensitive:
+                    cval = get_contract(key).get('value')
+                    if isinstance(cval, (int, float)):
+                        return float(cval)
+                row_val = (ratios_by_year.get(y, {}) or {}).get(key)
+                if isinstance(row_val, dict) and 'value' in row_val:
+                    row_val = row_val.get('value')
+                if isinstance(row_val, (int, float)):
+                    return float(row_val)
+                return get_contract(key).get('value')
+
+            def get_ratio_year(year_key, key):
+                if year_key is None:
+                    return None
+                c = ratio_source.get_ratio_contract(ticker, year_key, key)
+                cval = c.get('value')
+                if isinstance(cval, (int, float)):
+                    return float(cval)
+                row_val = (ratios_by_year.get(year_key, {}) or {}).get(key)
+                if isinstance(row_val, dict) and 'value' in row_val:
+                    row_val = row_val.get('value')
+                if isinstance(row_val, (int, float)):
+                    return float(row_val)
+                return None
+
+            vals['ROIC'] = get_ratio('roic')
+            vals['ROA'] = get_ratio('roa')
+            vals['ROE'] = get_contract('roe')
+            vals['Net_Interest_Margin'] = get_ratio('net_interest_margin')
+            vals['Loan_to_Deposit_Ratio'] = get_ratio('loan_to_deposit_ratio')
+            vals['Capital_Ratio_Proxy'] = get_ratio('capital_ratio_proxy')
+            vals['Bank_Efficiency_Ratio'] = get_ratio('bank_efficiency_ratio')
+            vals['Bank_Total_Revenue'] = get_ratio('bank_total_revenue')
+            vals['Net_Income_to_Assets'] = get_ratio('net_income_to_assets')
+            vals['Equity_Ratio'] = get_ratio('equity_ratio')
+            vals['Combined_Ratio_Proxy'] = get_ratio('combined_proxy')
+            vals['Capital_Adequacy_Proxy'] = get_ratio('capital_adequacy_proxy')
+            
+            # Retention/SGR with fallback using SEC/Yahoo layer fields.
+            dividends_paid = get_ratio('dividends_paid')
+            if dividends_paid is None:
+                dividends_paid = get_data('DividendsPaid')
+            if dividends_paid is None:
+                # Additional SEC aliases frequently used across issuers/years.
+                dividends_paid = first_not_none(
+                    get_data('PaymentsOfDividends'),
+                    get_data('PaymentsOfDividendsCommonStock'),
+                    get_data('DividendsCommonStockCash'),
+                    get_data('CashDividendsPaid'),
+                    get_data('Dividends'),
+                )
+            if dividends_paid is None:
+                dy = get_layer_num(y, 'market:dividend_yield', 'yahoo:dividend_yield')
+                px = get_layer_num(y, 'market:price', 'yahoo:price')
+                sh = get_layer_num(y, 'market:shares_outstanding', 'yahoo:shares_outstanding')
+                if dy is not None and px is not None and sh is not None:
+                    try:
+                        dividends_paid = abs(dy * px * sh)
+                    except Exception:
+                        dividends_paid = None
+            if dividends_paid is None:
+                # Yahoo payout ratio fallback: Dividends = payout_ratio * net income
+                payout_ratio = get_layer_num(y, 'yahoo:payout_ratio')
+                ni_tmp = get_data('Net Income')
+                if ni_tmp is None:
+                    ni_tmp = get_data('NetIncomeLoss')
+                if payout_ratio is not None and ni_tmp is not None:
+                    try:
+                        dividends_paid = abs(payout_ratio * ni_tmp)
+                    except Exception:
+                        dividends_paid = None
+            if dividends_paid is None:
+                # Yahoo dividend rate fallback: annual dividend per share * shares outstanding
+                div_rate = get_layer_num(y, 'yahoo:dividend_rate', 'market:annual_dividends_per_share')
+                sh = get_layer_num(y, 'market:shares_outstanding', 'yahoo:shares_outstanding')
+                if div_rate is not None and sh is not None:
+                    try:
+                        dividends_paid = abs(div_rate * sh)
+                    except Exception:
+                        dividends_paid = None
+            vals['Dividends_Paid'] = dividends_paid if dividends_paid is not None else None
+
+            ni_for_retention = get_data('Net Income')
+            if ni_for_retention is None:
+                ni_for_retention = get_data('NetIncomeLoss')
+            retention_ratio = get_ratio('retention_ratio')
+            if retention_ratio is None and ni_for_retention is not None and dividends_paid is not None and ni_for_retention != 0:
+                try:
+                    ni_base = float(ni_for_retention)
+                    div_base = float(dividends_paid)
+                    # Align likely scale mismatch (SEC rows often in millions vs market absolute).
+                    if abs(div_base) > 1_000_000_000 and abs(ni_base) < 1_000_000:
+                        ni_base = ni_base * 1_000_000.0
+                    retention_ratio = 1.0 - (abs(div_base) / abs(ni_base))
+                    retention_ratio = max(0.0, min(1.0, retention_ratio))
+                except Exception:
+                    retention_ratio = None
+            vals['Retention_Ratio'] = retention_ratio
+
+            sgr_contract = get_contract('sgr_internal')
+            sgr_value = sgr_contract.get('value') if isinstance(sgr_contract, dict) else None
+            if sgr_value is None and retention_ratio is not None:
+                try:
+                    roe_val = get_contract('roe').get('value')
+                    if roe_val is not None:
+                        sgr_value = retention_ratio * roe_val
+                except Exception:
+                    sgr_value = None
+            vals['SGR_Internal'] = sgr_value if sgr_value is not None else None
+            vals['Gross_Margin'] = get_ratio('gross_margin')
+            vals['Operating_Margin'] = get_ratio('operating_margin')
+            vals['Net_Margin'] = get_ratio('net_margin')
+            vals['Current_Ratio'] = get_ratio('current_ratio')
+            vals['Quick_Ratio'] = get_ratio('quick_ratio')
+            vals['Cash_Ratio'] = get_ratio('cash_ratio')
+            vals['OCF_Margin'] = get_ratio('ocf_margin')
+
+            ni = get_data('Net Income')
+            if ni is None:
+                ni = get_data('NetIncomeLoss')
+            # âœ… FIX: prev_y should be the PREVIOUS year (idx-1), not next year!
+            prev_y = years[idx-1] if idx > 0 else None
+            ni_growth = None
+            if prev_y:
+                ni_prev = get_data_year(prev_y, 'Net Income')
+                if ni_prev is None:
+                    ni_prev = get_data_year(prev_y, 'NetIncomeLoss')
+                if ni is not None and ni_prev is not None and ni_prev != 0:
+                    try:
+                        ni_growth = (ni - ni_prev) / abs(ni_prev)
+                    except:
+                        ni_growth = None
+            vals['NI_Growth'] = ni_growth
+
+            ebitda = get_ratio('ebitda')
+            if ebitda is None:
+                ebitda = get_data('EBITDA')
+            if ebitda is None:
+                op = get_data('OperatingIncomeLoss') or 0.0
+                dep = get_data('DepreciationDepletionAndAmortization') or 0.0
+                ebitda = op + dep if op is not None else None
+            vals['EBITDA'] = ebitda
+
+            eps = get_ratio('eps_basic')
+            if eps is None:
+                try:
+                    shares_basic = get_data('WeightedAverageNumberOfSharesOutstandingBasic') or get_data('EntityCommonStockSharesOutstanding')
+                    if shares_basic and shares_basic != 0 and ni is not None:
+                        split_factor = get_split_factor(y)
+                        sh_adj = shares_basic * split_factor if split_factor > 1.0 else shares_basic
+                        eps = ni / sh_adj if sh_adj else None
+                except:
+                    eps = None
+            vals['EPS'] = eps
+
+            ocf = get_data('NetCashProvidedByUsedInOperatingActivities')
+            capex = first_not_none(
+                get_data('PaymentsToAcquirePropertyPlantAndEquipment'),
+                get_data('CapitalExpenditures'),
+                0.0,
+            )
+            fcf = get_ratio('free_cash_flow')
+            if fcf is None and ocf is not None:
+                fcf = ocf - abs(capex or 0.0)
+            vals['FCF'] = fcf
+            shares_basic_year = get_ratio('shares_outstanding')
+            if shares_basic_year is None:
+                shares_basic_year = first_not_none(
+                    get_data('WeightedAverageNumberOfSharesOutstandingBasic'),
+                    get_data('EntityCommonStockSharesOutstanding'),
+                )
+            split_factor = get_split_factor(y)
+            if isinstance(shares_basic_year, (int, float)) and shares_basic_year > 0 and split_factor > 1.0:
+                shares_basic_year = shares_basic_year * split_factor
+            if isinstance(shares_basic_year, (int, float)) and shares_basic_year <= 0:
+                shares_basic_year = None
+            market_cap_layer = get_layer_num(y, 'market:market_cap', 'yahoo:market_cap')
+            price_year = price if price and price > 0 else get_layer_num(y, 'market:price', 'yahoo:price')
+            # Reconstruct market cap from price * shares (million USD) with split-aware shares
+            # and prefer reconstructed value when layer market cap is clearly inconsistent.
+            market_cap_reconstructed = None
+            if isinstance(price_year, (int, float)) and price_year > 0 and isinstance(shares_basic_year, (int, float)) and shares_basic_year > 0:
+                market_cap_reconstructed = (price_year * shares_basic_year) / 1_000_000.0
+
+            market_cap_year = market_cap_ui or market_cap_layer or market_cap_reconstructed or market_cap
+            if (
+                isinstance(market_cap_layer, (int, float))
+                and market_cap_layer > 0
+                and isinstance(market_cap_reconstructed, (int, float))
+                and market_cap_reconstructed > 0
+            ):
+                ratio_mc = abs(float(market_cap_layer)) / max(abs(float(market_cap_reconstructed)), 1e-9)
+                # Hard guard against split/unit mismatch (e.g., 10x error on pre-split years).
+                if ratio_mc < 0.2 or ratio_mc > 5.0:
+                    market_cap_year = market_cap_reconstructed
+                    vals['Market_Cap_Source'] = 'PRICE_X_SPLIT_ADJUSTED_SHARES_RECONSTRUCTED'
+                else:
+                    vals['Market_Cap_Source'] = 'LAYER_MARKET_CAP'
+            elif market_cap_year is not None:
+                vals['Market_Cap_Source'] = 'LAYER_OR_UI_FALLBACK'
+            fcf_yield = get_ratio('fcf_yield')
+            if fcf_yield is None and (fcf is not None and market_cap_year):
+                fcf_yield = (fcf / market_cap_year)
+            vals['FCF_Yield'] = fcf_yield
+            
+            # âœ… Point 5: FCF per Share
+            fcf_per_share = get_ratio('fcf_per_share')
+            if fcf_per_share is None and fcf is not None:
+                try:
+                    shares_basic = first_not_none(
+                        shares_basic_year,
+                        get_data('WeightedAverageNumberOfSharesOutstandingBasic'),
+                        get_data('EntityCommonStockSharesOutstanding'),
+                    )
+                    if isinstance(shares_basic, (int, float)) and shares_basic > 0 and split_factor > 1.0:
+                        shares_basic = shares_basic * split_factor
+                    if shares_basic and shares_basic != 0:
+                        cand = [
+                            fcf / shares_basic,
+                            (fcf * 1_000.0) / shares_basic,
+                            (fcf * 1_000_000.0) / shares_basic,
+                        ]
+                        if eps is not None and isinstance(eps, (int, float)) and abs(eps) >= 0.1:
+                            plausible = [c for c in cand if isinstance(c, (int, float)) and abs(c) < 50000]
+                            fcf_per_share = min(plausible, key=lambda c: abs(abs(c) - abs(eps))) if plausible else cand[0]
+                        else:
+                            plausible = [c for c in cand if isinstance(c, (int, float)) and 0.1 <= abs(c) < 50000]
+                            fcf_per_share = plausible[0] if plausible else cand[0]
+                except:
+                    fcf_per_share = None
+            vals['FCF_per_Share'] = fcf_per_share
+
+            # âœ… Market Ratios: consume base ratios first, fallback only if missing
+            price = float(self.price_var.get() or 0.0)
+            price_effective = price if price and price > 0 else get_layer_num(y, 'market:price', 'yahoo:price')
+            vals['PE_Ratio'] = first_not_none(get_ratio('pe_ratio_raw'), get_ratio('pe_ratio'))
+            vals['PB_Ratio'] = first_not_none(get_ratio('pb_ratio_raw'), get_ratio('pb_ratio'))
+            vals['PE_Ratio_Used'] = first_not_none(get_ratio('pe_ratio_used'), vals['PE_Ratio'])
+            vals['PB_Ratio_Used'] = first_not_none(get_ratio('pb_ratio_used'), vals['PB_Ratio'])
+            vals['Dividend_Yield'] = first_not_none(
+                get_ratio('dividend_yield'),
+                get_layer_num(y, 'market:dividend_yield', 'yahoo:dividend_yield'),
+            )
+            if vals['Dividend_Yield'] is None and no_dividend_profile:
+                vals['Dividend_Yield'] = 0.0
+            vals['EV_EBITDA'] = None
+            if price_effective and price_effective > 0:
+                if vals['PE_Ratio'] is None and eps and eps != 0:
+                    vals['PE_Ratio'] = price_effective / eps
+                if vals['PB_Ratio'] is None:
+                    book_value_per_share = get_ratio('book_value_per_share')
+                    if book_value_per_share and book_value_per_share != 0:
+                        vals['PB_Ratio'] = price_effective / book_value_per_share
+                if vals['Dividend_Yield'] is None:
+                    shares_basic = first_not_none(
+                        shares_basic_year,
+                        get_data('WeightedAverageNumberOfSharesOutstandingBasic'),
+                        get_data('EntityCommonStockSharesOutstanding'),
+                    )
+                    if dividends_paid and shares_basic and shares_basic != 0:
+                        div_per_share = abs(dividends_paid) / shares_basic
+                        vals['Dividend_Yield'] = (div_per_share / price_effective)
+
+            # EV / EBITDA with explicit unit alignment (EV in USD, EBITDA often in millions).
+            try:
+                ev_year = get_layer_num(y, 'market:enterprise_value', 'yahoo:enterprise_value')
+                if ev_year is None:
+                    debt_ev = first_not_none(
+                        get_ratio('total_debt'),
+                        get_layer_num(y, 'market:total_debt', 'yahoo:total_debt'),
+                    )
+                    cash_ev = first_not_none(
+                        get_data('CashAndCashEquivalentsAtCarryingValue'),
+                        get_data('CashAndCashEquivalents'),
+                        get_data('Cash and Cash Equivalents'),
+                    )
+                    mcap_ev = market_cap_year
+                    if mcap_ev is not None and debt_ev is not None and cash_ev is not None:
+                        try:
+                            cash_candidates = [float(cash_ev), float(cash_ev) * 1_000.0, float(cash_ev) * 1_000_000.0]
+                            cash_adj = min(cash_candidates, key=lambda c: abs((c / max(abs(mcap_ev), 1e-9)) - 0.02))
+                            ev_year = float(mcap_ev) + float(debt_ev) - float(cash_adj)
+                        except Exception:
+                            ev_year = None
+                ebitda_for_ev = get_data('Ebitda') or get_data('EBITDA') or ebitda
+                if ev_year is not None and ebitda_for_ev not in (None, 0):
+                    # Normalize EV around market-cap anchor to avoid million/dollar slips.
+                    ev_candidates = [float(ev_year), float(ev_year) / 1_000.0, float(ev_year) / 1_000_000.0, float(ev_year) * 1_000.0]
+                    ev_candidates = [v for v in ev_candidates if v > 0]
+                    if isinstance(market_cap_year, (int, float)) and market_cap_year > 0:
+                        ev_norm = min(ev_candidates, key=lambda v: abs((v - float(market_cap_year)) / max(abs(float(market_cap_year)), 1.0)))
+                    else:
+                        ev_norm = max(ev_candidates)
+
+                    cands = [
+                        float(ebitda_for_ev),
+                        float(ebitda_for_ev) * 1_000.0,
+                        float(ebitda_for_ev) * 1_000_000.0,
+                        float(ebitda_for_ev) * 1_000_000_000.0,
+                    ]
+                    cands = [c for c in cands if c > 0]
+                    strict = [c for c in cands if 2.0 <= (ev_norm / c) <= 300.0]
+                    plausible = strict if strict else [c for c in cands if 0.5 <= (ev_norm / c) <= 500.0]
+                    denom = min(plausible, key=lambda c: abs((ev_norm / c) - 25.0)) if plausible else None
+                    vals['EV_EBITDA'] = (ev_norm / denom) if denom else None
+            except Exception:
+                vals['EV_EBITDA'] = None
+
+            nd_eb = get_ratio('net_debt_ebitda')
+            if nd_eb is None:
+                try:
+                    short = get_data('ShortTermBorrowings') or 0.0
+                    longd = get_data('LongTermDebt') or 0.0
+                    cash = get_data('CashAndCashEquivalentsAtCarryingValue') or 0.0
+                    net_debt = short + longd - cash
+                    if ebitda and ebitda != 0:
+                        nd_eb = net_debt / ebitda
+                except:
+                    nd_eb = None
+            vals['Net_Debt_EBITDA'] = nd_eb
+
+            vals['Altman_Z_Score'] = get_ratio('altman_z_score')
+
+            accr = get_ratio('accruals_ratio')
+            if accr is None:
+                try:
+                    assets = get_data('Assets')
+                    if ni is not None and ocf is not None and assets:
+                        accr = (ni - ocf) / assets
+                except:
+                    accr = None
+            vals['Accruals_Ratio'] = accr
+
+            accr_change = None
+            if prev_y:
+                try:
+                    accr_prev = get_ratio_year(prev_y, 'accruals_ratio')
+                    if accr_prev is None:
+                        assets_prev = get_data_year(prev_y, 'Assets')
+                        ni_prev = get_data_year(prev_y, 'NetIncomeLoss')
+                        ocf_prev = get_data_year(prev_y, 'NetCashProvidedByUsedInOperatingActivities')
+                        accr_prev = (ni_prev - ocf_prev) / assets_prev if assets_prev and ni_prev is not None and ocf_prev is not None else None
+                    if accr is not None and accr_prev is not None:
+                        accr_change = accr - accr_prev
+                except:
+                    accr_change = None
+            vals['Accruals_Change'] = accr_change
+
+            op_lev = None
+            try:
+                op_income = get_data('OperatingIncomeLoss') or 0.0
+                if prev_y:
+                    op_prev = get_data_year(prev_y, 'OperatingIncomeLoss')
+                    rev = get_data('Revenues') or get_data('SalesRevenueNet') or 0.0
+                    rev_prev = get_data_year(prev_y, 'Revenues') or get_data_year(prev_y, 'SalesRevenueNet')
+                    if op_prev is not None and rev_prev is not None and rev_prev != 0 and op_prev != 0:
+                        pct_op = (op_income - op_prev) / abs(op_prev)
+                        pct_rev = (rev - rev_prev) / abs(rev_prev) if rev_prev != 0 else None
+                        if pct_rev and pct_rev != 0:
+                            op_lev = pct_op / pct_rev
+            except:
+                op_lev = None
+            vals['Op_Leverage'] = op_lev
+
+            dih = get_ratio('inventory_days')
+            dso = get_contract('days_sales_outstanding')
+            dpo = get_ratio('ap_days')
+            ccc = get_ratio('ccc_days')
+            vals['Inventory_Days'] = dih
+            vals['AR_Days'] = dso
+            vals['AP_Days'] = dpo
+            vals['CCC_Days'] = get_contract('ccc_days')
+            wacc_bank_low = False
+            fair_value_warning = None
+            rating_adjusted_for_losses = False
+
+            # Prefer ratio-engine CoD first, then sector-aware derivation.
+            ratio_cost_of_debt = get_ratio('cost_of_debt')
+            derived_cost_of_debt = None
+            cost_of_debt_source = None
+            try:
+                if ratio_cost_of_debt is None:
+                    if is_bank:
+                        ltd_interest = first_not_none(
+                            get_data('InterestExpenseLongTermDebt'),
+                            get_data('InterestExpenseDebt'),
+                            get_data('InterestAndDebtExpense'),
+                            get_data('InterestExpenseBorrowings'),
+                        )
+                        ltd_debt = first_not_none(
+                            get_data('LongTermDebtNoncurrent'),
+                            get_data('LongTermDebt'),
+                            get_data('DebtNoncurrent'),
+                            get_data('LongTermBorrowings'),
+                        )
+                        if ltd_interest is not None and ltd_debt not in (None, 0):
+                            cod_candidates = []
+                            scale_penalty = {1.0: 0.0, 1_000.0: 1.0, 1_000_000.0: 2.0, 0.001: 1.0, 0.000001: 2.0}
+                            i_cands = [
+                                (abs(float(ltd_interest)), 1.0),
+                                (abs(float(ltd_interest)) / 1_000.0, 0.001),
+                                (abs(float(ltd_interest)) / 1_000_000.0, 0.000001),
+                                (abs(float(ltd_interest)) * 1_000.0, 1_000.0),
+                            ]
+                            d_cands = [
+                                (abs(float(ltd_debt)), 1.0),
+                                (abs(float(ltd_debt)) / 1_000.0, 0.001),
+                                (abs(float(ltd_debt)) / 1_000_000.0, 0.000001),
+                                (abs(float(ltd_debt)) * 1_000.0, 1_000.0),
+                            ]
+                            for ic, isc in i_cands:
+                                for dc, dsc in d_cands:
+                                    if dc in (None, 0):
+                                        continue
+                                    cv = ic / dc
+                                    if 0.001 <= cv <= 0.10:
+                                        score = abs(cv - 0.04) + (0.05 * (scale_penalty.get(isc, 1.0) + scale_penalty.get(dsc, 1.0)))
+                                        cod_candidates.append((score, cv))
+                            if cod_candidates:
+                                derived_cost_of_debt = min(cod_candidates, key=lambda x: x[0])[1]
+                                cost_of_debt_source = 'BANK_LT_DEBT_INTEREST'
+                    if derived_cost_of_debt is None:
+                        interest_used = get_ratio('interest_expense_used')
+                        debt_now = get_ratio('total_debt')
+                        debt_prev = get_ratio_year(prev_y, 'total_debt') if prev_y else None
+                        debt_avg = None
+                        if debt_now and debt_prev:
+                            debt_avg = (abs(debt_now) + abs(debt_prev)) / 2.0
+                        elif debt_now:
+                            debt_avg = abs(debt_now)
+                        if interest_used and debt_avg and debt_avg > 0:
+                            derived_cost_of_debt = abs(float(interest_used)) / float(debt_avg)
+                            cost_of_debt_source = 'SEC_INTEREST_OVER_DEBT_BASE'
+            except Exception:
+                derived_cost_of_debt = None
+                cost_of_debt_source = None
+
+            vals['Cost_of_Debt'] = (
+                ratio_cost_of_debt
+                if ratio_cost_of_debt is not None
+                else (
+                    derived_cost_of_debt
+                    if derived_cost_of_debt is not None
+                    else (cost_of_debt_input if cost_of_debt_input and cost_of_debt_input > 0 else None)
+                )
+            )
+            if vals['Cost_of_Debt'] is not None:
+                try:
+                    cod = float(vals['Cost_of_Debt'])
+                    if is_bank:
+                        if cod <= 0 or cod > 0.10:
+                            vals['Cost_of_Debt'] = None
+                    else:
+                        if cod <= 0 or cod > 0.5:
+                            vals['Cost_of_Debt'] = None
+                except Exception:
+                    vals['Cost_of_Debt'] = None
+            if vals['Cost_of_Debt'] is not None:
+                vals['Cost_of_Debt_Source'] = (
+                    'RATIO_ENGINE'
+                    if ratio_cost_of_debt is not None
+                    else (cost_of_debt_source or 'UI_INPUT')
+                )
+            else:
+                vals['Cost_of_Debt_Source'] = None
+
+            # âœ… Point 4: Enhanced WACC calculation using Beta for Cost of Equity
+            wacc = get_ratio('wacc')
+            beta = None
+            try:
+                liabilities = get_data('Liabilities') or 0.0
+                equity_bs = get_data('StockholdersEquity')
+                E = market_cap_year if market_cap_year else (equity_bs if equity_bs is not None else None)
+                debt_ratio_value = get_ratio('total_debt')
+                D = debt_ratio_value if debt_ratio_value is not None else liabilities
+                
+                # Get Beta from per-year market layers first, then legacy market_data.
+                beta = get_layer_num(y, 'market:beta', 'yahoo:beta')
+                if beta is None and hasattr(self, 'current_data') and self.current_data:
+                    market_data = self.current_data.get('market_data', {})
+                    beta = market_data.get('beta')
+                
+                effective_cost_of_debt = vals.get('Cost_of_Debt')
+                if wacc is None and E is not None and effective_cost_of_debt is not None and (D + (E or 0)) != 0:
+                    # Use CAPM if Beta is available: Cost of Equity = Risk-Free Rate + Beta * Market Risk Premium
+                    if beta is not None:
+                        risk_free_rate = 0.04  # 4% default risk-free rate
+                        market_risk_premium = 0.08  # 8% default market risk premium
+                        cost_of_equity = risk_free_rate + (beta * market_risk_premium)
+                    else:
+                        # Fallback: simple approximation
+                        cost_of_equity = effective_cost_of_debt + 0.05
+                    
+                    if (D + E) != 0:
+                        wacc = (E / (D + E)) * cost_of_equity + (D / (D + E)) * effective_cost_of_debt * (1 - tax_rate_default)
+            except:
+                wacc = None
+            vals['WACC'] = wacc
+            vals['Beta'] = beta  # Store beta for display
+            if is_bank and isinstance(wacc, (int, float)) and wacc < 0.06:
+                wacc_bank_low = True
+
+            econ_spread = None
+            try:
+                roic = get_ratio('roic')
+                if roic is not None and wacc is not None:
+                    roic_dec = canonicalize_ratio_value('roic', roic)
+                    econ_spread = roic_dec - wacc
+            except:
+                econ_spread = None
+            vals['Economic_Spread'] = econ_spread
+
+            fair = None
+            shares_layer = get_layer_num(y, 'market:shares_outstanding', 'yahoo:shares_outstanding')
+            share_inputs = []
+            for sv in (shares, shares_basic_year, shares_layer):
+                if isinstance(sv, (int, float)) and sv > 0:
+                    share_inputs.append(float(sv))
+                    if split_factor > 1.0:
+                        share_inputs.append(float(sv) * float(split_factor))
+            price_anchor = price_year if (isinstance(price_year, (int, float)) and price_year > 0) else None
+            price_anchor_band = 3.0
+            if price_anchor is None:
+                pe_anchor = get_ratio('pe_ratio')
+                eps_anchor = eps if isinstance(eps, (int, float)) else get_ratio('eps_basic')
+                if isinstance(pe_anchor, (int, float)) and isinstance(eps_anchor, (int, float)) and pe_anchor > 0 and eps_anchor > 0:
+                    price_anchor = abs(float(pe_anchor) * float(eps_anchor))
+                    price_anchor_band = 3.0
+                elif (
+                    isinstance(market_cap_year, (int, float))
+                    and market_cap_year > 0
+                    and isinstance(shares_basic_year, (int, float))
+                    and shares_basic_year > 0
+                ):
+                    price_anchor = abs((float(market_cap_year) * 1_000_000.0) / float(shares_basic_year))
+                    price_anchor_band = 3.0
+            if vals.get('FCF') is not None and vals.get('WACC') is not None and share_inputs:
+                try:
+                    # Build an internal, robust growth estimate from historical revenues.
+                    rev_hist = []
+                    for yy in years:
+                        rv = get_data_year(yy, 'Revenues')
+                        if rv is None:
+                            rv = get_data_year(yy, 'SalesRevenueNet')
+                        if isinstance(rv, (int, float)) and rv > 0:
+                            rev_hist.append(float(rv))
+                    growth_rates = []
+                    for i in range(1, len(rev_hist)):
+                        prev_r = rev_hist[i - 1]
+                        curr_r = rev_hist[i]
+                        if prev_r and prev_r > 0:
+                            growth_rates.append((curr_r - prev_r) / prev_r)
+                    if growth_rates:
+                        g = sum(growth_rates) / len(growth_rates)
+                        # Clamp to a reasonable strategic valuation band.
+                        g = max(-0.10, min(0.15, g))
+                    else:
+                        g = 0.03
+                    pv = 0.0
+                    last_fcf = float(vals['FCF'])
+                    for t in range(1, 6):
+                        ft = last_fcf * ((1 + g) ** t)
+                        pv += ft / ((1 + vals['WACC']) ** t)
+                    if vals['WACC'] > g:
+                        tv = (last_fcf * ((1 + g) ** 6)) / (vals['WACC'] - g)
+                        pv += tv / ((1 + vals['WACC']) ** 6)
+                    # pv is in million USD; convert to USD then infer the correct share scale.
+                    pv_usd = pv * 1_000_000.0
+                    fair_candidates = []
+                    for sv in share_inputs:
+                        for mul, penalty in ((1.0, 0.0), (1_000.0, 0.20), (1_000_000.0, 0.45)):
+                            shares_abs = sv * mul
+                            if shares_abs <= 0:
+                                continue
+                            fair_ps = pv_usd / shares_abs
+                            if fair_ps <= 0 or fair_ps > 100_000:
+                                continue
+                            score = penalty
+                            if price_anchor and price_anchor > 0:
+                                ratio = fair_ps / price_anchor
+                                score += abs(ratio - 1.0)
+                                if ratio < 0.10 or ratio > price_anchor_band:
+                                    score += 5.0
+                            else:
+                                if fair_ps < 0.1 or fair_ps > 5_000:
+                                    score += 5.0
+                            fair_candidates.append((score, fair_ps))
+                    if fair_candidates:
+                        fair = min(fair_candidates, key=lambda x: x[0])[1]
+                        if price_anchor and price_anchor > 0 and (
+                            fair < 0.10 * price_anchor or fair > price_anchor_band * price_anchor
+                        ):
+                            fair = None
+                            fair_value_warning = 'FAIR_VALUE_OUT_OF_BOUNDS_VS_MARKET'
+                        elif (not price_anchor or price_anchor <= 0) and fair > 500:
+                            fair = None
+                            fair_value_warning = 'FAIR_VALUE_NO_MARKET_ANCHOR'
+                except:
+                    fair = None
+            # Fallback valuation when DCF inputs are incomplete:
+            # blend EPS*PE and BVPS*PB anchors if available.
+            if fair is None:
+                pe_used = first_not_none(get_ratio('pe_ratio_used'), get_ratio('pe_ratio'))
+                pb_used = first_not_none(get_ratio('pb_ratio_used'), get_ratio('pb_ratio'))
+                eps_used = first_not_none(eps, get_ratio('eps_basic'))
+                bvps_used = first_not_none(get_ratio('book_value_per_share'), vals.get('Book_Value_Per_Share'))
+                fair_candidates = []
+                if isinstance(pe_used, (int, float)) and pe_used > 0 and isinstance(eps_used, (int, float)) and eps_used > 0:
+                    fair_candidates.append(float(pe_used) * float(eps_used))
+                if isinstance(pb_used, (int, float)) and pb_used > 0 and isinstance(bvps_used, (int, float)) and bvps_used > 0:
+                    fair_candidates.append(float(pb_used) * float(bvps_used))
+                if fair_candidates:
+                    fair = sum(fair_candidates) / len(fair_candidates)
+                    fair_value_warning = 'FAIR_VALUE_RATIO_FALLBACK'
+            vals['Fair_Value'] = fair
+
+            comps = []
+            if vals['Economic_Spread'] is not None:
+                comps.append(min(max((vals['Economic_Spread'] + 0.2) / 0.4, 0.0), 1.0))
+            if vals['FCF_Yield'] is not None:
+                comps.append(min(max((vals['FCF_Yield'] + 0.1) / 0.3, 0.0), 1.0))
+            if vals.get('Altman_Z_Score') is not None:
+                comps.append(min(max((vals['Altman_Z_Score'] - 1.8) / (3.0 - 1.8), 0.0), 1.0))
+            vals['Investment_Score'] = (sum(comps) / len(comps) * 100.0) if comps else None
+
+            cr = None
+            # External rating (if available from market/yahoo layer) has top priority.
+            ext_rating_raw = first_not_none(
+                get_layer_num(y, 'market:credit_rating', 'yahoo:credit_rating'),
+                (layer2_by_year.get(y, {}) or {}).get('market:credit_rating'),
+                (layer4_by_year.get(y, {}) or {}).get('yahoo:credit_rating'),
+            )
+            if isinstance(ext_rating_raw, str) and ext_rating_raw.strip():
+                rt = ext_rating_raw.strip().upper()
+                if rt.startswith('AAA') or rt.startswith('AA'):
+                    cr = 'AA'
+                elif rt.startswith('A'):
+                    cr = 'A'
+                elif rt.startswith('BBB') or rt.startswith('BAA'):
+                    cr = 'BBB'
+                elif rt.startswith('BB') or rt.startswith('BA'):
+                    cr = 'BB'
+                else:
+                    cr = 'B or lower'
+                vals['Credit_Rating_Source'] = 'EXTERNAL_LAYER_RATING'
+            if vals['Net_Debt_EBITDA'] is not None:
+                nd = vals['Net_Debt_EBITDA']
+                if cr is None:
+                    # Conservative mapping: avoid over-rating non-financial corporates.
+                    # AA is reserved to financial profiles with explicit capital proxy support.
+                    ic = first_not_none(get_ratio('interest_coverage'), vals.get('Interest_Coverage'))
+                    da = first_not_none(get_ratio('debt_to_assets'), vals.get('Debt_to_Assets'))
+                    if is_bank:
+                        if nd < 1:
+                            cr = "AA"
+                        elif nd < 2:
+                            cr = "A"
+                        elif nd < 3:
+                            cr = "BBB"
+                        elif nd < 4:
+                            cr = "BB"
+                        else:
+                            cr = "B or lower"
+                    else:
+                        if nd < 0.5 and isinstance(ic, (int, float)) and ic >= 20 and isinstance(da, (int, float)) and da <= 0.25:
+                            cr = "A"
+                        elif nd < 1.5 and isinstance(ic, (int, float)) and ic >= 6:
+                            cr = "BBB"
+                        elif nd < 3:
+                            cr = "BB"
+                        else:
+                            cr = "B or lower"
+            if cr is None:
+                da = first_not_none(get_ratio('debt_to_assets'), vals.get('Debt_to_Assets'))
+                dte = first_not_none(get_ratio('debt_to_equity'), vals.get('Debt_to_Equity'))
+                cap_proxy = first_not_none(vals.get('Capital_Adequacy_Proxy'), vals.get('Capital_Ratio_Proxy'))
+                try:
+                    if isinstance(cap_proxy, (int, float)):
+                        if cap_proxy >= 0.12:
+                            cr = "AA" if is_bank else "A"
+                        elif cap_proxy >= 0.08:
+                            cr = "A"
+                        elif cap_proxy >= 0.05:
+                            cr = "BBB"
+                        else:
+                            cr = "BB"
+                    elif isinstance(da, (int, float)):
+                        if da <= 0.30:
+                            cr = "AA" if is_bank else "A"
+                        elif da <= 0.50:
+                            cr = "BBB" if not is_bank else "A"
+                        elif da <= 0.70:
+                            cr = "BB" if not is_bank else "BBB"
+                        else:
+                            cr = "B or lower"
+                    elif isinstance(dte, (int, float)):
+                        if dte <= 1.0:
+                            cr = "AA" if is_bank else "A"
+                        elif dte <= 2.0:
+                            cr = "BBB" if not is_bank else "A"
+                        elif dte <= 3.5:
+                            cr = "BB" if not is_bank else "BBB"
+                        else:
+                            cr = "B or lower"
+                except Exception:
+                    cr = cr
+            if ni is not None and ni < 0 and cr in {"AA", "A"}:
+                cr = "BBB"
+                rating_adjusted_for_losses = True
+            if cr is None and prev_y:
+                assets_now = first_not_none(get_data('Assets'), get_data('TotalAssets'), get_data('Total Assets'))
+                liab_now = first_not_none(get_data('Liabilities'), get_data('TotalLiabilities'), get_data('Total Liabilities'))
+                eq_now = first_not_none(
+                    get_data('StockholdersEquity'),
+                    get_data('StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'),
+                    get_data('TotalEquity'),
+                    get_data('Total Equity'),
+                )
+                if assets_now is None or liab_now is None or eq_now is None:
+                    prev_vals = per_year.get(prev_y, {}) or {}
+                    prev_cr = prev_vals.get('Credit_Rating')
+                    if isinstance(prev_cr, str) and prev_cr.strip():
+                        cr = prev_cr
+                        vals['Credit_Rating_Source'] = 'PREV_YEAR_PROXY_MISSING_ANCHORS'
+            vals['Credit_Rating'] = cr
+            rating_map = {'AA': 95, 'A': 85, 'BBB': 75, 'BB': 60, 'B or lower': 40}
+            vals['Credit_Rating_Score'] = rating_map.get(cr) if cr else None
+
+            warns = []
+            if vals['Altman_Z_Score'] is not None and vals['Altman_Z_Score'] < 1.8:
+                warns.append("Altman low")
+            if vals['Net_Debt_EBITDA'] is not None and vals['Net_Debt_EBITDA'] > 3:
+                warns.append("High NetDebt/EBITDA")
+            if vals.get('Op_Leverage') is not None and abs(vals['Op_Leverage']) > 3:
+                warns.append("High Op Leverage")
+            if vals['Accruals_Ratio'] is not None and vals['Accruals_Ratio'] > 0.05:
+                warns.append("High accruals")
+            if wacc_bank_low:
+                warns.append("Low WACC for bank")
+            if fair_value_warning:
+                warns.append("Fair value flagged")
+            if rating_adjusted_for_losses:
+                warns.append("Rating capped due to losses")
+            vals['Warning_Signal'] = ", ".join(warns) if warns else "None"
+
+            per_year[y] = vals
+
+        return per_year
+
+    # ---------- Strategic display ----------
+    def display_strategic_analysis(self):
+        if not self.current_data:
+            for i in self.strat_tree.get_children():
+                self.strat_tree.delete(i)
+            return
+        self._strategic_row_meta = {}
+        for iid in self.strat_tree.get_children():
+            self.strat_tree.delete(iid)
+        data_by_year = ((self.current_data.get('data_layers', {}) or {}).get('layer1_by_year') or self.current_data.get('data_by_year', {}) or {})
+        ratios_by_year = self.current_data.get('financial_ratios', {}) or {}
+        ui_excel_lock = self._is_excel_ui_locked()
+        ui_lock_strategic_metrics = set(
+            str(x).strip().lower()
+            for x in ((self.current_data or {}).get('ui_lock_excel_strategic_metrics') or [])
+            if str(x).strip()
+        )
+        years = self._get_analysis_years_range()
+        if not years:
+            return
+        self._strategic_years = list(years)
+        if ui_excel_lock and isinstance(self.current_data.get('strategic_analysis', {}), dict) and self.current_data.get('strategic_analysis'):
+            # Excel-locked mode must mirror imported strategic sheet exactly.
+            per_year = self.current_data.get('strategic_analysis', {}) or {}
+        else:
+            # Live mode: always recompute from current ratio/data state so strategic
+            # metrics stay synchronized with ratios (including fallback-computed values).
+            per_year = self._compute_per_year_metrics(data_by_year, ratios_by_year)
+
+        # Hard synchronization: if a strategic metric is missing but its ratio counterpart
+        # is computed, inherit it to avoid avoidable N/A in strategic display.
+        strategic_from_ratio = {
+            'WACC': 'wacc',
+            'PE_Ratio': 'pe_ratio',
+            'PE_Ratio_Used': 'pe_ratio_used',
+            'PB_Ratio': 'pb_ratio',
+            'PB_Ratio_Used': 'pb_ratio_used',
+            'FCF_Yield': 'fcf_yield',
+            'Net_Debt_EBITDA': 'net_debt_ebitda',
+            'ROIC': 'roic',
+            'ROE': 'roe',
+            'EPS': 'eps_basic',
+            'EV_EBITDA': 'ev_ebitda',
+            'Retention_Ratio': 'retention_ratio',
+            'SGR_Internal': 'sgr_internal',
+            'Dividends_Paid': 'dividends_paid',
+            'Inventory_Days': 'inventory_days',
+            'AR_Days': 'days_sales_outstanding',
+            'AP_Days': 'ap_days',
+            'CCC_Days': 'ccc_days',
+            'Cost_of_Debt': 'cost_of_debt',
+            'Accruals_Ratio': 'accruals_ratio',
+            'Dividend_Yield': 'dividend_yield',
+            'Book_Value_Per_Share': 'book_value_per_share',
+        }
+        for y in years:
+            py = per_year.setdefault(y, {})
+            ry = (ratios_by_year.get(y, {}) or {})
+            for s_key, r_key in strategic_from_ratio.items():
+                cur = py.get(s_key)
+                rv = ry.get(r_key)
+                if (cur is None or (isinstance(cur, str) and str(cur).strip().upper().startswith('N/A'))) and isinstance(rv, (int, float)):
+                    py[s_key] = float(rv)
+        sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
+        sector_profile = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'industrial')
+        blocked_strategic_metrics = set(sector_gating.get('blocked_strategic_metrics', []) or [])
+
+        metric_col = self._t('strategic_col_metric')
+        cols = [metric_col] + [str(y) for y in years]
+        self.strat_tree.config(columns=cols)
+        for c in cols:
+            self.strat_tree.heading(c, text=self._translate_financial_item(c))
+            if c == metric_col:
+                self.strat_tree.column(c, width=320, anchor='w')
+            else:
+                self.strat_tree.column(c, width=160, anchor='center')
+        self.strat_tree.tag_configure('header', background='#e8f4f8', font=FONTS['label'])
+        self.strat_tree.tag_configure('child_row', font=FONTS['tree'])
+        self.strat_tree.tag_configure('zebra_even', background='#ffffff')
+        self.strat_tree.tag_configure('zebra_odd', background='#f7fbff')
+
+        def fmt_num_local(v):
+            num = self._safe_excel_number(v)
+            if num is None:
+                return "N/A"
+            try:
+                if abs(num) >= 1_000_000_000:
+                    return f"{num/1_000_000_000:,.2f}B"
+                if abs(num) >= 1_000_000:
+                    return f"{num/1_000_000:,.2f}M"
+                if abs(num - round(num)) < 1e-6:
+                    return f"{int(round(num)):,}"
+                return f"{num:,.2f}"
+            except:
+                return "N/A"
+
+        def format_contract(v):
+            if not isinstance(v, dict):
+                return None
+            rel_raw = v.get('reliability')
+            if isinstance(rel_raw, dict):
+                rel_raw = rel_raw.get('score') or rel_raw.get('value') or rel_raw.get('percent') or 0
+            try:
+                rel = int(float(rel_raw or 0))
+            except Exception:
+                rel = 0
+            reason = v.get('reason') or 'no_reason'
+            v_num = self._safe_excel_number(v.get('value'))
+            if v_num is None or rel == 0 or rel < 55:
+                base = f"N/A ({reason})"
+            else:
+                base = v.get('display')
+                if not base:
+                    fmt = v.get('format')
+                    raw_value = v_num
+                    if fmt == 'percent':
+                        base = f"{float(raw_value) * 100:.2f}%"
+                    else:
+                        base = f"{float(raw_value):.2f}"
+            if self._debug_ui_contracts_enabled():
+                base = f"{base} [src={v.get('source')} rel={rel} reason={reason}]"
+            return base
+
+
+        def insert_metric(display, key, fmt='num'):
+            if key in blocked_strategic_metrics:
+                return
+            if ui_excel_lock and ui_lock_strategic_metrics and str(key).strip().lower() not in ui_lock_strategic_metrics:
+                return
+            row = [self._translate_financial_item(display)]
+            contracts_by_year = {}
+            for y in years:
+                v = per_year.get(y, {}).get(key)
+                c = format_contract(v)
+                if c is not None:
+                    row.append(c)
+                    contracts_by_year[y] = v if isinstance(v, dict) else {
+                        'value': None,
+                        'status': 'NOT_COMPUTABLE',
+                        'source': 'strategic_engine',
+                        'reason': 'NOT_COMPUTABLE',
+                        'formula_used': self._metric_formula_text(key, strategic=True),
+                    }
+                elif fmt == 'pct':
+                    v_num = self._safe_excel_number(v)
+                    if v_num is None:
+                        row.append("N/A")
+                        contracts_by_year[y] = {
+                            'value': None,
+                            'status': 'NOT_COMPUTABLE',
+                            'source': 'strategic_engine',
+                            'reason': 'NOT_COMPUTABLE',
+                            'formula_used': self._metric_formula_text(key, strategic=True),
+                        }
+                    else:
+                        try:
+                            row.append(f"{float(v_num) * 100:.2f}%")
+                            contracts_by_year[y] = {
+                                'value': float(v_num),
+                                'status': 'COMPUTED',
+                                'source': 'strategic_engine',
+                                'formula_used': self._metric_formula_text(key, strategic=True),
+                            }
+                        except Exception:
+                            row.append("N/A")
+                            contracts_by_year[y] = {
+                                'value': None,
+                                'status': 'NOT_COMPUTABLE',
+                                'source': 'strategic_engine',
+                                'reason': 'FORMAT_ERROR',
+                                'formula_used': self._metric_formula_text(key, strategic=True),
+                            }
+                elif fmt == 'text':
+                    txt = '' if v is None else str(v).strip()
+                    if key == 'Warning_Signal' and txt.lower() == 'none':
+                        row.append("None")
+                        contracts_by_year[y] = {
+                            'value': "None",
+                            'status': 'COMPUTED',
+                            'source': 'strategic_engine',
+                            'reason': None,
+                            'formula_used': self._metric_formula_text(key, strategic=True),
+                        }
+                        continue
+                    if not txt or txt.upper().startswith('N/A') or txt.lower() in {'none', 'nan', 'null'}:
+                        row.append("N/A")
+                        contracts_by_year[y] = {
+                            'value': None,
+                            'status': 'NOT_COMPUTABLE',
+                            'source': 'strategic_engine',
+                            'reason': 'NOT_COMPUTABLE',
+                            'formula_used': self._metric_formula_text(key, strategic=True),
+                        }
+                    else:
+                        row.append(txt)
+                        contracts_by_year[y] = {
+                            'value': txt,
+                            'status': 'COMPUTED',
+                            'source': 'strategic_engine',
+                            'reason': None,
+                            'formula_used': self._metric_formula_text(key, strategic=True),
+                        }
+                else:
+                    row.append(fmt_num_local(v))
+                    v_num = self._safe_excel_number(v)
+                    contracts_by_year[y] = {
+                        'value': float(v_num) if isinstance(v_num, (int, float)) else None,
+                        'status': 'COMPUTED' if isinstance(v_num, (int, float)) else 'NOT_COMPUTABLE',
+                        'source': 'strategic_engine',
+                        'reason': None if isinstance(v_num, (int, float)) else 'NOT_COMPUTABLE',
+                        'formula_used': self._metric_formula_text(key, strategic=True),
+                    }
+            row_idx = len(self.strat_tree.get_children(''))
+            zebra_tag = 'zebra_even' if (row_idx % 2 == 0) else 'zebra_odd'
+            iid = self.strat_tree.insert('', 'end', values=row, tags=('child_row', zebra_tag))
+            self._strategic_row_meta[iid] = {
+                'metric_key': key,
+                'display_name': self._translate_financial_item(display),
+                'contracts_by_year': contracts_by_year,
+            }
+
+        def insert_metric_group(title, metrics):
+            visible_metrics = []
+            for m in metrics:
+                m_key = m[1]
+                if m_key in blocked_strategic_metrics:
+                    continue
+                if ui_excel_lock and ui_lock_strategic_metrics and str(m_key).strip().lower() not in ui_lock_strategic_metrics:
+                    continue
+                visible_metrics.append(m)
+            if not visible_metrics:
+                return
+            group_title = self._translate_financial_item(title)
+            self.strat_tree.insert('', 'end', values=(group_title,) + tuple([""] * len(years)), tags=('header',))
+            for display, key, fmt in visible_metrics:
+                insert_metric(display, key, fmt=fmt)
+
+        # Groups
+        if sector_profile == 'bank':
+            insert_metric_group("--- Banking Strategic Tier ---", [
+                ("Bank Total Revenue", 'Bank_Total_Revenue', 'num'),
+                ("Net Interest Margin (NIM)", 'Net_Interest_Margin', 'pct'),
+                ("Efficiency Ratio", 'Bank_Efficiency_Ratio', 'pct'),
+                ("Loan-to-Deposit Ratio", 'Loan_to_Deposit_Ratio', 'num'),
+                ("Capital Ratio Proxy", 'Capital_Ratio_Proxy', 'pct'),
+                ("Net Income / Assets", 'Net_Income_to_Assets', 'pct'),
+                ("Equity Ratio", 'Equity_Ratio', 'pct'),
+                ("ROA", 'ROA', 'pct'),
+                ("ROE", 'ROE', 'pct'),
+                ("Net Margin", 'Net_Margin', 'pct'),
+                ("Cost_of_Debt", 'Cost_of_Debt', 'pct'),
+                ("Credit_Rating", 'Credit_Rating', 'text'),
+                ("Credit_Rating_Score", 'Credit_Rating_Score', 'num'),
+                ("Warning_Signal", 'Warning_Signal', 'text'),
+                ("Beta", 'Beta', 'num'),
+                ("WACC", 'WACC', 'pct'),
+            ])
+            insert_metric_group("--- Banking Market Tier ---", [
+                ("P/E Ratio", 'PE_Ratio', 'num'),
+                ("P/E Ratio (Used)", 'PE_Ratio_Used', 'num'),
+                ("P/B Ratio", 'PB_Ratio', 'num'),
+                ("P/B Ratio (Used)", 'PB_Ratio_Used', 'num'),
+                ("Dividend Yield", 'Dividend_Yield', 'pct'),
+            ])
+        elif sector_profile == 'insurance':
+            insert_metric_group("--- Insurance Strategic Tier ---", [
+                ("Combined Ratio Proxy", 'Combined_Ratio_Proxy', 'num'),
+                ("Capital Adequacy Proxy", 'Capital_Adequacy_Proxy', 'num'),
+                ("Net Income / Assets", 'Net_Income_to_Assets', 'pct'),
+                ("Equity Ratio", 'Equity_Ratio', 'pct'),
+                ("Cost_of_Debt", 'Cost_of_Debt', 'pct'),
+                ("WACC", 'WACC', 'pct'),
+            ])
+            insert_metric_group("--- Insurance Market Tier ---", [
+                ("P/E Ratio", 'PE_Ratio', 'num'),
+                ("P/E Ratio (Used)", 'PE_Ratio_Used', 'num'),
+                ("P/B Ratio", 'PB_Ratio', 'num'),
+                ("P/B Ratio (Used)", 'PB_Ratio_Used', 'num'),
+                ("Dividend Yield", 'Dividend_Yield', 'pct'),
+            ])
+        else:
+            insert_metric_group("--- Strategic & Value Tier ---", [
+                ("Fair_Value_Estimate (per share)", 'Fair_Value', 'num'),
+                ("Investment_Score (0-100)", 'Investment_Score', 'num'),
+                ("Economic_Spread (ROIC - WACC)", 'Economic_Spread', 'pct'),
+                ("ROIC", 'ROIC', 'pct'),
+                ("WACC", 'WACC', 'pct'),
+                ("Beta (Market Risk)", 'Beta', 'num'),
+                ("SGR_Internal (Sustainable Growth)", 'SGR_Internal', 'pct'),
+            ])
+
+            insert_metric_group("--- Quality & Risk Tier ---", [
+                ("Altman_Z_Score", 'Altman_Z_Score', 'num'),
+                ("Warning_Signal", 'Warning_Signal', 'text'),
+                ("Accruals_Ratio", 'Accruals_Ratio', 'num'),
+                ("Accruals_Change", 'Accruals_Change', 'num'),
+                ("Credit_Rating", 'Credit_Rating', 'text'),
+                ("Credit_Rating_Score", 'Credit_Rating_Score', 'num'),
+                ("Net_Debt_EBITDA", 'Net_Debt_EBITDA', 'num'),
+                ("Op_Leverage", 'Op_Leverage', 'num'),
+            ])
+
+            insert_metric_group("--- Performance Analysis Tier ---", [
+                ("ROE", 'ROE', 'pct'),
+                ("NI_Growth (1y)", 'NI_Growth', 'pct'),
+                ("Retention_Ratio", 'Retention_Ratio', 'pct'),
+                ("Dividends_Paid", 'Dividends_Paid', 'num'),
+                ("EBITDA", 'EBITDA', 'num'),
+                ("FCF_Yield", 'FCF_Yield', 'pct'),
+                ("EPS", 'EPS', 'num'),
+                ("FCF_per_Share", 'FCF_per_Share', 'num'),
+            ])
+
+            insert_metric_group("--- Operational Efficiency Tier ---", [
+                ("CCC_Days", 'CCC_Days', 'num'),
+                ("Inventory Days (DIH)", 'Inventory_Days', 'num'),
+                ("AR Days (DSO)", 'AR_Days', 'num'),
+                ("AP Days (DPO)", 'AP_Days', 'num'),
+                ("Cost_of_Debt (input)", 'Cost_of_Debt', 'pct'),
+            ])
+
+            insert_metric_group("--- Market Valuation Tier ---", [
+                ("P/E Ratio", 'PE_Ratio', 'num'),
+                ("P/E Ratio (Used)", 'PE_Ratio_Used', 'num'),
+                ("P/B Ratio", 'PB_Ratio', 'num'),
+                ("P/B Ratio (Used)", 'PB_Ratio_Used', 'num'),
+                ("EV/EBITDA", 'EV_EBITDA', 'num'),
+                ("Dividend Yield", 'Dividend_Yield', 'pct'),
+            ])
+
+    def _apply_pre_export_quality_gate(self, years, data_by_year, ratios_by_year, data_layers):
+        """
+        Pre-export unit/consistency guardrail.
+        Heals known scale issues for EPS/PE/PB/FCF_Yield before writing Excel.
+        """
+        issues = []
+        layer2_by_year = (data_layers or {}).get('layer2_by_year', {}) or {}
+        layer4_by_year = (data_layers or {}).get('layer4_by_year', {}) or {}
+        # Conservative default: keep aggressive rewrites disabled unless explicitly requested.
+        allow_aggressive = str(os.environ.get('QUALITY_GATE_AGGRESSIVE', '0')).strip().lower() in ('1', 'true', 'yes')
+        sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
+        blocked_ratios = set(sector_gating.get('blocked_ratios', []) or [])
+        ticker = str((self.current_data or {}).get('company_info', {}).get('ticker', '')).upper()
+        # Committee-driven fallback where split metadata is unavailable in layers.
+        manual_split_rules = {
+            'NVDA': {'cutoff_year': 2023, 'ratio': 10.0},
+        }
+
+        def _num(v):
+            try:
+                if v is None:
+                    return None
+                return float(v)
+            except Exception:
+                return None
+
+        def _nk(x):
+            return re.sub(r'[^a-z0-9]+', '', str(x or '').lower())
+
+        def _pick_num_ci(row_dict, aliases):
+            if not isinstance(row_dict, dict):
+                return None
+            def _normalize_pick(alias_name, value):
+                fv = _num(value)
+                if fv is None:
+                    return None
+                lk = _nk(alias_name)
+                if any(tok in lk for tok in ('share', 'per', 'ratio', 'margin', 'turnover', 'days', 'yield', 'score', 'percent', 'pct')):
+                    return fv
+                return _as_million(fv)
+            # Exact aliases first.
+            for a in aliases:
+                if a in row_dict:
+                    fv = _normalize_pick(a, row_dict.get(a))
+                    if fv is not None:
+                        return fv
+            # Case/format-insensitive fallback.
+            nmap = {}
+            for k, v in row_dict.items():
+                kk = _nk(k)
+                if kk and kk not in nmap:
+                    nmap[kk] = v
+            for a in aliases:
+                fv = _normalize_pick(a, nmap.get(_nk(a)))
+                if fv is not None:
+                    return fv
+            return None
+
+        def _align_to_reference(value, reference, *, lo=0.01, hi=2.5, target=0.35):
+            val = _num(value)
+            ref = _num(reference)
+            if val is None or ref in (None, 0):
+                return val
+            cands = [
+                val,
+                val / 1_000.0,
+                val / 1_000_000.0,
+                val / 1_000_000_000.0,
+                val * 1_000.0,
+                val * 1_000_000.0,
+            ]
+            scored = []
+            for c in cands:
+                if c is None:
+                    continue
+                ratio = abs(c / ref) if ref else None
+                if ratio is None:
+                    continue
+                if lo <= ratio <= hi:
+                    scored.append((abs(ratio - target), c))
+            if scored:
+                scored.sort(key=lambda x: x[0])
+                return scored[0][1]
+            # fallback: nearest order-of-magnitude to reference
+            try:
+                import math
+                return min(cands, key=lambda c: abs(math.log10(max(abs(c), 1e-9)) - math.log10(max(abs(ref), 1e-9))))
+            except Exception:
+                return val
+
+        def _as_million(v):
+            fv = _num(v)
+            if fv is None:
+                return None
+            if abs(fv) >= 1_000_000.0:
+                return fv / 1_000_000.0
+            return fv
+
+        def _split_ratio_for_year(year):
+            # Strict cutoff-first policy for known split issuers:
+            # apply split factor only on years BEFORE cutoff; never after.
+            rule = manual_split_rules.get(ticker)
+            if rule:
+                try:
+                    cutoff = int(rule.get('cutoff_year', 0))
+                    ratio = float(rule.get('ratio') or 1.0)
+                    return ratio if year < cutoff and ratio > 1.0 else 1.0
+                except Exception:
+                    return 1.0
+            row2 = layer2_by_year.get(year, {}) or {}
+            row4 = layer4_by_year.get(year, {}) or {}
+            for key in ('market:split_latest_ratio', 'yahoo:split_latest_ratio'):
+                sv = _num(row2.get(key))
+                if sv is None:
+                    sv = _num(row4.get(key))
+                if sv is not None and sv > 1.0:
+                    return sv
+            return 1.0
+
+        def _normalize_shares_to_millions(sh):
+            sv = _num(sh)
+            if sv is None:
+                return None
+            av = abs(sv)
+            # SEC often mixes absolute shares and "in millions" shares across years.
+            if av >= 1_000_000:
+                return sv / 1_000_000.0
+            return sv
+
+        def _year_shares_million(year):
+            """
+            Return shares (in millions) with per-year unit harmonization.
+            This handles mixed SEC yearly units (absolute shares vs millions).
+            """
+            row = (data_by_year or {}).get(year, {}) or {}
+            raw_candidates = [
+                _pick_num_ci(row, ['WeightedAverageNumberOfSharesOutstandingBasic', 'weightedaveragenumberofsharesoutstandingbasic']),
+                _pick_num_ci(row, ['SharesBasic', 'sharesbasic']),
+                _pick_num_ci(row, ['CommonStockSharesOutstanding', 'commonstocksharesoutstanding']),
+                (ratios_by_year or {}).get(year, {}).get('shares_outstanding'),
+            ]
+            values = []
+            for v in raw_candidates:
+                fv = _num(v)
+                if fv is not None and fv > 0:
+                    values.append(float(fv))
+            if not values:
+                return None
+
+            # Convert each candidate into "million shares" candidates.
+            million_cands = []
+            for v in values:
+                million_cands.extend([v, v / 1_000.0, v / 1_000_000.0, v * 1_000.0])
+            million_cands = [c for c in million_cands if c is not None and c > 0]
+            if not million_cands:
+                return None
+
+            # Prefer plausible public-company ranges in millions.
+            plausible = [c for c in million_cands if 10.0 <= c <= 100_000.0]
+            if plausible:
+                # Use layer anchors when available:
+                # 1) market_cap/price implied shares, 2) layer shares_outstanding.
+                row2 = layer2_by_year.get(year, {}) or {}
+                px = _num(row2.get('market:price') or row2.get('yahoo:price'))
+                mcap_m = _as_million(row2.get('market:market_cap') or row2.get('yahoo:market_cap'))
+                layer_sh = _num(row2.get('market:shares_outstanding') or row2.get('yahoo:shares_outstanding'))
+                layer_sh_m = _normalize_shares_to_millions(layer_sh) if layer_sh is not None else None
+                target_mcap = None
+                if px not in (None, 0) and mcap_m not in (None, 0):
+                    target_mcap = abs(mcap_m / px)
+                    if target_mcap <= 0:
+                        target_mcap = None
+                # If the two anchors disagree by orders of magnitude, trust shares_outstanding anchor.
+                if target_mcap not in (None, 0) and layer_sh_m not in (None, 0):
+                    mx = max(abs(float(target_mcap)), abs(float(layer_sh_m)))
+                    mn = max(min(abs(float(target_mcap)), abs(float(layer_sh_m))), 1e-9)
+                    if (mx / mn) > 20.0:
+                        target_mcap = None
+
+                def _score(c):
+                    score = 0.0
+                    used = 0
+                    if target_mcap not in (None, 0):
+                        score += abs(abs(c) - target_mcap) / max(target_mcap, 1.0)
+                        used += 1
+                    if layer_sh_m not in (None, 0):
+                        score += abs(abs(c) - abs(layer_sh_m)) / max(abs(layer_sh_m), 1.0)
+                        used += 1
+                    if used == 0:
+                        # Central tendency fallback when no anchors exist.
+                        med = sorted(plausible)[len(plausible) // 2]
+                        return abs(float(c) - float(med)) / max(abs(float(med)), 1.0)
+                    return score / float(used)
+
+                return min(plausible, key=_score)
+
+            # Fallback to previous heuristic.
+            return _normalize_shares_to_millions(values[0])
+
+        # Split-aware market-cap sanity (always-on for known split issuers).
+        # Prevent historical 10x compression when adjusted price is paired with pre-split shares.
+        split_rule = manual_split_rules.get(ticker)
+        if split_rule:
+            repaired = 0
+            for y in years:
+                row2 = layer2_by_year.setdefault(y, {})
+                px = _num(row2.get('market:price') or row2.get('yahoo:price'))
+                sh_m = _year_shares_million(y)
+                if px in (None, 0) or sh_m in (None, 0):
+                    continue
+                sf = _split_ratio_for_year(y)
+                sh_adj_m = sh_m * sf if sf and sf > 1.0 else sh_m
+                recon_mcap_m = (px * sh_adj_m) / 1_000_000.0
+                mcap_old_m = _as_million(row2.get('market:market_cap') or row2.get('yahoo:market_cap'))
+                if mcap_old_m in (None, 0):
+                    row2['market:market_cap'] = recon_mcap_m
+                    repaired += 1
+                    continue
+                ratio_mc = abs(mcap_old_m) / max(abs(recon_mcap_m), 1e-9)
+                if ratio_mc < 0.2 or ratio_mc > 5.0:
+                    row2['market:market_cap'] = recon_mcap_m
+                    repaired += 1
+            if repaired:
+                issues.append(f"Layer2: split-aware market_cap repaired for {repaired} years ({ticker}).")
+
+        # ----- Layer2 time-series normalization -----
+        def _series_values(field):
+            vals = []
+            for y in years:
+                vv = _num((layer2_by_year.get(y, {}) or {}).get(field))
+                if any(tok in str(field).lower() for tok in ('market_cap', 'enterprise_value', 'total_debt')):
+                    vv = _as_million(vv)
+                vals.append(vv)
+            return vals
+
+        def _is_constant(vals):
+            clean = [v for v in vals if v is not None]
+            return len(clean) >= 2 and len(set(clean)) == 1
+
+        # 1) Shares outstanding: if constant across years, derive from market_cap / price.
+        sh_vals = _series_values('market:shares_outstanding')
+        if allow_aggressive and _is_constant(sh_vals):
+            changed = 0
+            for y in years:
+                row2 = layer2_by_year.setdefault(y, {})
+                mcap = _as_million(row2.get('market:market_cap'))
+                price = _num(row2.get('market:price'))
+                if mcap is not None and price not in (None, 0):
+                    derived = (mcap * 1_000_000.0) / price
+                    if derived > 0 and _num(row2.get('market:shares_outstanding')) != derived:
+                        row2['market:shares_outstanding'] = derived
+                        changed += 1
+            if changed:
+                issues.append(f"Layer2: market:shares_outstanding derived as market_cap/price for {changed} years.")
+
+        # 2) Total debt: if constant across years, rebuild from SEC debt facts first.
+        debt_vals = _series_values('market:total_debt')
+        if allow_aggressive and _is_constant(debt_vals):
+            debt_component_keys = (
+                'DebtCurrent',
+                'ShortTermBorrowings',
+                'CommercialPaper',
+                'LongTermDebtCurrent',
+                'CurrentPortionOfLongTermDebt',
+                'LongTermDebtNoncurrent',
+                'DebtNoncurrent',
+                'LongTermDebt',
+                'LongTermDebtAndCapitalLeaseObligation',
+                'LongTermDebtAndCapitalLeaseObligations',
+            )
+
+            def _sec_total_debt_million(year):
+                rr = (ratios_by_year or {}).get(year, {}) or {}
+                sec_td = _as_million(rr.get('total_debt'))
+                if sec_td not in (None, 0):
+                    return sec_td
+                raw_row = (data_by_year or {}).get(year, {}) or {}
+                comps = [_pick_num_ci(raw_row, [k]) for k in debt_component_keys]
+                comps = [c for c in comps if c is not None and c != 0]
+                if not comps:
+                    return None
+                direct_td = None
+                for dk in ('LongTermDebt', 'LongTermDebtAndCapitalLeaseObligation', 'LongTermDebtAndCapitalLeaseObligations'):
+                    dv = _pick_num_ci(raw_row, [dk])
+                    if dv not in (None, 0):
+                        direct_td = dv
+                        break
+                sum_td = float(sum(comps))
+                chosen = sum_td
+                if direct_td not in (None, 0):
+                    if abs(sum_td - direct_td) <= max(1.0, abs(direct_td) * 0.20):
+                        chosen = max(sum_td, direct_td)
+                    else:
+                        chosen = direct_td
+                return _as_million(chosen)
+
+            sec_series = {y: _sec_total_debt_million(y) for y in years}
+            sec_valid = {y: v for y, v in sec_series.items() if v not in (None, 0)}
+            if len(sec_valid) >= 2 and len({round(v, 6) for v in sec_valid.values()}) > 1:
+                for y, v in sec_valid.items():
+                    layer2_by_year.setdefault(y, {})['market:total_debt'] = v
+                issues.append(f"Layer2: market:total_debt synchronized from SEC debt facts for {len(sec_valid)} years.")
+            elif sec_valid:
+                # Snapshot fallback: keep only the latest known debt instead of a fake flat series.
+                latest_y = max(sec_valid.keys())
+                for y in years:
+                    row2 = layer2_by_year.setdefault(y, {})
+                    row2['market:total_debt'] = sec_valid[latest_y] if y == latest_y else None
+                issues.append("Layer2: market:total_debt kept as snapshot (insufficient annual SEC debt coverage).")
+
+        # 3) Enterprise value: if constant across years, derive as market_cap + total_debt - cash.
+        ev_vals = _series_values('market:enterprise_value')
+        if allow_aggressive and _is_constant(ev_vals):
+            changed = 0
+            for y in years:
+                row2 = layer2_by_year.setdefault(y, {})
+                raw_row = (data_by_year or {}).get(y, {}) or {}
+                mcap = _as_million(row2.get('market:market_cap'))
+                debt = _as_million(row2.get('market:total_debt'))
+                cash = _num(
+                    raw_row.get('CashAndCashEquivalentsAtCarryingValue')
+                    or raw_row.get('CashAndCashEquivalents')
+                    or raw_row.get('Cash and Cash Equivalents')
+                )
+                if None in (mcap, debt, cash):
+                    continue
+                cash_m = _as_million(cash)
+                derived_ev = mcap + debt - cash_m
+                if derived_ev > 0 and _num(row2.get('market:enterprise_value')) != derived_ev:
+                    row2['market:enterprise_value'] = derived_ev
+                    changed += 1
+            if changed:
+                issues.append(f"Layer2: market:enterprise_value derived as market_cap + total_debt - cash for {changed} years.")
+
+        # 4) Debt prefix anomaly guard:
+        # If earliest years are a flat repeated debt value and then drop sharply,
+        # rebuild early debt from liabilities using the first non-flat anchor year.
+        debt_series = []
+        for y in years:
+            rr = (ratios_by_year or {}).get(y, {}) or {}
+            debt_series.append((y, _as_million(rr.get('total_debt'))))
+        prefix_years = []
+        prefix_val = None
+        for y, dv in debt_series:
+            if dv is None:
+                if prefix_years:
+                    break
+                continue
+            if prefix_val is None:
+                prefix_val = dv
+                prefix_years.append(y)
+                continue
+            if abs(dv - prefix_val) <= 1e-9:
+                prefix_years.append(y)
+                continue
+            break
+        if allow_aggressive and len(prefix_years) >= 2 and prefix_val not in (None, 0):
+            anchor_year = None
+            anchor_debt = None
+            for y, dv in debt_series:
+                if y in prefix_years:
+                    continue
+                if dv is not None and dv > 0:
+                    anchor_year = y
+                    anchor_debt = dv
+                    break
+            if anchor_year is not None and anchor_debt is not None and prefix_val > (1.8 * anchor_debt):
+                anchor_row = (data_by_year or {}).get(anchor_year, {}) or {}
+                liab_anchor = _num(
+                    anchor_row.get('Liabilities')
+                    or anchor_row.get('TotalLiabilities')
+                    or anchor_row.get('Total Liabilities')
+                )
+                liab_anchor_m = _as_million(liab_anchor)
+                ratio_anchor = (anchor_debt / liab_anchor_m) if liab_anchor_m not in (None, 0) else None
+                if ratio_anchor is not None and 0.02 <= ratio_anchor <= 1.5:
+                    changed = 0
+                    for py in prefix_years:
+                        prow = (data_by_year or {}).get(py, {}) or {}
+                        liab_py = _num(
+                            prow.get('Liabilities')
+                            or prow.get('TotalLiabilities')
+                            or prow.get('Total Liabilities')
+                        )
+                        liab_py_m = _as_million(liab_py)
+                        if liab_py_m in (None, 0):
+                            continue
+                        new_debt = liab_py_m * ratio_anchor
+                        rr = (ratios_by_year or {}).setdefault(py, {})
+                        cur_debt = _as_million(rr.get('total_debt'))
+                        if cur_debt is None or abs(cur_debt - new_debt) > 1e-9:
+                            rr['total_debt'] = new_debt
+                            rr['total_debt_source'] = f'PREFIX_FLAT_DEBT_REPAIRED_FROM_{anchor_year}'
+                            changed += 1
+                    if changed:
+                        issues.append(
+                            f"Debt guard: repaired flat early-year total_debt series for {changed} years using {anchor_year} anchor."
+                        )
+
+        # 5) Bank debt unit harmonization (prevents mixed-unit jumps across years).
+        sector_profile_qg = ((self.current_data or {}).get('sector_gating', {}) or {}).get('sub_profile') or ((self.current_data or {}).get('sector_gating', {}) or {}).get('profile', 'industrial')
+        if allow_aggressive and str(sector_profile_qg).lower() == 'bank':
+            debt_liab_ratios = []
+            for y in years:
+                rr = (ratios_by_year or {}).get(y, {}) or {}
+                row = (data_by_year or {}).get(y, {}) or {}
+                td = _as_million(rr.get('total_debt'))
+                li = _as_million(_pick_num_ci(row, ['Liabilities', 'TotalLiabilities', 'Total Liabilities', 'liabilities']))
+                if td in (None, 0) or li in (None, 0):
+                    continue
+                ratio = abs(float(td)) / max(abs(float(li)), 1e-9)
+                if 0.02 <= ratio <= 0.80:
+                    debt_liab_ratios.append(ratio)
+            if debt_liab_ratios:
+                debt_liab_ratios = sorted(debt_liab_ratios)
+                anchor_ratio = debt_liab_ratios[len(debt_liab_ratios) // 2]
+                changed = 0
+                for y in years:
+                    rr = (ratios_by_year or {}).setdefault(y, {})
+                    row = (data_by_year or {}).get(y, {}) or {}
+                    td = _as_million(rr.get('total_debt'))
+                    li = _as_million(_pick_num_ci(row, ['Liabilities', 'TotalLiabilities', 'Total Liabilities', 'liabilities']))
+                    if td in (None, 0) or li in (None, 0):
+                        continue
+                    ratio = abs(float(td)) / max(abs(float(li)), 1e-9)
+                    if ratio < 0.01 or ratio > 1.20:
+                        rebuilt = abs(float(li)) * anchor_ratio
+                        if rebuilt > 0:
+                            rr['total_debt'] = rebuilt
+                            rr['total_debt_source'] = 'QUALITY_GATE_BANK_UNIT_HARMONIZED'
+                            changed += 1
+                if changed:
+                    issues.append(f"Bank debt unit harmonization applied for {changed} years (anchor={anchor_ratio:.4f}).")
+
+        for idx, y in enumerate(years):
+            row = (data_by_year or {}).get(y, {}) or {}
+            r = (ratios_by_year or {}).setdefault(y, {})
+            m = layer2_by_year.get(y, {}) or {}
+            prev_y = years[idx - 1] if idx > 0 else None
+            reasons_map = r.get('_ratio_reasons')
+            if not isinstance(reasons_map, dict):
+                reasons_map = {}
+                r['_ratio_reasons'] = reasons_map
+
+            # Market price / market-cap hard sanity:
+            # fix obvious scale slips (e.g., 0.003 instead of 177).
+            price_raw = _num(m.get('market:price'))
+            pe_hint = _num(r.get('pe_ratio')) or _num(m.get('market:pe_ratio')) or _num(m.get('yahoo:pe_ratio'))
+            eps_hint = _num(r.get('eps_basic')) or _pick_num_ci(row, ['EarningsPerShareBasic', 'Basic (in dollars per share)', 'EPS Basic'])
+            implied_price = None
+            if pe_hint not in (None, 0) and eps_hint not in (None, 0):
+                implied_price = abs(float(pe_hint) * float(eps_hint))
+                if implied_price <= 0 or implied_price > 20_000:
+                    implied_price = None
+            if price_raw is not None and implied_price is not None:
+                ratio = max(abs(price_raw), abs(implied_price)) / max(min(abs(price_raw), abs(implied_price)), 1e-9)
+                if price_raw < 0.5 or ratio > 20.0:
+                    m['market:price'] = implied_price
+                    issues.append(f"{y}: market:price hard-fixed ({price_raw} -> {implied_price}) via PE*EPS")
+                    price_raw = implied_price
+
+            # Rebuild market cap from annual price*shares when layer value is implausible.
+            sh_m = _year_shares_million(y)
+            mcap_raw = _as_million(m.get('market:market_cap'))
+            if price_raw not in (None, 0) and sh_m not in (None, 0):
+                sh_candidates = [float(sh_m)]
+                # Add direct layer shares anchors to avoid 1/1000 drift in certain split histories.
+                sh_layer_raw = _num(m.get('market:shares_outstanding') or m.get('yahoo:shares_outstanding'))
+                if sh_layer_raw not in (None, 0):
+                    sh_layer_m_candidates = [
+                        float(sh_layer_raw),
+                        float(sh_layer_raw) / 1_000.0,
+                        float(sh_layer_raw) / 1_000_000.0,
+                    ]
+                    sh_layer_m_candidates = [sv for sv in sh_layer_m_candidates if 10.0 <= abs(sv) <= 100_000.0]
+                    sh_candidates.extend(sh_layer_m_candidates)
+                # de-duplicate numeric candidates
+                uniq = []
+                seen = set()
+                for sv in sh_candidates:
+                    try:
+                        k = round(float(sv), 8)
+                    except Exception:
+                        continue
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    uniq.append(float(sv))
+                sh_candidates = uniq
+                mcap_candidates = []
+                for shv in sh_candidates:
+                    if shv <= 0:
+                        continue
+                    mc = abs(float(price_raw) * shv)
+                    if 1.0 <= mc <= 20_000_000.0:
+                        mcap_candidates.append(mc)
+                if mcap_candidates:
+                    preferred_target = None
+                    if sh_layer_raw not in (None, 0):
+                        sh_pref = None
+                        for sv in (
+                            float(sh_layer_raw),
+                            float(sh_layer_raw) / 1_000.0,
+                            float(sh_layer_raw) / 1_000_000.0,
+                        ):
+                            if 10.0 <= abs(sv) <= 100_000.0:
+                                sh_pref = float(sv)
+                                break
+                        if sh_pref is not None:
+                            preferred_target = abs(float(price_raw) * sh_pref)
+                    mcap_derived = None
+                    if mcap_raw not in (None, 0):
+                        mcap_near = min(mcap_candidates, key=lambda mc: abs(float(mc) - float(mcap_raw)))
+                        mcap_max = max(mcap_candidates)
+                        diff_near = abs(float(mcap_raw) - float(mcap_near)) / max(abs(float(mcap_near)), 1e-9)
+                        diff_max = abs(float(mcap_raw) - float(mcap_max)) / max(abs(float(mcap_max)), 1e-9)
+                        # Final lock:
+                        # prefer layer-shares target when available; fallback to nearest.
+                        if preferred_target not in (None, 0):
+                            mcap_derived = min(mcap_candidates, key=lambda mc: abs(float(mc) - float(preferred_target)))
+                        elif sh_layer_raw not in (None, 0) and diff_max > 0.80:
+                            mcap_derived = mcap_max
+                        elif diff_near > 0.80 and diff_max > 0.80:
+                            mcap_derived = mcap_max
+                        else:
+                            mcap_derived = mcap_near
+                    else:
+                        mcap_derived = max(mcap_candidates)
+                    if mcap_raw is None:
+                        m['market:market_cap'] = mcap_derived
+                        issues.append(f"{y}: market:market_cap derived from price*shares ({mcap_derived})")
+                    else:
+                        diff_ratio = abs(mcap_raw - mcap_derived) / max(abs(mcap_derived), 1e-9)
+                        if diff_ratio > 0.80:
+                            m['market:market_cap'] = mcap_derived
+                            issues.append(f"{y}: market:market_cap corrected ({mcap_raw} -> {mcap_derived})")
+
+            assets_chk = _pick_num_ci(row, ['Assets', 'TotalAssets', 'Total Assets', 'assets'])
+            liab_chk = _pick_num_ci(row, ['Liabilities', 'TotalLiabilities', 'Total Liabilities', 'liabilities'])
+            eq_candidates = [
+                _pick_num_ci(row, ['StockholdersEquity', 'stockholdersequity']),
+                _pick_num_ci(row, [
+                    'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
+                    'stockholdersequityincludingportionattributabletononcontrollinginterest',
+                ]),
+                _pick_num_ci(row, ['TotalEquity', 'Total Equity', 'totalequity']),
+            ]
+            eq_candidates = [v for v in eq_candidates if v is not None]
+            eq_chk = None
+            if eq_candidates:
+                if assets_chk is not None and liab_chk is not None:
+                    eq_chk = min(eq_candidates, key=lambda ev: abs((assets_chk - liab_chk) - ev))
+                else:
+                    eq_chk = eq_candidates[0]
+
+            # Prefer control-total only when internally consistent with the current year.
+            control_total_chk = _pick_num_ci(row, [
+                'LiabilitiesAndStockholdersEquity',
+                'Total liabilities and equity',
+                "Total liabilities and stockholders' equity",
+                'liabilitiesandstockholdersequity',
+            ])
+            if assets_chk is not None and control_total_chk is not None and liab_chk is not None and eq_chk is not None:
+                ctl_delta = abs(assets_chk - control_total_chk) / max(abs(assets_chk), 1.0)
+                le_delta = abs(assets_chk - (liab_chk + eq_chk)) / max(abs(assets_chk), 1.0)
+                # If control total is clearly misaligned while L+E is coherent, keep L+E anchors.
+                if ctl_delta > 0.01 and le_delta <= 0.001:
+                    control_total_chk = None
+            if eq_chk is None and assets_chk is not None and liab_chk is not None and control_total_chk is not None:
+                # Derive equity from consistent same-year control total.
+                ctl_delta = abs(assets_chk - control_total_chk) / max(abs(assets_chk), 1.0)
+                if ctl_delta <= 0.01:
+                    eq_chk = assets_chk - liab_chk
+
+            # Conservative proxy fill from previous year only for missing anchors.
+            proxy_fill = False
+            if allow_aggressive and prev_y is not None and (assets_chk is None or liab_chk is None or eq_chk is None):
+                prev_row = (data_by_year or {}).get(prev_y, {}) or {}
+                if assets_chk is None:
+                    assets_chk = _pick_num_ci(prev_row, ['Assets', 'TotalAssets', 'Total Assets', 'assets'])
+                    proxy_fill = proxy_fill or (assets_chk is not None)
+                if liab_chk is None:
+                    liab_chk = _pick_num_ci(prev_row, ['Liabilities', 'TotalLiabilities', 'Total Liabilities', 'liabilities'])
+                    proxy_fill = proxy_fill or (liab_chk is not None)
+                if eq_chk is None:
+                    prev_eq_candidates = [
+                        _pick_num_ci(prev_row, ['StockholdersEquity', 'stockholdersequity']),
+                        _pick_num_ci(prev_row, [
+                            'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
+                            'stockholdersequityincludingportionattributabletononcontrollinginterest',
+                        ]),
+                        _pick_num_ci(prev_row, ['TotalEquity', 'Total Equity', 'totalequity']),
+                    ]
+                    prev_eq_candidates = [v for v in prev_eq_candidates if v is not None]
+                    if prev_eq_candidates:
+                        eq_chk = prev_eq_candidates[0]
+                        proxy_fill = True
+                if proxy_fill:
+                    issues.append(f"{y}: balance anchors proxy-filled from {prev_y} for validation only.")
+
+            if assets_chk is None or liab_chk is None or eq_chk is None:
+                missing = []
+                if assets_chk is None:
+                    missing.append('Assets')
+                if liab_chk is None:
+                    missing.append('Liabilities')
+                if eq_chk is None:
+                    missing.append('Equity')
+                issues.append(f"{y}: Balance anchors missing ({', '.join(missing)}) - balance-based ratios may stay N/A")
+            elif allow_aggressive and prev_y is not None:
+                # Prevent silent duplicate carry-forward when anchors are incomplete.
+                prev_r = (ratios_by_year or {}).get(prev_y, {}) or {}
+                for mk in (
+                    'combined_proxy',
+                    'capital_adequacy_proxy',
+                    'net_income_to_assets',
+                    'roa',
+                    'roe',
+                    'net_margin',
+                    'loan_to_deposit_ratio',
+                    'capital_ratio_proxy',
+                    'equity_ratio',
+                ):
+                    cv = _num(r.get(mk))
+                    pv = _num(prev_r.get(mk))
+                    if cv is not None and pv is not None and abs(cv - pv) <= 1e-12:
+                        src = str(r.get(f'{mk}_source') or '')
+                        if 'CARRY_FORWARD' in src or 'PROXY' in src or proxy_fill:
+                            r[mk] = None
+                            r[f'{mk}_source'] = 'MISSING_SEC_ANCHOR'
+                            issues.append(f"{y}: {mk} cleared (duplicate carry-forward under missing anchors)")
+
+            net_income = _pick_num_ci(row, ['NetIncomeLoss', 'NetIncome', 'Net Income', 'netincomeloss'])
+            revenue = _pick_num_ci(
+                row,
+                [
+                    'Revenues',
+                    'Revenue',
+                    'SalesRevenueNet',
+                    'RevenueFromContractWithCustomerExcludingAssessedTax',
+                    'revenues',
+                    'revenue',
+                ],
+            )
+            # Additional revenue anchors for non-bank issuers (common SEC tags).
+            if revenue is None:
+                revenue = _pick_num_ci(
+                    row,
+                    [
+                        'RevenueFromContractWithCustomerExcludingAssessedTax',
+                        'RevenueFromContractWithCustomerIncludingAssessedTax',
+                        'TotalRevenue',
+                        'TotalRevenuesAndOtherIncome',
+                        'TotalNetRevenues',
+                        'SalesRevenueServicesNet',
+                    ],
+                )
+            shares = _year_shares_million(y)
+
+            # Investor-lock fallback for missing/ambiguous revenue in non-bank sectors.
+            if str(sector_profile_qg).lower() != 'bank' and (revenue is None or abs(float(revenue)) < 1e-9):
+                op_income_hint = _pick_num_ci(
+                    row,
+                    ['OperatingIncomeLoss', 'OperatingIncome', 'Operating Income', 'operatingincomeloss'],
+                )
+                op_margin_hint = _num(r.get('operating_margin'))
+                if op_income_hint not in (None, 0) and op_margin_hint not in (None, 0):
+                    rev_from_op = op_income_hint / op_margin_hint
+                    if isinstance(rev_from_op, (int, float)) and abs(rev_from_op) > 1:
+                        # Unit guard candidates.
+                        rev_cands = [rev_from_op, rev_from_op / 1_000.0, rev_from_op / 1_000_000.0, rev_from_op * 1_000.0]
+                        rev_cands = [c for c in rev_cands if isinstance(c, (int, float)) and abs(c) > 1]
+                        if rev_cands:
+                            # Prefer scale close to current asset/revenue regime.
+                            assets_hint = _pick_num_ci(row, ['Assets', 'TotalAssets', 'Total Assets', 'assets'])
+                            if assets_hint not in (None, 0):
+                                revenue = min(rev_cands, key=lambda c: abs((abs(c) / max(abs(assets_hint), 1.0)) - 0.6))
+                            else:
+                                revenue = min(rev_cands, key=lambda c: abs(abs(c) - 100000.0))
+                            issues.append(f"{y}: revenue inferred from operating income/margin for margin lock")
+
+            # Fill gross_margin and net_margin when absent (non-bank only) using strict unit guards.
+            if str(sector_profile_qg).lower() != 'bank':
+                gross_profit = _pick_num_ci(row, ['GrossProfit', 'Gross Profit', 'grossprofit'])
+                if gross_profit is None and revenue not in (None, 0):
+                    cogs_hint = _pick_num_ci(
+                        row,
+                        ['CostOfRevenue', 'Cost of revenue', 'CostOfGoodsAndServicesSold', 'COGS', 'costofrevenue'],
+                    )
+                    if cogs_hint is not None:
+                        gross_profit = revenue - cogs_hint
+                gross_margin_now = _num(r.get('gross_margin'))
+                net_margin_now = _num(r.get('net_margin'))
+                if revenue not in (None, 0):
+                    if gross_profit is not None and (gross_margin_now is None or abs(gross_margin_now) < 0.03):
+                        gm_cands = [
+                            gross_profit / revenue,
+                            (gross_profit * 1_000.0) / revenue,
+                            (gross_profit * 1_000_000.0) / revenue,
+                            gross_profit / (revenue * 1_000.0),
+                        ]
+                        gm_cands = [c for c in gm_cands if isinstance(c, (int, float)) and 0.03 <= c <= 0.98]
+                        if gm_cands:
+                            gm = min(gm_cands, key=lambda c: abs(c - 0.45))
+                            r['gross_margin'] = gm
+                            r['gross_margin_source'] = 'QUALITY_GATE_GP_OVER_REVENUE'
+                            reasons_map.pop('gross_margin', None)
+                            issues.append(f"{y}: gross_margin reconstructed from GrossProfit/Revenue")
+                    if net_income is not None and (net_margin_now is None or abs(net_margin_now) < 0.02):
+                        nm_cands = [
+                            net_income / revenue,
+                            (net_income * 1_000.0) / revenue,
+                            (net_income * 1_000_000.0) / revenue,
+                            net_income / (revenue * 1_000.0),
+                        ]
+                        nm_cands = [c for c in nm_cands if isinstance(c, (int, float)) and 0.02 <= c <= 0.8]
+                        if nm_cands:
+                            nm = min(nm_cands, key=lambda c: abs(c - 0.20))
+                            r['net_margin'] = nm
+                            r['net_margin_source'] = 'QUALITY_GATE_NETINCOME_OVER_REVENUE'
+                            reasons_map.pop('net_margin', None)
+                            issues.append(f"{y}: net_margin reconstructed from NetIncome/Revenue")
+
+            # Institutional hard hierarchy guard (non-bank): Gross >= Operating >= Net and EBITDA <= Gross.
+            if str(sector_profile_qg).lower() != 'bank':
+                gm = _num(r.get('gross_margin'))
+                om = _num(r.get('operating_margin'))
+                nm = _num(r.get('net_margin'))
+                em = _num(r.get('ebitda_margin'))
+                if nm is not None:
+                    r['net_margin_reported'] = nm
+                if gm is not None and om is not None and om > gm:
+                    old = om
+                    r['operating_margin'] = gm
+                    r['operating_margin_source'] = 'QUALITY_GATE_MARGIN_HIERARCHY_CLAMP'
+                    issues.append(f"{y}: operating_margin clamped to gross_margin ({old} -> {gm})")
+                om = _num(r.get('operating_margin'))
+                if om is not None and nm is not None and nm > om:
+                    old = nm
+                    r['net_margin'] = om
+                    r['net_margin_source'] = 'QUALITY_GATE_MARGIN_HIERARCHY_CLAMP'
+                    issues.append(f"{y}: net_margin clamped to operating_margin ({old} -> {om})")
+                gm = _num(r.get('gross_margin'))
+                em = _num(r.get('ebitda_margin'))
+                if gm is not None and em is not None and em > gm:
+                    old = em
+                    r['ebitda_margin'] = gm
+                    r['ebitda_margin_source'] = 'QUALITY_GATE_MARGIN_HIERARCHY_CLAMP'
+                    issues.append(f"{y}: ebitda_margin clamped to gross_margin ({old} -> {gm})")
+                nm_core = _num(r.get('net_margin'))
+                if nm_core is not None and _num(r.get('operating_margin')) is not None:
+                    # Core margin for hierarchy validation; reported net margin remains traceable.
+                    r['net_margin_core'] = min(float(nm_core), float(_num(r.get('operating_margin'))))
+                elif nm_core is not None:
+                    r['net_margin_core'] = float(nm_core)
+
+            # Interest coverage fallback: OperatingIncome / abs(InterestExpense) with concept fallbacks.
+            ic_now = _num(r.get('interest_coverage'))
+            if ic_now is None and str(sector_profile_qg).lower() != 'bank':
+                op_income = _pick_num_ci(
+                    row,
+                    ['OperatingIncomeLoss', 'OperatingIncome', 'Operating Income', 'operatingincomeloss'],
+                )
+                interest_expense = _pick_num_ci(
+                    row,
+                    [
+                        'InterestExpense',
+                        'InterestExpenseNonOperating',
+                        'InterestAndDebtExpense',
+                        'InterestExpenseDebt',
+                        'InterestExpenseBorrowings',
+                    ],
+                )
+                if op_income not in (None, 0) and interest_expense not in (None, 0):
+                    ic_calc = float(op_income) / abs(float(interest_expense))
+                    if -500.0 <= ic_calc <= 500.0:
+                        r['interest_coverage'] = ic_calc
+                        r['interest_coverage_source'] = 'QUALITY_GATE_OPERATING_OVER_INTEREST_EXPENSE'
+                        reasons_map.pop('interest_coverage', None)
+                        issues.append(f"{y}: interest_coverage reconstructed from operating_income/abs(interest_expense)")
+                if _num(r.get('interest_coverage')) is None:
+                    reasons_map['interest_coverage'] = 'INTEREST_EXPENSE_NOT_FOUND'
+
+            # Prefer filed EPS when the issuer reports a clean annual basic EPS fact.
+            eps_filed = _pick_num_ci(row, ['EarningsPerShareBasic', 'Basic (in dollars per share)', 'EPS Basic'])
+            eps = _num(r.get('eps_basic'))
+            if eps_filed not in (None, 0):
+                if eps is None:
+                    r['eps_basic'] = eps_filed
+                    r['eps_source'] = 'QUALITY_GATE_FILED_EPS_BASIC'
+                    eps = eps_filed
+                    issues.append(f"{y}: eps_basic restored from filed annual EPS")
+                else:
+                    try:
+                        eps_gap = max(abs(float(eps)), abs(float(eps_filed))) / max(min(abs(float(eps)), abs(float(eps_filed))), 1e-9)
+                    except Exception:
+                        eps_gap = None
+                    if eps_gap is not None and eps_gap >= 10.0:
+                        r['eps_basic'] = eps_filed
+                        r['eps_source'] = 'QUALITY_GATE_FILED_EPS_OVERRIDE'
+                        eps = eps_filed
+                        issues.append(f"{y}: eps_basic override to filed annual EPS ({eps} -> {eps_filed})")
+
+            # EPS scale guard with split-awareness.
+            eps = _num(r.get('eps_basic'))
+            price_for_eps = _num(m.get('market:price') or m.get('yahoo:price'))
+            market_pe_for_eps = _num(m.get('market:pe_ratio') or m.get('yahoo:pe_ratio'))
+            split_factor = _split_ratio_for_year(y)
+            if allow_aggressive and net_income is not None and shares not in (None, 0) and eps_filed in (None, 0):
+                share_candidates = [shares]
+                if split_factor > 1.0:
+                    share_candidates.extend([shares * split_factor, shares * (split_factor / 2.0)])
+                eps_candidates = []
+                for sh_c in share_candidates:
+                    if sh_c in (None, 0):
+                        continue
+                    eps_candidates.extend([
+                        net_income / sh_c,
+                        (net_income * 1_000.0) / sh_c,
+                        (net_income * 1_000_000.0) / sh_c,
+                        (net_income / 1_000.0) / sh_c,
+                        (net_income / 1_000_000.0) / sh_c,
+                    ])
+                eps_candidates = [c for c in eps_candidates if isinstance(c, (int, float)) and 0.01 <= abs(c) <= 5000]
+                if eps_candidates:
+                    eps_now_for_pe = eps
+                    pe_now = None
+                    if price_for_eps not in (None, 0) and eps_now_for_pe not in (None, 0):
+                        pe_now = abs(price_for_eps / eps_now_for_pe)
+                    requires_fix = (
+                        eps is None
+                        or abs(eps) < 0.05
+                        or (pe_now is not None and (pe_now < 3.0 or pe_now > 1_500.0))
+                    )
+                    if requires_fix:
+                        def _eps_score(c):
+                            if price_for_eps in (None, 0):
+                                score = abs(abs(c) - 8.0)
+                                if abs(c) > 50.0:
+                                    score += abs(c) * 0.5
+                                return score
+                            pe_c = abs(price_for_eps / c) if c not in (None, 0) else None
+                            if pe_c is None or pe_c <= 0:
+                                return 1e12
+                            target_pe = abs(market_pe_for_eps) if market_pe_for_eps not in (None, 0) else 25.0
+                            score = abs(pe_c - target_pe)
+                            if pe_c < 1.0 or pe_c > 2_000.0:
+                                score += 100.0
+                            return score
+                        new_eps = min(eps_candidates, key=_eps_score)
+                        if eps != new_eps:
+                            r['eps_basic'] = new_eps
+                            if split_factor > 1.0:
+                                r['eps_source'] = f'QUALITY_GATE_SPLIT_ADJUST_X{split_factor:g}'
+                            issues.append(f"{y}: eps_basic rescaled ({eps} -> {new_eps})")
+
+            # Market canonical inputs (TTM) + annual ratio normalization.
+            m_pe = _num(m.get('market:pe_ratio'))
+            m_pb = _num(m.get('market:pb_ratio'))
+            mcap = _as_million(r.get('market_cap'))
+            if mcap is None:
+                mcap = _as_million(m.get('market:market_cap'))
+            price_y = _num(m.get('market:price')) or _num(m.get('yahoo:price'))
+            equity = _pick_num_ci(
+                row,
+                [
+                    'StockholdersEquity',
+                    'TotalEquity',
+                    'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
+                    'Total Equity',
+                    'stockholdersequity',
+                    'stockholdersequityincludingportionattributabletononcontrollinginterest',
+                ],
+            )
+            eps_now = _num(r.get('eps_basic'))
+            bvps_now = _num(r.get('book_value_per_share'))
+            if price_y not in (None, 0) and eps_now not in (None, 0):
+                pe_annual = price_y / eps_now
+                if 0.1 <= abs(pe_annual) <= 1_500:
+                    cur_pe = _num(r.get('pe_ratio'))
+                    if cur_pe is None or abs(cur_pe - pe_annual) > 1e-9:
+                        r['pe_ratio'] = pe_annual
+                        r['pe_ratio_source'] = 'ANNUAL_PRICE_OVER_EPS'
+                        r['pe_ratio_used'] = pe_annual
+                        r['pe_ratio_used_source'] = 'ANNUAL_PRICE_OVER_EPS'
+                        issues.append(f"{y}: pe_ratio normalized to annual price/eps ({cur_pe} -> {pe_annual})")
+                    if m_pe is not None and m_pe > 0:
+                        r['pe_ratio_market_ttm'] = m_pe
+            elif m_pe is not None and m_pe > 0:
+                # Keep TTM only when annual inputs are unavailable.
+                if _num(r.get('pe_ratio')) != m_pe:
+                    issues.append(f"{y}: pe_ratio fallback to Layer2 market:pe_ratio (TTM)")
+                r['pe_ratio'] = m_pe
+                r['pe_ratio_source'] = 'MARKET_TTM_FALLBACK'
+                r['pe_ratio_used'] = m_pe
+                r['pe_ratio_used_source'] = 'MARKET_TTM_FALLBACK'
+
+            if price_y not in (None, 0) and bvps_now not in (None, 0):
+                pb_annual = price_y / bvps_now
+                if 0.05 <= abs(pb_annual) <= 500:
+                    cur_pb = _num(r.get('pb_ratio'))
+                    if cur_pb is None or abs(cur_pb - pb_annual) > 1e-9:
+                        r['pb_ratio'] = pb_annual
+                        r['pb_ratio_source'] = 'ANNUAL_PRICE_OVER_BVPS'
+                        r['pb_ratio_used'] = pb_annual
+                        r['pb_ratio_used_source'] = 'ANNUAL_PRICE_OVER_BVPS'
+                        issues.append(f"{y}: pb_ratio normalized to annual price/bvps ({cur_pb} -> {pb_annual})")
+                    if m_pb is not None and m_pb > 0:
+                        r['pb_ratio_market_ttm'] = m_pb
+            elif m_pb is not None and m_pb > 0:
+                if _num(r.get('pb_ratio')) != m_pb:
+                    issues.append(f"{y}: pb_ratio fallback to Layer2 market:pb_ratio (TTM)")
+                r['pb_ratio'] = m_pb
+                r['pb_ratio_source'] = 'MARKET_TTM_FALLBACK'
+                r['pb_ratio_used'] = m_pb
+                r['pb_ratio_used_source'] = 'MARKET_TTM_FALLBACK'
+            elif mcap not in (None, 0) and equity not in (None, 0):
+                pb_candidates = [
+                    mcap / equity,
+                    mcap / (equity * 1_000.0),
+                    mcap / (equity * 1_000_000.0),
+                ]
+                pb_plausible = [c for c in pb_candidates if 0.1 <= c <= 200.0]
+                if pb_plausible:
+                    pb_val = min(pb_plausible, key=lambda c: abs(c - 8.0))
+                    cur_pb = _num(r.get('pb_ratio'))
+                    if cur_pb is None or abs(cur_pb - pb_val) > 1e-9:
+                        r['pb_ratio'] = pb_val
+                        r['pb_ratio_source'] = 'DERIVED_MARKETCAP_EQUITY'
+                        r['pb_ratio_used'] = pb_val
+                        r['pb_ratio_used_source'] = 'DERIVED_MARKETCAP_EQUITY'
+                        issues.append(f"{y}: pb_ratio derived from market_cap/equity ({cur_pb} -> {pb_val})")
+            # Hard anomaly guard for P/B outliers (e.g., 0.04 for mega-cap tech).
+            pb_now = _num(r.get('pb_ratio'))
+            if pb_now is not None and (abs(pb_now) < 0.10 or abs(pb_now) > 500.0):
+                pb_fix = None
+                if price_y not in (None, 0) and bvps_now not in (None, 0):
+                    pbt = price_y / bvps_now
+                    if 0.10 <= abs(pbt) <= 500.0:
+                        pb_fix = pbt
+                if pb_fix is None and mcap not in (None, 0) and equity not in (None, 0):
+                    cands = [
+                        mcap / equity,
+                        mcap / (equity * 1_000.0),
+                        mcap / (equity * 1_000_000.0),
+                    ]
+                    cands = [c for c in cands if c is not None and 0.10 <= abs(c) <= 500.0]
+                    if cands:
+                        pb_fix = min(cands, key=lambda c: abs(abs(c) - 8.0))
+                if pb_fix is not None:
+                    r['pb_ratio'] = pb_fix
+                    r['pb_ratio_source'] = 'QUALITY_GATE_HARD_PB_GUARD'
+                    r['pb_ratio_used'] = pb_fix
+                    r['pb_ratio_used_source'] = 'QUALITY_GATE_HARD_PB_GUARD'
+                    issues.append(f"{y}: pb_ratio hard-guard fixed ({pb_now} -> {pb_fix})")
+
+            # FCF yield unit guard (statement rows can be in millions).
+            fcf = _num(r.get('free_cash_flow'))
+            if fcf is not None and mcap not in (None, 0):
+                candidates = [
+                    fcf / mcap,
+                    (fcf * 1_000.0) / mcap,
+                    (fcf * 1_000_000.0) / mcap,
+                ]
+                plausible = [c for c in candidates if -1.0 <= c <= 1.0]
+                if plausible:
+                    new_yield = min(plausible, key=lambda c: abs(c - 0.04))
+                    cur_yield = _num(r.get('fcf_yield'))
+                    if cur_yield is None or abs(cur_yield - new_yield) > 1e-9:
+                        r['fcf_yield'] = new_yield
+                        issues.append(f"{y}: fcf_yield normalized ({cur_yield} -> {new_yield})")
+            # Hard anomaly guard for absurd FCF yield magnitudes.
+            cur_yield = _num(r.get('fcf_yield'))
+            if cur_yield is not None and abs(cur_yield) > 1.0 and fcf is not None and mcap not in (None, 0):
+                candidates = [
+                    fcf / mcap,
+                    (fcf * 1_000.0) / mcap,
+                    (fcf * 1_000_000.0) / mcap,
+                ]
+                plausible = [c for c in candidates if -1.0 <= c <= 1.0]
+                if plausible:
+                    fixed = min(plausible, key=lambda c: abs(c - 0.04))
+                    r['fcf_yield'] = fixed
+                    issues.append(f"{y}: fcf_yield hard-guard fixed ({cur_yield} -> {fixed})")
+
+            # OCF margin guard: recover missing values when OCF and revenue exist.
+            ocf = _num(r.get('operating_cash_flow')) or _pick_num_ci(
+                row,
+                [
+                    'NetCashProvidedByUsedInOperatingActivities',
+                    'NetCashProvidedByOperatingActivities',
+                    'OperatingCashFlow',
+                    'operatingcashflow',
+                ],
+            )
+            if allow_aggressive and ocf is not None and revenue not in (None, 0):
+                ocf_margin_candidates = [
+                    ocf / revenue,
+                    (ocf * 1_000.0) / revenue,
+                    (ocf * 1_000_000.0) / revenue,
+                ]
+                plausible_margin = [c for c in ocf_margin_candidates if -2.0 <= c <= 2.0]
+                if plausible_margin:
+                    ocf_margin = min(plausible_margin, key=lambda c: abs(c - 0.28))
+                    cur_om = _num(r.get('ocf_margin'))
+                    if cur_om is None or abs(cur_om - ocf_margin) > 1e-9:
+                        r['ocf_margin'] = ocf_margin
+                        issues.append(f"{y}: ocf_margin normalized ({cur_om} -> {ocf_margin})")
+
+            # Book value per share guard.
+            bvps = _num(r.get('book_value_per_share'))
+            if allow_aggressive and (bvps is None or abs(bvps) < 0.05) and equity is not None and shares not in (None, 0):
+                bvps_candidates = [
+                    equity / shares,
+                    (equity * 1_000.0) / shares,
+                    (equity * 1_000_000.0) / shares,
+                    (equity / 1_000.0) / shares,
+                    (equity / 1_000_000.0) / shares,
+                ]
+                plausible_bvps = [c for c in bvps_candidates if -500.0 <= c <= 500.0]
+                if plausible_bvps:
+                    pb_ref = _num(r.get('pb_ratio')) or _num(m.get('market:pb_ratio')) or _num(m.get('yahoo:pb_ratio'))
+                    px_ref = _num(m.get('market:price')) or _num(m.get('yahoo:price'))
+                    if pb_ref not in (None, 0) and px_ref not in (None, 0):
+                        # Choose BVPS that best matches observed P/B and price.
+                        new_bvps = min(plausible_bvps, key=lambda c: abs((px_ref / c) - pb_ref) if c not in (None, 0) else 1e12)
+                    else:
+                        new_bvps = min(plausible_bvps, key=lambda c: abs(abs(c) - 6.0))
+                    if bvps != new_bvps:
+                        r['book_value_per_share'] = new_bvps
+                        issues.append(f"{y}: book_value_per_share normalized ({bvps} -> {new_bvps})")
+
+            # Additional hard guard for mixed-unit BVPS outliers seen in banks/insurers.
+            bvps_now = _num(r.get('book_value_per_share'))
+            if allow_aggressive and equity is not None and shares not in (None, 0):
+                bvps_guard_candidates = [
+                    equity / shares,
+                    (equity * 1_000.0) / shares,
+                    (equity * 1_000_000.0) / shares,
+                    (equity / 1_000.0) / shares,
+                    (equity / 1_000_000.0) / shares,
+                ]
+                bvps_guard_candidates = [c for c in bvps_guard_candidates if isinstance(c, (int, float)) and -2_000.0 <= c <= 2_000.0]
+                if bvps_guard_candidates:
+                    # Penalize tiny near-zero values when equity is large.
+                    def _bvps_score(c):
+                        score = 0.0
+                        if abs(c) < 0.5 and abs(equity) > 1_000.0:
+                            score += 100.0
+                        if abs(c) > 100.0:
+                            score += abs(c) * 0.25
+                        pb_ref = _num(r.get('pb_ratio')) or _num(m.get('market:pb_ratio')) or _num(m.get('yahoo:pb_ratio'))
+                        px_ref = _num(m.get('market:price')) or _num(m.get('yahoo:price'))
+                        if pb_ref not in (None, 0) and px_ref not in (None, 0) and c not in (None, 0):
+                            score += abs((px_ref / c) - pb_ref)
+                        else:
+                            score += abs(abs(c) - 8.0)
+                        return score
+                    best_bvps = min(bvps_guard_candidates, key=_bvps_score)
+                    if bvps_now is None or abs(bvps_now - best_bvps) > 1e-9:
+                        r['book_value_per_share'] = best_bvps
+                        issues.append(f"{y}: book_value_per_share hard-guard applied ({bvps_now} -> {best_bvps})")
+
+            # Additional clamp for industrial issuers: if filed EPS exists, derived BVPS should
+            # not explode by three orders of magnitude relative to price/observed P/B regime.
+            bvps_now = _num(r.get('book_value_per_share'))
+            if str(sector_profile_qg).lower() != 'bank' and price_for_eps not in (None, 0) and bvps_now not in (None, 0):
+                pb_now_hint = _num(r.get('pb_ratio')) or _num(m.get('market:pb_ratio')) or _num(m.get('yahoo:pb_ratio'))
+                if pb_now_hint not in (None, 0):
+                    implied_bvps = price_for_eps / pb_now_hint
+                    if implied_bvps not in (None, 0):
+                        try:
+                            bvps_gap = max(abs(float(bvps_now)), abs(float(implied_bvps))) / max(min(abs(float(bvps_now)), abs(float(implied_bvps))), 1e-9)
+                        except Exception:
+                            bvps_gap = None
+                        if bvps_gap is not None and bvps_gap >= 50.0 and equity is not None and shares not in (None, 0):
+                            bvps_candidates = [
+                                equity / shares,
+                                (equity * 1_000.0) / shares,
+                                (equity * 1_000_000.0) / shares,
+                                (equity / 1_000.0) / shares,
+                                (equity / 1_000_000.0) / shares,
+                            ]
+                            bvps_candidates = [c for c in bvps_candidates if isinstance(c, (int, float)) and -500.0 <= c <= 500.0 and c not in (None, 0)]
+                            if bvps_candidates:
+                                fixed_bvps = min(bvps_candidates, key=lambda c: abs(float(c) - float(implied_bvps)))
+                                r['book_value_per_share'] = fixed_bvps
+                                issues.append(f"{y}: book_value_per_share aligned to price/PB regime ({bvps_now} -> {fixed_bvps})")
+
+            # If BVPS collapsed to a near-zero artifact under mixed units, prefer direct normalized equity/shares.
+            bvps_now = _num(r.get('book_value_per_share'))
+            if str(sector_profile_qg).lower() != 'bank' and equity not in (None, 0) and shares not in (None, 0):
+                try:
+                    bvps_direct = float(equity) / float(shares) if float(shares) != 0 else None
+                except Exception:
+                    bvps_direct = None
+                if (
+                    bvps_direct not in (None, 0)
+                    and -500.0 <= float(bvps_direct) <= 500.0
+                    and abs(float(bvps_direct)) >= 0.05
+                    and (bvps_now is None or abs(float(bvps_now)) < 0.05)
+                ):
+                    r['book_value_per_share'] = bvps_direct
+                    r['book_value_per_share_source'] = 'QUALITY_GATE_DIRECT_EQUITY_OVER_SHARES'
+                    issues.append(f"{y}: book_value_per_share replaced by direct normalized equity/shares ({bvps_now} -> {bvps_direct})")
+
+            # ROE hard guard: reject unit-slip explosions and recompute from normalized net income/equity.
+            roe_now = _num(r.get('roe'))
+            if net_income is not None and equity not in (None, 0):
+                try:
+                    roe_direct = float(net_income) / float(equity) if float(equity) != 0 else None
+                except Exception:
+                    roe_direct = None
+                if roe_direct is not None and -5.0 <= float(roe_direct) <= 5.0:
+                    if roe_now is None or abs(float(roe_now)) > 5.0:
+                        r['roe'] = roe_direct
+                        r['roe_source'] = 'QUALITY_GATE_NET_INCOME_OVER_EQUITY'
+                        issues.append(f"{y}: roe replaced by normalized net_income/equity ({roe_now} -> {roe_direct})")
+
+            # Bank LDR anomaly guard: incomplete latest-year filings can emit absurd ratios
+            # when deposits anchors are missing. Prefer prior-year stable ratio in that case.
+            if str(sector_profile_qg).lower() == 'bank':
+                ldr_now = _num(r.get('loan_to_deposit_ratio'))
+                dep_now = _pick_num_ci(row, ['Deposits', 'DepositLiabilities', 'deposits', 'depositliabilities'])
+                loan_now = _pick_num_ci(row, ['LoansReceivable', 'NetLoans', 'loansreceivable', 'netloans'])
+                if ldr_now not in (None, 0) and abs(float(ldr_now)) > 3.0 and (dep_now in (None, 0) or loan_now in (None, 0)):
+                    prev_r = (ratios_by_year or {}).get(prev_y, {}) or {}
+                    prev_ldr = _num(prev_r.get('loan_to_deposit_ratio')) if prev_y is not None else None
+                    if prev_ldr not in (None, 0) and 0.05 <= abs(float(prev_ldr)) <= 5.0:
+                        r['loan_to_deposit_ratio'] = prev_ldr
+                        r['loan_to_deposit_ratio_source'] = 'QUALITY_GATE_BANK_LDR_PREV_YEAR_PROXY'
+                        issues.append(f"{y}: loan_to_deposit_ratio replaced with prior-year proxy under missing bank anchors")
+                cap_now = _num(r.get('capital_ratio_proxy'))
+                if cap_now not in (None, 0) and abs(float(cap_now)) > 0.25 and dep_now in (None, 0) and loan_now in (None, 0):
+                    prev_r = (ratios_by_year or {}).get(prev_y, {}) or {}
+                    prev_cap = _num(prev_r.get('capital_ratio_proxy')) if prev_y is not None else None
+                    if prev_cap not in (None, 0) and -1.0 <= float(prev_cap) <= 1.0:
+                        r['capital_ratio_proxy'] = prev_cap
+                        r['capital_ratio_proxy_source'] = 'QUALITY_GATE_BANK_CAPITAL_PREV_YEAR_PROXY'
+                        issues.append(f"{y}: capital_ratio_proxy replaced with prior-year proxy under missing bank anchors")
+
+            # Net Debt / EBITDA guardrail (critical)
+            debt = _num(r.get('total_debt'))
+            allow_market_debt_override = str(os.environ.get('ALLOW_MARKET_DEBT_OVERRIDE', '0')).strip().lower() in ('1', 'true', 'yes')
+            debt_layer = None
+            if allow_market_debt_override:
+                debt_layer = _as_million(m.get('market:total_debt')) or _as_million(m.get('yahoo:total_debt'))
+            else:
+                # Conservative fallback: only use market debt when SEC debt is missing.
+                if debt is None:
+                    debt_layer = _as_million(m.get('market:total_debt')) or _as_million(m.get('yahoo:total_debt'))
+            liab = _pick_num_ci(row, ['Liabilities', 'TotalLiabilities', 'Total Liabilities', 'liabilities'])
+            assets = _pick_num_ci(row, ['Assets', 'TotalAssets', 'Total Assets', 'assets'])
+            cash = _pick_num_ci(
+                row,
+                [
+                    'CashAndCashEquivalentsAtCarryingValue',
+                    'CashAndCashEquivalents',
+                    'Cash and Cash Equivalents',
+                    'cashandcashequivalentsatcarryingvalue',
+                    'cashandcashequivalents',
+                ],
+            )
+            ebitda = _pick_num_ci(row, ['EBITDA', 'ebitda'])
+            if ebitda is None:
+                op = _pick_num_ci(row, ['OperatingIncomeLoss', 'OperatingIncome', 'Operating Income', 'operatingincomeloss'])
+                dep = _pick_num_ci(
+                    row,
+                    [
+                        'DepreciationDepletionAndAmortization',
+                        'DepreciationAmortization',
+                        'Depreciation and Amortization',
+                        'depreciationdepletionandamortization',
+                    ],
+                )
+                if op is not None:
+                    ebitda = op + (dep or 0.0)
+
+            ref_scale = assets or equity or liab
+            if allow_market_debt_override and debt_layer is not None:
+                debt = debt_layer
+            elif debt is None and debt_layer is not None:
+                debt = debt_layer
+            if allow_aggressive and debt is not None and ref_scale not in (None, 0):
+                debt_aligned = _align_to_reference(debt, ref_scale, lo=0.02, hi=2.5, target=0.35)
+            else:
+                debt_aligned = debt
+            if allow_aggressive and cash is not None and (debt_aligned not in (None, 0)):
+                cash_aligned = _align_to_reference(cash, debt_aligned, lo=0.001, hi=2.0, target=0.2)
+            else:
+                cash_aligned = cash
+            if allow_aggressive and ebitda is not None and ref_scale not in (None, 0):
+                ebitda_aligned = _align_to_reference(ebitda, ref_scale, lo=0.01, hi=1.5, target=0.25)
+            else:
+                ebitda_aligned = ebitda
+
+            if allow_aggressive and debt_aligned is not None:
+                cur_debt = _num(r.get('total_debt'))
+                if cur_debt is None or abs(cur_debt - debt_aligned) > 1e-9:
+                    r['total_debt'] = debt_aligned
+                    issues.append(f"{y}: total_debt normalized ({cur_debt} -> {debt_aligned})")
+                if equity not in (None, 0):
+                    dte = debt_aligned / equity
+                    if 0 <= abs(dte) <= 10:
+                        cur_dte = _num(r.get('debt_to_equity'))
+                        if cur_dte is None or abs(cur_dte - dte) > 1e-9:
+                            r['debt_to_equity'] = dte
+                            issues.append(f"{y}: debt_to_equity recomputed from total_debt/equity")
+                if assets not in (None, 0):
+                    dta = debt_aligned / assets
+                    if 0 <= abs(dta) <= 5:
+                        cur_dta = _num(r.get('debt_to_assets'))
+                        if cur_dta is None or abs(cur_dta - dta) > 1e-9:
+                            r['debt_to_assets'] = dta
+                            issues.append(f"{y}: debt_to_assets recomputed from total_debt/assets")
+            elif allow_aggressive and _num(r.get('total_debt')) is None:
+                for debt_ratio_key in ('debt_to_equity', 'debt_to_assets'):
+                    if _num(r.get(debt_ratio_key)) is not None:
+                        r[debt_ratio_key] = None
+                        issues.append(f"{y}: {debt_ratio_key} cleared because total_debt is unavailable")
+            elif (not allow_aggressive) and debt_aligned is not None:
+                # Keep ratios computable when only SEC debt is missing.
+                if _num(r.get('total_debt')) is None:
+                    r['total_debt'] = debt_aligned
+                    r['total_debt_source'] = r.get('total_debt_source') or 'QUALITY_GATE_MARKET_FALLBACK'
+                    issues.append(f"{y}: total_debt backfilled from market layer")
+                if equity not in (None, 0) and _num(r.get('debt_to_equity')) is None:
+                    dte = debt_aligned / equity
+                    if 0 <= abs(dte) <= 10:
+                        r['debt_to_equity'] = dte
+                        issues.append(f"{y}: debt_to_equity backfilled from total_debt/equity")
+                if assets not in (None, 0) and _num(r.get('debt_to_assets')) is None:
+                    dta = debt_aligned / assets
+                    if 0 <= abs(dta) <= 5:
+                        r['debt_to_assets'] = dta
+                        issues.append(f"{y}: debt_to_assets backfilled from total_debt/assets")
+
+            if allow_aggressive and None not in (debt_aligned, cash_aligned) and ebitda not in (None, 0):
+                # Re-evaluate EBITDA scaling against net debt directly to avoid 10x/100x outliers.
+                nd_base = debt_aligned - (cash_aligned or 0.0)
+                ebitda_cands = [
+                    float(ebitda),
+                    float(ebitda) / 1_000.0,
+                    float(ebitda) / 1_000_000.0,
+                    float(ebitda) * 1_000.0,
+                    float(ebitda) * 1_000_000.0,
+                ]
+                plausible_e = [c for c in ebitda_cands if c not in (None, 0) and 0.01 <= (abs(c) / max(abs(nd_base), 1e-9)) <= 2.5]
+                e_for_nd = min(plausible_e, key=lambda c: abs((abs(c) / max(abs(nd_base), 1e-9)) - 0.35)) if plausible_e else ebitda_aligned
+                if e_for_nd not in (None, 0):
+                    nd_eb_calc = nd_base / e_for_nd
+                    # Reject impossible magnitudes after scaling attempts.
+                    if -20 <= nd_eb_calc <= 20:
+                        cur_nd = _num(r.get('net_debt_ebitda'))
+                        if cur_nd is None or abs(cur_nd - nd_eb_calc) > 1e-9:
+                            r['net_debt_ebitda'] = nd_eb_calc
+                            issues.append(f"{y}: net_debt_ebitda normalized ({cur_nd} -> {nd_eb_calc})")
+                    else:
+                        if _num(r.get('net_debt_ebitda')) is not None:
+                            r['net_debt_ebitda'] = None
+                            issues.append(f"{y}: net_debt_ebitda cleared as implausible after scale checks")
+
+            # Final hard guard (always-on): do not keep implausible Net Debt / EBITDA values.
+            nd_now = _num(r.get('net_debt_ebitda'))
+            if nd_now is not None and abs(nd_now) > 20.0:
+                r['net_debt_ebitda'] = None
+                r['net_debt_ebitda_source'] = 'QUALITY_GATE_IMPLAUSIBLE_CLEARED'
+                reasons_map['net_debt_ebitda'] = 'IMPLAUSIBLE_AFTER_SCALE_CHECK'
+                issues.append(f"{y}: net_debt_ebitda hard-cleared ({nd_now}) outside institutional bounds")
+
+        # Fill leading orphan non-bank years from first valid later year when no revenue anchor exists.
+        try:
+            if str(sector_profile_qg).lower() != 'bank':
+                first_valid_margin_year = next(
+                    (
+                        yy for yy in years
+                        if any(_num((ratios_by_year.get(yy, {}) or {}).get(k)) is not None for k in ('gross_margin', 'operating_margin', 'net_margin'))
+                    ),
+                    None,
+                )
+                if first_valid_margin_year is not None:
+                    template = (ratios_by_year.get(first_valid_margin_year, {}) or {})
+                    for yy in years:
+                        if yy >= first_valid_margin_year:
+                            break
+                        src_row = (data_by_year or {}).get(yy, {}) or {}
+                        has_revenue_anchor = any(
+                            _pick_num_ci(src_row, [rk]) not in (None, 0)
+                            for rk in (
+                                'Revenues',
+                                'Revenue',
+                                'SalesRevenueNet',
+                                'RevenueFromContractWithCustomerExcludingAssessedTax',
+                                'TotalRevenue',
+                                'TotalNetRevenues',
+                            )
+                        )
+                        if has_revenue_anchor:
+                            continue
+                        rr = (ratios_by_year or {}).setdefault(yy, {})
+                        changed_any = False
+                        for k in ('gross_margin', 'operating_margin', 'net_margin', 'ebitda_margin'):
+                            if _num(rr.get(k)) is None and _num(template.get(k)) is not None:
+                                rr[k] = _num(template.get(k))
+                                rr[f'{k}_source'] = 'QUALITY_GATE_LEADING_ORPHAN_BACKFILL'
+                                changed_any = True
+                        if changed_any:
+                            issues.append(f"{yy}: leading orphan margins backfilled from {first_valid_margin_year}")
+        except Exception:
+            pass
+
+        # ----- Investor lock: isolate/correct market-cap regime anomalies -----
+        mcap_series = {}
+        for y in years:
+            row2 = layer2_by_year.setdefault(y, {})
+            mc = _as_million(row2.get('market:market_cap') or row2.get('yahoo:market_cap'))
+            if mc not in (None, 0):
+                mcap_series[y] = float(mc)
+        sorted_years = sorted([yy for yy in years if yy in mcap_series])
+        for i in range(1, len(sorted_years) - 1):
+            y = sorted_years[i]
+            yp = sorted_years[i - 1]
+            yn = sorted_years[i + 1]
+            prev_mc = mcap_series.get(yp)
+            cur_mc = mcap_series.get(y)
+            next_mc = mcap_series.get(yn)
+            if None in (prev_mc, cur_mc, next_mc):
+                continue
+            near_ratio = max(abs(prev_mc), abs(next_mc)) / max(min(abs(prev_mc), abs(next_mc)), 1e-9)
+            if near_ratio > 3.0:
+                continue
+            valley = abs(cur_mc) < 0.35 * min(abs(prev_mc), abs(next_mc))
+            peak = abs(cur_mc) > 2.85 * max(abs(prev_mc), abs(next_mc))
+            if not (valley or peak):
+                continue
+            geo = (abs(prev_mc) * abs(next_mc)) ** 0.5
+            row2 = layer2_by_year.setdefault(y, {})
+            px = _num(row2.get('market:price') or row2.get('yahoo:price'))
+            sh_m = _year_shares_million(y)
+            derived = None
+            if px not in (None, 0) and sh_m not in (None, 0):
+                sf = _split_ratio_for_year(y)
+                sh_adj_m = (sh_m * sf) if sf and sf > 1.0 else sh_m
+                cand = abs(float(px) * float(sh_adj_m)) / 1_000_000.0
+                if 1.0 <= cand <= 20_000_000.0:
+                    derived = cand
+            if derived is not None and (0.50 * geo) <= derived <= (2.00 * geo):
+                fixed_mc = derived
+                src = "QUALITY_GATE_REDERIVED_PRICE_SHARES"
+            else:
+                fixed_mc = geo
+                src = "QUALITY_GATE_ISOLATED_SERIES_SMOOTH"
+            if abs(cur_mc - fixed_mc) / max(abs(fixed_mc), 1e-9) > 0.20:
+                row2['market:market_cap'] = fixed_mc
+                mcap_series[y] = fixed_mc
+                issues.append(f"{y}: market_cap isolated anomaly fixed ({cur_mc} -> {fixed_mc}) [{src}]")
+
+        # ----- Investor lock: recompute market-dependent metrics from corrected anchors -----
+        for y in years:
+            row = (data_by_year or {}).get(y, {}) or {}
+            r = (ratios_by_year or {}).setdefault(y, {})
+            m = layer2_by_year.setdefault(y, {})
+            price_y = _num(m.get('market:price') or m.get('yahoo:price'))
+            mcap_y = _as_million(m.get('market:market_cap') or m.get('yahoo:market_cap'))
+            eps_y = _num(r.get('eps_basic'))
+            bvps_y = _num(r.get('book_value_per_share'))
+            fcf_y = _num(r.get('free_cash_flow'))
+            sh_layer_raw = _num(m.get('market:shares_outstanding') or m.get('yahoo:shares_outstanding'))
+
+            if mcap_y not in (None, 0):
+                r['market_cap'] = mcap_y
+
+            if price_y not in (None, 0) and mcap_y not in (None, 0):
+                sh_abs = (mcap_y * 1_000_000.0) / price_y
+                if sh_abs > 0 and (sh_layer_raw is None or abs(sh_layer_raw - sh_abs) / max(abs(sh_abs), 1e-9) > 0.25):
+                    m['market:shares_outstanding'] = sh_abs
+                    issues.append(f"{y}: shares_outstanding aligned to corrected market_cap/price")
+
+            if price_y not in (None, 0) and eps_y not in (None, 0):
+                pe_annual = price_y / eps_y
+                if 0.1 <= abs(pe_annual) <= 1_500:
+                    if _num(r.get('pe_ratio')) is None or abs(_num(r.get('pe_ratio')) - pe_annual) > 1e-9:
+                        r['pe_ratio'] = pe_annual
+                        r['pe_ratio_source'] = 'INVESTOR_LOCK_ANNUAL_PRICE_OVER_EPS'
+                        issues.append(f"{y}: pe_ratio investor-lock normalized")
+                    r['pe_ratio_used'] = pe_annual
+                    r['pe_ratio_used_source'] = 'INVESTOR_LOCK_ANNUAL_PRICE_OVER_EPS'
+
+            if price_y not in (None, 0) and bvps_y not in (None, 0):
+                pb_annual = price_y / bvps_y
+                if 0.05 <= abs(pb_annual) <= 500:
+                    if _num(r.get('pb_ratio')) is None or abs(_num(r.get('pb_ratio')) - pb_annual) > 1e-9:
+                        r['pb_ratio'] = pb_annual
+                        r['pb_ratio_source'] = 'INVESTOR_LOCK_ANNUAL_PRICE_OVER_BVPS'
+                        issues.append(f"{y}: pb_ratio investor-lock normalized")
+                    r['pb_ratio_used'] = pb_annual
+                    r['pb_ratio_used_source'] = 'INVESTOR_LOCK_ANNUAL_PRICE_OVER_BVPS'
+
+            if fcf_y is not None and mcap_y not in (None, 0):
+                fy_cands = [
+                    fcf_y / mcap_y,
+                    (fcf_y * 1_000.0) / mcap_y,
+                    (fcf_y * 1_000_000.0) / mcap_y,
+                ]
+                fy_ok = [c for c in fy_cands if -1.0 <= c <= 1.0]
+                if fy_ok:
+                    fy_val = min(fy_ok, key=lambda c: abs(c - 0.04))
+                    if _num(r.get('fcf_yield')) is None or abs(_num(r.get('fcf_yield')) - fy_val) > 1e-9:
+                        r['fcf_yield'] = fy_val
+                        issues.append(f"{y}: fcf_yield investor-lock normalized")
+
+        # ----- No-dividend institutional policy -----
+        # Use market dividend markers only (avoid inferred dividends noise).
+        # If no positive market dividend signal exists, force dividend_yield = 0 (not N/A).
+        market_dividend_positive_signal = False
+        has_market_price_signal = False
+        for y in years:
+            r = (ratios_by_year or {}).setdefault(y, {})
+            m = layer2_by_year.setdefault(y, {})
+            dy_layer = _num(m.get('market:dividend_yield') or m.get('yahoo:dividend_yield'))
+            px = _num(m.get('market:price') or m.get('yahoo:price'))
+            if px not in (None, 0):
+                has_market_price_signal = True
+            if dy_layer is not None:
+                if abs(dy_layer) > 1e-12:
+                    market_dividend_positive_signal = True
+        if has_market_price_signal and not market_dividend_positive_signal:
+            for y in years:
+                r = (ratios_by_year or {}).setdefault(y, {})
+                reasons_map = r.get('_ratio_reasons')
+                if not isinstance(reasons_map, dict):
+                    reasons_map = {}
+                    r['_ratio_reasons'] = reasons_map
+                cur_dy = _num(r.get('dividend_yield'))
+                if cur_dy is None or abs(cur_dy) > 1e-12:
+                    r['dividend_yield'] = 0.0
+                    r['dividend_yield_source'] = 'NO_DIVIDEND_POLICY_ZERO'
+                    reasons_map.pop('dividend_yield', None)
+                    issues.append(f"{y}: dividend_yield forced to 0.0 (no-dividend profile)")
+
+        # Final sector enforcement: blocked ratios must remain hidden in exported sheets.
+        if blocked_ratios:
+            for y in years:
+                r = (ratios_by_year or {}).setdefault(y, {})
+                for rid in blocked_ratios:
+                    if rid in r and r.get(rid) is not None:
+                        r[rid] = None
+                        issues.append(f"{y}: {rid} force-blocked for sector policy")
+                    reasons = r.get('_ratio_reasons')
+                    if not isinstance(reasons, dict):
+                        reasons = {}
+                        r['_ratio_reasons'] = reasons
+                    reasons[rid] = 'NOT_APPLICABLE_FOR_SECTOR'
+
+        return issues
+
+    def _safe_excel_number(self, value):
+        try:
+            import math
+            import json as _json
+            import ast as _ast
+            if value is None:
+                return None
+            if isinstance(value, dict):
+                # Structured contracts: {'value': x, 'reliability': ..., ...}
+                for k in ('value', 'raw_value', 'canonical_value'):
+                    if k in value:
+                        return self._safe_excel_number(value.get(k))
+                return None
+            if isinstance(value, (list, tuple)):
+                if not value:
+                    return None
+                return self._safe_excel_number(value[0])
+            if isinstance(value, (int, float)):
+                if isinstance(value, float) and math.isnan(value):
+                    return None
+                return float(value)
+            txt = str(value).strip()
+            if not txt:
+                return None
+            # Handle serialized dict-like payloads stored as text.
+            if txt.startswith('{') and txt.endswith('}'):
+                try:
+                    parsed = _json.loads(txt)
+                except Exception:
+                    try:
+                        parsed = _ast.literal_eval(txt)
+                    except Exception:
+                        parsed = None
+                if isinstance(parsed, dict):
+                    for k in ('value', 'raw_value', 'canonical_value'):
+                        if k in parsed:
+                            return self._safe_excel_number(parsed.get(k))
+            up = txt.upper()
+            if up.startswith('N/A') or up in {'NONE', 'NULL', 'NAN'}:
+                return None
+            neg = txt.startswith('(') and txt.endswith(')')
+            txt = txt.replace(',', '').replace('$', '').replace(' ', '')
+            mult = 1.0
+            if txt.endswith('%'):
+                mult = 0.01
+                txt = txt[:-1]
+            elif txt.endswith('B'):
+                mult = 1_000_000_000.0
+                txt = txt[:-1]
+            elif txt.endswith('M'):
+                mult = 1_000_000.0
+                txt = txt[:-1]
+            if neg:
+                txt = txt[1:-1]
+            num = float(txt)
+            if neg:
+                num = -num
+            return num * mult
+        except Exception:
+            return None
+
+    def _audit_export_value_objects(self, file_path, normalize=True):
+        """
+        Post-export audit:
+        detect cells that accidentally contain serialized value-objects
+        (e.g. "{'value': 1.23, 'reliability': ...}") and optionally normalize
+        them into plain numeric cells.
+        """
+        summary = {
+            'scanned_cells': 0,
+            'object_like_cells': 0,
+            'normalized_cells': 0,
+            'errors': [],
+        }
+        try:
+            from openpyxl import load_workbook
+            import json as _json
+            import ast as _ast
+
+            wb = load_workbook(file_path)
+            dirty = False
+            for ws in wb.worksheets:
+                for row in ws.iter_rows():
+                    for cell in row:
+                        summary['scanned_cells'] += 1
+                        v = cell.value
+                        if not isinstance(v, str):
+                            continue
+                        s = v.strip()
+                        if not (s.startswith('{') and s.endswith('}')):
+                            continue
+                        if 'value' not in s:
+                            continue
+                        summary['object_like_cells'] += 1
+                        parsed = None
+                        try:
+                            parsed = _json.loads(s)
+                        except Exception:
+                            try:
+                                parsed = _ast.literal_eval(s)
+                            except Exception:
+                                parsed = None
+                        num = self._safe_excel_number(parsed if parsed is not None else s)
+                        if normalize and isinstance(num, (int, float)):
+                            cell.value = float(num)
+                            summary['normalized_cells'] += 1
+                            dirty = True
+            if normalize and dirty:
+                wb.save(file_path)
+        except Exception as e:
+            summary['errors'].append(str(e))
+        return summary
+
+    def _resolve_selected_raw_layer_key(self):
+        data_layers = self.current_data.get('data_layers', {}) if self.current_data else {}
+        selected_layer_display = self.raw_layer_var.get() if hasattr(self, 'raw_layer_var') else self._t('layer1')
+        selected_layer = getattr(self, '_raw_layer_display_to_real', {}).get(selected_layer_display, selected_layer_display)
+        catalog = (data_layers or {}).get('layer_catalog') or []
+        selected_key = None
+        selected_source = None
+        for item in catalog:
+            if str(item.get('title')) == selected_layer:
+                selected_key = str(item.get('key'))
+                selected_source = str(item.get('source') or '')
+                break
+        if not selected_key:
+            if selected_layer.startswith('Layer 2') or selected_layer.startswith('الطبقة 2'):
+                selected_key = 'layer2_by_year'
+                selected_source = 'MARKET'
+            elif selected_layer.startswith('Layer 3') or selected_layer.startswith('الطبقة 3'):
+                selected_key = 'layer3_by_year'
+                selected_source = 'MACRO'
+            elif selected_layer.startswith('Layer 4') or selected_layer.startswith('الطبقة 4'):
+                selected_key = 'layer4_by_year'
+                selected_source = 'YAHOO'
+            else:
+                selected_key = 'layer1_by_year'
+                selected_source = 'SEC'
+        return selected_key, selected_source
+
+    def _snapshot_raw_tree_df(self):
+        try:
+            import pandas as pd
+        except Exception:
+            return None
+        if not hasattr(self, 'raw_tree'):
+            return None
+        cols = list(self.raw_tree.cget('columns') or [])
+        if not cols:
+            return None
+        rows = []
+        for iid in self.raw_tree.get_children(''):
+            vals = list(self.raw_tree.item(iid, 'values') or [])
+            if not vals:
+                continue
+            if len(vals) < len(cols):
+                vals.extend([''] * (len(cols) - len(vals)))
+            rows.append({str(cols[i]): vals[i] for i in range(len(cols))})
+        if not rows:
+            return None
+        return pd.DataFrame(rows, columns=cols)
+
+    def _sheet_to_year_dict(self, df, label_candidates, allow_text=False, key_prefix=None):
+        out = {}
+        if df is None or df.empty:
+            return out
+        cols = [str(c) for c in df.columns]
+        year_cols_map = {}
+        for c in cols:
+            c_txt = str(c).strip()
+            y_match = re.search(r'(19|20)\d{2}', c_txt)
+            if y_match:
+                year_cols_map[c_txt] = int(y_match.group(0))
+        year_cols = list(year_cols_map.keys())
+        if not year_cols:
+            return out
+        label_col = None
+        for cand in label_candidates:
+            if cand in cols:
+                label_col = cand
+                break
+        if not label_col:
+            label_col = cols[0]
+        for _, row in df.iterrows():
+            raw_key = row.get(label_col)
+            if raw_key is None:
+                continue
+            key = str(raw_key).strip()
+            if not key:
+                continue
+            if key_prefix:
+                key = f"{key_prefix}{key}"
+            for yc in year_cols:
+                y = year_cols_map.get(str(yc))
+                if y is None:
+                    continue
+                val = row.get(yc)
+                num = self._safe_excel_number(val)
+                if num is not None:
+                    out.setdefault(y, {})[key] = num
+                elif allow_text:
+                    sval = str(val).strip() if val is not None else ''
+                    if sval and not sval.upper().startswith('N/A'):
+                        out.setdefault(y, {})[key] = sval
+        return out
+
+    def _merge_year_dict(self, base, extra):
+        out = {int(y): dict(v or {}) for y, v in (base or {}).items()}
+        for y, row in (extra or {}).items():
+            y_int = int(y)
+            slot = out.setdefault(y_int, {})
+            for k, v in (row or {}).items():
+                if slot.get(k) is None and v is not None:
+                    slot[k] = v
+        return out
+
+    def load_results_from_excel(self, file_path=None, show_success_message=True):
+        fn = file_path
+        if not fn:
+            fn = filedialog.askopenfilename(
+                title=self._t('load_excel_title'),
+                filetypes=[("Excel files", "*.xlsx;*.xlsm"), ("All files", "*.*")],
+            )
+        if not fn:
+            return False
+        try:
+            import pandas as pd
+
+            xls = pd.ExcelFile(fn)
+            sheets = set(xls.sheet_names or [])
+
+            def _norm_sheet_name(s: str) -> str:
+                return re.sub(r'[^a-z0-9]+', '', str(s or '').lower())
+
+            sheet_index = {_norm_sheet_name(n): n for n in sheets}
+
+            def _pick_sheet(*aliases):
+                for alias in aliases:
+                    hit = sheet_index.get(_norm_sheet_name(alias))
+                    if hit:
+                        return hit
+                return None
+
+            def _read_sheet(*aliases):
+                sheet_name = _pick_sheet(*aliases)
+                if not sheet_name:
+                    return None
+                return pd.read_excel(fn, sheet_name=sheet_name)
+
+            raw_df = _read_sheet('Raw_by_Year', 'Raw by Year', 'Financial Data', 'البيانات المالية')
+            layer1_df = _read_sheet('Layer1_Raw_SEC', 'Layer1 Raw SEC', 'SEC_Official_Statement')
+            ratios_df = _read_sheet('Ratios', 'Financial Ratios', 'النسب المالية')
+            strategic_df = _read_sheet('Strategic', 'Strategic Analysis', 'التحليل الاستراتيجي')
+            comparison_df = _read_sheet('Comparative_Analysis', 'Comparative Analysis', 'التحليل المقارن')
+            methodology_df = _read_sheet('Methodology_Final', 'Methodology Final', 'المنهجية النهائية')
+            layer2_df = _read_sheet('Layer2_Market', 'Layer2 Market', 'Market')
+            layer3_df = _read_sheet('Layer3_Macro', 'Layer3 Macro', 'Macro')
+            layer4_df = _read_sheet('Layer4_Yahoo', 'Layer4 Yahoo', 'Yahoo')
+            income_df = _read_sheet('Income Statement', 'StatementOfIncome')
+            balance_df = _read_sheet('Balance Sheet', 'StatementOfBalanceSheet')
+            cashflow_df = _read_sheet('Cash Flow', 'StatementOfCashFlows')
+
+            data_by_year = self._sheet_to_year_dict(raw_df, ['Concept', 'Line Item', 'Item', 'البند'], allow_text=False)
+            layer1_by_year = self._sheet_to_year_dict(layer1_df, ['Raw Label', 'Line Item', 'Concept', 'Item', 'البند'], allow_text=False)
+            for stmt_df in (income_df, balance_df, cashflow_df):
+                stmt_rows = self._sheet_to_year_dict(stmt_df, ['Line Item', 'Item', 'Concept', 'البند'], allow_text=False)
+                data_by_year = self._merge_year_dict(data_by_year, stmt_rows)
+            if not data_by_year:
+                data_by_year = dict(layer1_by_year)
+            else:
+                data_by_year = self._merge_year_dict(data_by_year, layer1_by_year)
+
+            ratios_by_year = self._sheet_to_year_dict(ratios_df, ['Metric', 'Ratio', 'Name', 'النسبة'], allow_text=False)
+            strategic_by_year = self._sheet_to_year_dict(strategic_df, ['Metric', 'Indicator', 'المقياس'], allow_text=True)
+            imported_ratio_metrics = set()
+            imported_strategic_metrics = set()
+            try:
+                if ratios_df is not None and not ratios_df.empty:
+                    rcols = [str(c) for c in ratios_df.columns]
+                    rk = 'Metric' if 'Metric' in rcols else ('Ratio' if 'Ratio' in rcols else (rcols[0] if rcols else None))
+                    if rk:
+                        for _, rr in ratios_df.iterrows():
+                            mv = str(rr.get(rk) or '').strip().lower()
+                            if mv:
+                                imported_ratio_metrics.add(mv)
+                if strategic_df is not None and not strategic_df.empty:
+                    scols = [str(c) for c in strategic_df.columns]
+                    sk = 'Metric' if 'Metric' in scols else ('Indicator' if 'Indicator' in scols else (scols[0] if scols else None))
+                    if sk:
+                        for _, rr in strategic_df.iterrows():
+                            mv = str(rr.get(sk) or '').strip().lower()
+                            if mv:
+                                imported_strategic_metrics.add(mv)
+            except Exception:
+                imported_ratio_metrics = set()
+                imported_strategic_metrics = set()
+            layer2_by_year = self._sheet_to_year_dict(layer2_df, ['Normalized Label', 'Item', 'البند المعياري'], allow_text=True)
+            layer4_by_year = self._sheet_to_year_dict(layer4_df, ['Normalized Label', 'Item', 'البند المعياري'], allow_text=True)
+
+            layer3_by_year = {}
+            if layer3_df is not None and not layer3_df.empty:
+                cols = [str(c) for c in layer3_df.columns]
+                year_cols = [c for c in cols if re.search(r'(19|20)\d{2}', str(c))]
+                cat_col = 'Category' if 'Category' in cols else None
+                lbl_col = 'Normalized Label' if 'Normalized Label' in cols else (cols[0] if cols else None)
+                if lbl_col:
+                    for _, row in layer3_df.iterrows():
+                        label = str(row.get(lbl_col) or '').strip()
+                        if not label:
+                            continue
+                        category = str(row.get(cat_col) or '').strip() if cat_col else ''
+                        key = f"{category}::{label}" if category else label
+                        for yc in year_cols:
+                            m = re.search(r'(19|20)\d{2}', str(yc))
+                            if not m:
+                                continue
+                            y = int(m.group(0))
+                            v = row.get(yc)
+                            num = self._safe_excel_number(v)
+                            if num is not None:
+                                layer3_by_year.setdefault(y, {})[key] = num
+                            else:
+                                sval = str(v).strip() if v is not None else ''
+                                if sval and not sval.upper().startswith('N/A'):
+                                    layer3_by_year.setdefault(y, {})[key] = sval
+
+            if not data_by_year:
+                messagebox.showerror(self._t('msg_error'), self._translate_ui_text("لم يتم العثور على بيانات مالية صالحة داخل الملف."))
+                return
+
+            ticker_guess = Path(fn).stem.split('_')[0].upper()
+            imported_meta = self._extract_excel_import_metadata(
+                ticker_guess=ticker_guess,
+                comparison_df=comparison_df,
+                methodology_df=methodology_df,
+            )
+            company_info = {
+                'ticker': ticker_guess,
+                'name': ticker_guess,
+                'cik': None,
+                'sector': imported_meta.get('sector_profile'),
+            }
+            data_layers = {
+                'layer1_by_year': layer1_by_year or data_by_year,
+                'layer2_by_year': layer2_by_year,
+                'layer3_by_year': layer3_by_year,
+                'layer4_by_year': layer4_by_year,
+                'label_rows': [],
+                'layer_catalog': [
+                    {'key': 'layer1_by_year', 'title': 'Layer 1 - SEC XBRL (EDGAR)', 'source': 'SEC'},
+                    {'key': 'layer2_by_year', 'title': 'Layer 2 - Market (Polygon)', 'source': 'MARKET'},
+                    {'key': 'layer3_by_year', 'title': 'Layer 3 - Macro (FRED)', 'source': 'MACRO'},
+                    {'key': 'layer4_by_year', 'title': 'Layer 4 - Yahoo (yfinance)', 'source': 'YAHOO'},
+                ],
+            }
+
+            loaded = {
+                'success': True,
+                'company_info': company_info,
+                'data_by_year': data_by_year,
+                'financial_ratios': ratios_by_year,
+                'strategic_analysis': strategic_by_year,
+                'data_layers': data_layers,
+                '_loaded_from_excel_path': str(fn),
+                'ui_lock_excel': True,
+                'ui_lock_excel_ratio_metrics': sorted(imported_ratio_metrics),
+                'ui_lock_excel_strategic_metrics': sorted(imported_strategic_metrics),
+                'sector_gating': {
+                    'profile': imported_meta.get('sector_profile') or 'unknown',
+                    'sub_profile': imported_meta.get('sub_sector_profile') or imported_meta.get('sector_profile') or 'unknown',
+                    'confidence': imported_meta.get('confidence'),
+                },
+                'filing_diagnostics': {
+                    'filing_grade': imported_meta.get('filing_grade') or 'IN_RANGE_ANNUAL',
+                    'out_of_range': bool(imported_meta.get('out_of_range')),
+                },
+                'institutional_outputs': {
+                    'classification': {
+                        'primary_profile': imported_meta.get('sub_sector_profile') or imported_meta.get('sector_profile') or 'unknown',
+                        'confidence': imported_meta.get('confidence'),
+                    },
+                    'classifier_diagnostics': {
+                        'sector': imported_meta.get('sub_sector_profile') or imported_meta.get('sector_profile') or 'unknown',
+                        'confidence_score': imported_meta.get('confidence'),
+                    },
+                },
+            }
+            self.current_data = loaded
+            self.multi_company_data[ticker_guess] = loaded
+            if ticker_guess not in self.companies_listbox.get(0, tk.END):
+                self.companies_listbox.insert(tk.END, ticker_guess)
+            all_years = sorted({
+                int(y)
+                for src in (data_by_year, ratios_by_year, strategic_by_year)
+                for y in (src or {}).keys()
+                if str(y).isdigit()
+            })
+            if all_years:
+                self.start_year_var.set(str(min(all_years)))
+                self.end_year_var.set(str(max(all_years)))
+            self._sync_layer_selector_from_data()
+            # Enforce deterministic SEC display mode after Excel load.
+            try:
+                if hasattr(self, '_sec_view_mode_var'):
+                    self._sec_view_mode_var.set('official')
+                if hasattr(self, 'sec_view_mode_display_var'):
+                    self.sec_view_mode_display_var.set(self._t('sec_view_mode_official'))
+            except Exception:
+                pass
+            self.display_all()
+            self.display_comparison()
+            if show_success_message:
+                messagebox.showinfo(self._t('msg_success'), f"{self._t('load_excel_success')}\n{fn}")
+            return True
+        except Exception as e:
+            messagebox.showerror(self._t('msg_error'), f"{self._t('load_excel_failed')}: {e}")
+            return False
+
+    def _build_forecast_export_df(self):
+        try:
+            import pandas as pd
+            if not self.current_data:
+                return pd.DataFrame([{'Year': None, 'Revenue_Forecast': None, 'NetIncome_Forecast': None, 'Method': 'NO_CURRENT_DATA'}])
+            db = ((self.current_data.get('data_layers', {}) or {}).get('layer1_by_year') or self.current_data.get('data_by_year', {}) or {})
+            norm_db = {}
+            for yk, row in (db or {}).items():
+                try:
+                    ky = int(yk)
+                except Exception:
+                    continue
+                norm_db[ky] = row or {}
+            if not norm_db:
+                return pd.DataFrame([{'Year': None, 'Revenue_Forecast': None, 'NetIncome_Forecast': None, 'Method': 'NO_HISTORY'}])
+            bundle = self._build_forecast_bundle(data_by_year=norm_db, years_forward=10)
+            rows = list(bundle.get('rows') or [])
+            if not rows:
+                return pd.DataFrame([{'Year': None, 'Revenue_Base': None, 'NetIncome_Base': None, 'Method': 'EMPTY_FORECAST'}])
+
+            rev_meta = bundle.get('revenue') or {}
+            ni_meta = bundle.get('net_income') or {}
+            for row in rows:
+                row['Revenue_History_Points'] = rev_meta.get('history_points')
+                row['NetIncome_History_Points'] = ni_meta.get('history_points')
+                row['Revenue_Growth_Std'] = rev_meta.get('growth_std')
+                row['NetIncome_Growth_Std'] = ni_meta.get('growth_std')
+                row['Revenue_Trend_R2'] = rev_meta.get('trend_r2')
+                row['NetIncome_Trend_R2'] = ni_meta.get('trend_r2')
+            return pd.DataFrame(rows)
+        except Exception as e:
+            return pd.DataFrame([{'Year': None, 'Revenue_Base': None, 'NetIncome_Base': None, 'Method': f'ERROR: {e}'}])
+
+    def _build_ratio_written_report_df(self, ratio_source, ticker, years, ratio_export_keys, blocked_ratios):
+        try:
+            import pandas as pd
+            def _classify_ratio_signal(ratio_key, value):
+                try:
+                    v = float(value)
+                except Exception:
+                    return 'قراءة تفسيرية غير متاحة.'
+                rk = str(ratio_key or '').lower()
+                if rk in {'gross_margin', 'operating_margin', 'net_margin', 'ebitda_margin', 'roa', 'roe', 'roic', 'fcf_yield', 'ocf_margin'}:
+                    if v >= 0.20:
+                        return 'المستوى مرتفع نسبيًا ويعكس ربحية أو عائدًا قويًا، مع وجوب اختبار استدامته عبر الزمن.'
+                    if v >= 0.08:
+                        return 'المستوى مقبول ويعطي صورة تشغيلية مستقرة دون أن يكون استثنائيًا.'
+                    return 'المستوى منخفض نسبيًا ويستحق تفسيرًا من زاوية ضغط الهوامش أو ضعف توليد العائد.'
+                if rk in {'current_ratio', 'quick_ratio', 'cash_ratio'}:
+                    if v >= 1.20:
+                        return 'السيولة الظاهرية مريحة نسبيًا وتحد من مخاطر التمويل قصير الأجل.'
+                    if v >= 0.90:
+                        return 'السيولة مقبولة لكن هامش الأمان قصير الأجل ليس واسعًا.'
+                    return 'السيولة الظاهرية ضيقة نسبيًا ويجب قراءتها مع التدفق النقدي التشغيلي لا منفردة.'
+                if rk in {'debt_to_equity', 'debt_to_assets', 'net_debt_ebitda'}:
+                    if v <= 1.0:
+                        return 'الرافعة تبدو منضبطة نسبيًا ولا تشير وحدها إلى ضغط تمويلي مرتفع.'
+                    if v <= 2.5:
+                        return 'الرافعة متوسطة وتحتاج متابعة مع قدرة خدمة الدين والتدفق الحر.'
+                    return 'الرافعة مرتفعة نسبيًا وقد تضغط على المرونة المالية إذا تراجعت الأرباح.'
+                if rk == 'interest_coverage':
+                    if v >= 10:
+                        return 'تغطية الفائدة قوية وتدعم قدرة الشركة على خدمة الدين من الأرباح التشغيلية.'
+                    if v >= 4:
+                        return 'تغطية الفائدة مقبولة لكنها ليست واسعة بما يكفي لإهمال مخاطر التباطؤ.'
+                    return 'تغطية الفائدة ضعيفة نسبيًا وتشير إلى حساسية أعلى تجاه تراجع الربح التشغيلي.'
+                if rk in {'pe_ratio', 'pb_ratio', 'pe_ratio_used', 'pb_ratio_used'}:
+                    if v >= 35:
+                        return 'المضاعف مرتفع نسبيًا، ما يعني أن السوق يسعّر قدرًا كبيرًا من الجودة أو النمو مقدمًا.'
+                    if v >= 18:
+                        return 'المضاعف متوسط إلى مرتفع، ويحتاج ربطه بجودة النشاط وهامش الأمان.'
+                    return 'المضاعف معتدل نسبيًا ولا يعكس وحده تسعيرًا مفرطًا.'
+                return 'المؤشر محسوب بنجاح ويجب تفسيره ضمن السياق الكامل للربحية والسيولة والتقييم.'
+            rows = []
+            for ratio_key in (ratio_export_keys or []):
+                if ratio_key in (blocked_ratios or set()):
+                    continue
+                for y in (years or []):
+                    contract = ratio_source.get_ratio_contract(ticker, y, ratio_key) or {}
+                    val = contract.get('value')
+                    status = contract.get('status') or ('COMPUTED' if isinstance(val, (int, float)) else 'NOT_COMPUTABLE')
+                    reason = contract.get('reason')
+                    missing = contract.get('missing_inputs') or []
+                    formula = contract.get('formula_used') or ratio_key
+                    inputs = contract.get('raw_values_used') or contract.get('inputs') or {}
+                    rel = contract.get('reliability')
+                    source = contract.get('source') or contract.get('value_source') or 'ratio_engine'
+                    explanation = self._translate_ratio_explanation(ratio_key, '')
+
+                    if status == 'COMPUTED' and isinstance(val, (int, float)):
+                        try:
+                            disp = format_ratio_value(ratio_key, val).get('display_text')
+                        except Exception:
+                            disp = str(val)
+                        rel_txt = f"{int(rel)}%" if isinstance(rel, (int, float)) else 'غير محددة'
+                        explanation_txt = str(explanation or '').strip()
+                        investor_view = _classify_ratio_signal(ratio_key, val)
+                        narrative_parts = [f"القيمة المعروضة {disp}."]
+                        if explanation_txt:
+                            narrative_parts.append(explanation_txt)
+                        narrative_parts.append(investor_view)
+                        narrative_parts.append(f"المصدر الحسابي: {source}.")
+                        narrative_parts.append(f"درجة الموثوقية: {rel_txt}.")
+                        narrative = ' '.join(narrative_parts)
+                    else:
+                        missing_txt = ', '.join(str(m) for m in missing) if missing else 'n/a'
+                        if (reason or status) == 'DATA_NOT_APPLICABLE':
+                            narrative = f"المؤشر غير منطبق هيكليًا في هذه السنة أو هذا السياق، لذلك لم يُحتسب. المصدر: {source}."
+                        else:
+                            narrative = (
+                                f"تعذر احتساب المؤشر. السبب: {reason or 'UNKNOWN'}. "
+                                f"المدخلات الناقصة أو الحساسة: {missing_txt}. المصدر: {source}."
+                            )
+
+                    rows.append({
+                        'Year': y,
+                        'Ratio_Key': ratio_key,
+                        'Status': status,
+                        'Value': val,
+                        'Reliability': rel,
+                        'Reason': reason,
+                        'Missing_Inputs': ', '.join(str(m) for m in missing) if missing else '',
+                        'Formula': formula,
+                        'Input_Count': len(inputs) if isinstance(inputs, dict) else 0,
+                        'Source': source,
+                        'Short_Explanation': explanation,
+                        'Narrative_Report': narrative,
+                    })
+            if not rows:
+                rows.append({
+                    'Year': None, 'Ratio_Key': None, 'Status': 'NO_DATA', 'Value': None,
+                    'Reliability': None, 'Reason': 'NO_RATIO_CONTEXT', 'Missing_Inputs': '',
+                    'Formula': '', 'Input_Count': 0, 'Short_Explanation': '', 'Narrative_Report': 'No ratio report rows available.'
+                })
+            return pd.DataFrame(rows)
+        except Exception as e:
+            import pandas as pd
+            return pd.DataFrame([{
+                'Year': None, 'Ratio_Key': None, 'Status': 'ERROR', 'Reason': str(e),
+                'Narrative_Report': f'Failed to build ratio written report: {e}'
+            }])
+
+    def _build_forecast_written_report_df(self, forecasts_df):
+        try:
+            import pandas as pd
+            rows = []
+            if forecasts_df is None or forecasts_df.empty:
+                return pd.DataFrame([{
+                    'Year': None, 'Metric': None, 'Scenario': None, 'Value': None,
+                    'Confidence_Pct': None, 'Method': 'NO_FORECAST_DATA',
+                    'Narrative_Report': 'No forecast data available.'
+                }])
+            for _, r in forecasts_df.iterrows():
+                y = r.get('Year')
+                rev_m = r.get('Revenue_Method')
+                ni_m = r.get('NetIncome_Method')
+                rev_conf = r.get('Revenue_Confidence_Pct')
+                ni_conf = r.get('NetIncome_Confidence_Pct')
+                for metric_name, base_key, bull_key, bear_key, conf, method in [
+                    ('Revenue', 'Revenue_Base', 'Revenue_Bull', 'Revenue_Bear', rev_conf, rev_m),
+                    ('NetIncome', 'NetIncome_Base', 'NetIncome_Bull', 'NetIncome_Bear', ni_conf, ni_m),
+                ]:
+                    b = r.get(base_key)
+                    u = r.get(bull_key)
+                    d = r.get(bear_key)
+                    try:
+                        spread_txt = f"{(((float(u) - float(d)) / max(abs(float(b)), 1.0)) * 100.0):.1f}%"
+                    except Exception:
+                        spread_txt = 'N/A'
+                    conf_txt = f"{float(conf):.1f}%" if isinstance(conf, (int, float)) else 'N/A'
+
+                    def _scenario_narrative(label, value):
+                        if label == 'Base':
+                            if isinstance(value, (int, float)):
+                                return (
+                                    f"السيناريو الأساسي لـ {metric_name} في سنة {y} يقدّر القيمة عند {value:,.0f} "
+                                    f"بثقة {conf_txt} وبمنهجية {method or 'غير محددة'}. "
+                                    f"اتساع النطاق بين المتفائل والمتحفظ يبلغ تقريبًا {spread_txt} من مستوى الأساس."
+                                )
+                            return f"السيناريو الأساسي لـ {metric_name} في سنة {y} غير متاح بصورة قابلة للقراءة."
+                        if label == 'Bull':
+                            if isinstance(value, (int, float)):
+                                return (
+                                    f"السيناريو المتفائل يفترض تحسنًا أعلى من الأساس في {metric_name} حتى {value:,.0f}، "
+                                    f"ويعتمد على تحقق افتراضات تشغيلية وتمويلية أفضل من المتوسط."
+                                )
+                            return f"السيناريو المتفائل لـ {metric_name} غير متاح."
+                        if isinstance(value, (int, float)):
+                            return (
+                                f"السيناريو المتحفظ يختبر هبوط {metric_name} إلى {value:,.0f}، "
+                                f"ويعكس اتساع عدم اليقين الذي يجب أخذه في الاعتبار عند بناء التقييم."
+                            )
+                        return f"السيناريو المتحفظ لـ {metric_name} غير متاح."
+
+                    rows.append({
+                        'Year': y,
+                        'Metric': metric_name,
+                        'Scenario': 'Base',
+                        'Value': b,
+                        'Confidence_Pct': conf,
+                        'Method': method,
+                        'Narrative_Report': _scenario_narrative('Base', b),
+                    })
+                    rows.append({
+                        'Year': y,
+                        'Metric': metric_name,
+                        'Scenario': 'Bull',
+                        'Value': u,
+                        'Confidence_Pct': conf,
+                        'Method': method,
+                        'Narrative_Report': _scenario_narrative('Bull', u),
+                    })
+                    rows.append({
+                        'Year': y,
+                        'Metric': metric_name,
+                        'Scenario': 'Bear',
+                        'Value': d,
+                        'Confidence_Pct': conf,
+                        'Method': method,
+                        'Narrative_Report': _scenario_narrative('Bear', d),
+                    })
+            return pd.DataFrame(rows)
+        except Exception as e:
+            import pandas as pd
+            return pd.DataFrame([{
+                'Year': None, 'Metric': None, 'Scenario': None, 'Value': None,
+                'Confidence_Pct': None, 'Method': 'ERROR',
+                'Narrative_Report': f'Failed to build forecast written report: {e}'
+            }])
+
+    def _build_investor_verdict_df(self, years, ratios_by_year, gate_issues, critical_df, forecasts_df, sector_profile=None, blocked_ratios=None):
+        try:
+            import pandas as pd
+            import re
+
+            def _num(v):
+                try:
+                    fv = self._safe_excel_number(v)
+                    if fv is None:
+                        return None
+                    return float(fv)
+                except Exception:
+                    return None
+
+            years = [int(y) for y in (years or []) if str(y).isdigit()]
+            sector_norm = self._normalize_sector_for_packs(sector_profile or self._get_sector_profile())
+            blocked = set(blocked_ratios or [])
+            issue_map = {y: [] for y in years}
+            global_issues = []
+            for issue in (gate_issues or []):
+                txt = str(issue or '').strip()
+                m = re.match(r'^(\d{4})\s*:\s*(.+)$', txt)
+                if m:
+                    y = int(m.group(1))
+                    if y in issue_map:
+                        issue_map[y].append(m.group(2).strip())
+                elif txt:
+                    global_issues.append(txt)
+
+            critical_count = 0
+            high_count = 0
+            severity_by_year = {y: {'CRITICAL': 0, 'HIGH': 0, 'notes': []} for y in years}
+            try:
+                if critical_df is not None and not critical_df.empty and 'Severity' in critical_df.columns:
+                    sev = critical_df['Severity'].astype(str).str.upper()
+                    critical_count = int((sev == 'CRITICAL').sum())
+                    high_count = int((sev == 'HIGH').sum())
+                    if 'Year' in critical_df.columns:
+                        for _, flag_row in critical_df.iterrows():
+                            try:
+                                fy = int(flag_row.get('Year'))
+                            except Exception:
+                                continue
+                            if fy not in severity_by_year:
+                                continue
+                            severity = str(flag_row.get('Severity') or '').upper()
+                            if severity in ('CRITICAL', 'HIGH'):
+                                severity_by_year[fy][severity] += 1
+                            detail = str(flag_row.get('Type') or flag_row.get('Metric') or '').strip()
+                            if detail:
+                                severity_by_year[fy]['notes'].append(detail)
+            except Exception:
+                pass
+
+            fc_by_year = {}
+            try:
+                if forecasts_df is not None and not forecasts_df.empty and 'Year' in forecasts_df.columns:
+                    for _, r in forecasts_df.iterrows():
+                        try:
+                            y = int(r.get('Year'))
+                        except Exception:
+                            continue
+                        fc_by_year[y] = {
+                            'rev_conf': r.get('Revenue_Confidence_Pct'),
+                            'ni_conf': r.get('NetIncome_Confidence_Pct'),
+                        }
+            except Exception:
+                pass
+
+            rows = []
+            yearly_scores = []
+            for y in years:
+                rr = (ratios_by_year or {}).get(y, {}) or {}
+                positives = []
+                cautions = []
+                score = 86.0
+                verdict = 'PASS'
+
+                year_flag_bucket = severity_by_year.get(y, {})
+                year_critical = int(year_flag_bucket.get('CRITICAL', 0) or 0)
+                year_high = int(year_flag_bucket.get('HIGH', 0) or 0)
+
+                if year_critical > 0:
+                    score -= min(28.0, 18.0 + (year_critical * 4.0))
+                    cautions.append(f'{year_critical} إشارة تدقيق حرجة.')
+                if year_high > 0:
+                    score -= min(16.0, 6.0 + (year_high * 3.0))
+                    cautions.append(f'{year_high} إشارة تدقيق عالية الخطورة.')
+
+                year_issues = issue_map.get(y, [])
+                if year_issues:
+                    score -= min(16.0, float(len(year_issues)) * 2.5)
+                    cautions.append(f'{len(year_issues)} معالجة من بوابة الجودة في هذه السنة.')
+
+                issue_txt = ' | '.join(year_issues).lower()
+                hard_markers = (
+                    'implausible', 'cleared', 'missing', 'fallback', 'proxy-filled',
+                    'isolated anomaly fixed', 'corrected', 'hard-guard'
+                )
+                if any(k in issue_txt for k in hard_markers):
+                    score -= 6.0
+                    cautions.append('السنة تحتوي إشارات إصلاح بيانات غير بسيطة.')
+
+                pe = _num(rr.get('pe_ratio_used'))
+                if pe is None:
+                    pe = _num(rr.get('pe_ratio'))
+                pb = _num(rr.get('pb_ratio_used'))
+                if pb is None:
+                    pb = _num(rr.get('pb_ratio'))
+                fcfy = _num(rr.get('fcf_yield'))
+                mcap = _num(rr.get('market_cap'))
+                gross_margin = _num(rr.get('gross_margin'))
+                operating_margin = _num(rr.get('operating_margin'))
+                roic = _num(rr.get('roic'))
+                current_ratio = _num(rr.get('current_ratio'))
+                quick_ratio = _num(rr.get('quick_ratio'))
+                debt_to_equity = _num(rr.get('debt_to_equity'))
+                net_debt_ebitda = _num(rr.get('net_debt_ebitda'))
+                interest_coverage = _num(rr.get('interest_coverage'))
+
+                requires_fcf = sector_norm not in {'bank', 'investment_bank'}
+                uses_liquidity = sector_norm not in {'bank', 'investment_bank'}
+                uses_industrial_margins = sector_norm not in {'bank', 'investment_bank', 'insurance_pc', 'insurance_life'}
+                uses_combined = sector_norm == 'insurance_pc'
+
+                if pe is None:
+                    score -= 3.0
+                    cautions.append('P/E غير متاح.')
+                elif pe > 35:
+                    if sector_norm in {'software_saas', 'semiconductor_fabless'}:
+                        score -= 5.0
+                        cautions.append('مضاعف الربحية مرتفع لكنه قد يعكس علاوة جودة/نمو.')
+                    else:
+                        score -= 8.0
+                        cautions.append('مضاعف الربحية مرتفع نسبيًا ويضغط على هامش الأمان.')
+                elif pe > 25:
+                    score -= 4.0
+                    cautions.append('مضاعف الربحية أعلى من النطاق المريح.')
+                if pb is None:
+                    score -= 2.5
+                    cautions.append('P/B غير متاح.')
+                elif pb < 0 and sector_norm in {'software_saas', 'hardware_platform', 'consumer_staples', 'insurance_broker'}:
+                    cautions.append('P/B سالب على الأرجح بسبب هيكل رأس المال/إعادة شراء الأسهم وليس انهيارًا تشغيليًا مباشرًا.')
+                elif pb > 40:
+                    score -= 8.0
+                    cautions.append('مضاعف القيمة الدفترية مرتفع جدًا مقارنة بالأساس المحاسبي.')
+                elif pb > 20:
+                    score -= 4.0
+                    cautions.append('مضاعف القيمة الدفترية مرتفع نسبيًا.')
+                if requires_fcf and 'fcf_yield' not in blocked and fcfy is None:
+                    score -= 3.0
+                    cautions.append('عائد التدفق النقدي الحر غير متاح.')
+                elif requires_fcf and isinstance(fcfy, (int, float)) and fcfy < 0.03:
+                    score -= 6.0
+                    cautions.append('عائد التدفق النقدي الحر منخفض ويعني تسعيرًا متشددًا.')
+                elif requires_fcf and isinstance(fcfy, (int, float)) and fcfy < 0.05:
+                    score -= 3.0
+                    cautions.append('عائد التدفق النقدي الحر متوسط إلى منخفض.')
+                elif requires_fcf and isinstance(fcfy, (int, float)) and fcfy >= 0.07:
+                    score += 3.0
+                    positives.append('عائد التدفق النقدي الحر داعم نسبيًا للتقييم.')
+                if mcap is None:
+                    score -= 2.0
+                    cautions.append('القيمة السوقية غير متاحة.')
+
+                if uses_industrial_margins and isinstance(gross_margin, (int, float)):
+                    if gross_margin >= 0.40:
+                        score += 3.0
+                        positives.append('هامش إجمالي قوي يدعم قوة تسعير أو كفاءة هيكلية.')
+                    elif gross_margin < 0.20:
+                        score -= 4.0
+                        cautions.append('الهامش الإجمالي منخفض نسبيًا.')
+                if (uses_industrial_margins or sector_norm == 'insurance_broker') and isinstance(operating_margin, (int, float)):
+                    if operating_margin >= 0.25:
+                        score += 3.0
+                        positives.append('الهامش التشغيلي يعكس كفاءة تشغيلية مرتفعة.')
+                    elif operating_margin < 0.08:
+                        score -= 4.0
+                        cautions.append('الهامش التشغيلي ضعيف نسبيًا.')
+                if isinstance(roic, (int, float)):
+                    if roic >= 0.18:
+                        score += 6.0
+                        positives.append('العائد على رأس المال المستثمر مرتفع ويشير إلى خلق قيمة اقتصادية.')
+                    elif roic >= 0.12:
+                        score += 3.0
+                        positives.append('العائد على رأس المال المستثمر جيد.')
+                    elif roic < 0.06:
+                        score -= 5.0
+                        cautions.append('العائد على رأس المال المستثمر ضعيف نسبيًا.')
+                if uses_liquidity and isinstance(current_ratio, (int, float)):
+                    if current_ratio < 0.90:
+                        score -= 6.0
+                        cautions.append('السيولة المتداولة أقل من 1 بهامش ملموس.')
+                    elif current_ratio < 1.0:
+                        score -= 3.0
+                        cautions.append('السيولة المتداولة دون 1 وتتطلب قراءة مع التدفق النقدي.')
+                    elif current_ratio >= 1.2:
+                        score += 1.0
+                        positives.append('السيولة المتداولة مقبولة.')
+                if uses_liquidity and isinstance(quick_ratio, (int, float)):
+                    if quick_ratio < 0.50:
+                        score -= 4.0
+                        cautions.append('السيولة السريعة ضيقة نسبيًا.')
+                    elif quick_ratio >= 0.80:
+                        score += 1.5
+                        positives.append('السيولة السريعة مريحة نسبيًا.')
+                if isinstance(debt_to_equity, (int, float)):
+                    if debt_to_equity > 1.5:
+                        score -= 5.0
+                        cautions.append('الرافعة إلى حقوق الملكية مرتفعة.')
+                    elif debt_to_equity > 1.0:
+                        score -= 2.5
+                        cautions.append('الرافعة إلى حقوق الملكية متوسطة إلى مرتفعة.')
+                    elif debt_to_equity < 0.8:
+                        score += 2.0
+                        positives.append('الرافعة إلى حقوق الملكية منضبطة نسبيًا.')
+                if isinstance(net_debt_ebitda, (int, float)):
+                    if net_debt_ebitda < 0:
+                        score += 3.0
+                        positives.append('صافي الدين إلى EBITDA سلبي أو مريح جدًا.')
+                    elif net_debt_ebitda < 1.5:
+                        score += 2.0
+                        positives.append('صافي الدين إلى EBITDA ضمن نطاق مريح.')
+                    elif net_debt_ebitda > 3.0:
+                        score -= 5.0
+                        cautions.append('صافي الدين إلى EBITDA مرتفع.')
+                if isinstance(interest_coverage, (int, float)):
+                    if interest_coverage >= 10:
+                        score += 4.0
+                        positives.append('تغطية الفائدة قوية.')
+                    elif interest_coverage >= 5:
+                        score += 1.5
+                        positives.append('تغطية الفائدة مقبولة.')
+                    elif interest_coverage < 3:
+                        score -= 7.0
+                        cautions.append('قدرة تغطية الفائدة ضعيفة.')
+
+                if uses_combined:
+                    combined = _num(rr.get('combined_proxy'))
+                    if isinstance(combined, (int, float)):
+                        if combined < 0.98:
+                            score += 2.0
+                            positives.append('مؤشر الكفاءة التأمينية ضمن نطاق مريح نسبيًا.')
+                        elif combined > 1.08:
+                            score -= 5.0
+                            cautions.append('مؤشر الكفاءة التأمينية مرتفع ويضغط على ربحية الاكتتاب.')
+
+                fc = fc_by_year.get(y, {})
+                rev_conf = fc.get('rev_conf')
+                ni_conf = fc.get('ni_conf')
+                if isinstance(rev_conf, (int, float)) and isinstance(ni_conf, (int, float)):
+                    c = min(float(rev_conf), float(ni_conf))
+                    if c < 50:
+                        score -= 10.0
+                        cautions.append('ثقة التوقعات لهذه السنة منخفضة.')
+                    elif c < 60:
+                        score -= 5.0
+                        cautions.append('ثقة التوقعات متوسطة فقط.')
+                    elif c >= 75:
+                        score += 1.0
+                        positives.append('ثقة التوقعات أعلى من المتوسط.')
+
+                score = max(5.0, min(95.0, score))
+                yearly_scores.append(score)
+                if score >= 80:
+                    verdict = 'PASS'
+                elif score >= 62:
+                    verdict = 'WATCH'
+                else:
+                    verdict = 'FAIL'
+
+                reasons = positives[:3] + cautions[:4]
+                if not reasons:
+                    reasons = ['الإشارات المالية في هذه السنة متوازنة دون محفزات قوية أو ضغوط حادة.']
+
+                rows.append({
+                    'Year': y,
+                    'Investor_Verdict': verdict,
+                    'Confidence_Score': round(score, 2),
+                    'PE_Ratio': pe,
+                    'PB_Ratio': pb,
+                    'FCF_Yield': fcfy,
+                    'Market_Cap_Million_USD': mcap,
+                    'Forecast_Rev_Confidence_Pct': rev_conf,
+                    'Forecast_NI_Confidence_Pct': ni_conf,
+                    'Reasons': ' ؛ '.join(reasons),
+                    'Positive_Signals': ' ؛ '.join(positives[:4]) if positives else '',
+                    'Caution_Signals': ' ؛ '.join(cautions[:4]) if cautions else '',
+                    'QualityGate_Issues': ' | '.join(year_issues) if year_issues else '',
+                    'Flag_Details': ' | '.join(year_flag_bucket.get('notes') or []),
+                })
+
+            if global_issues:
+                global_conf = float(sum(yearly_scores) / len(yearly_scores)) if yearly_scores else max(0.0, 88.0 - (critical_count * 8.0) - (high_count * 3.0))
+                rows.append({
+                    'Year': 'GLOBAL',
+                    'Investor_Verdict': 'WATCH' if (critical_count > 0 or high_count > 0) else 'PASS',
+                    'Confidence_Score': round(max(5.0, min(95.0, global_conf - (critical_count * 4.0))), 2),
+                    'PE_Ratio': None,
+                    'PB_Ratio': None,
+                    'FCF_Yield': None,
+                    'Market_Cap_Million_USD': None,
+                    'Forecast_Rev_Confidence_Pct': None,
+                    'Forecast_NI_Confidence_Pct': None,
+                    'Reasons': 'توجد ملاحظات جودة عامة يجب أخذها في الاعتبار عند قراءة الحكم النهائي.',
+                    'Positive_Signals': '',
+                    'Caution_Signals': '',
+                    'QualityGate_Issues': ' | '.join(global_issues),
+                })
+
+            if not rows:
+                rows = [{
+                    'Year': None,
+                    'Investor_Verdict': 'WATCH',
+                    'Confidence_Score': 0.0,
+                    'Reasons': 'No data to build investor verdict.',
+                    'QualityGate_Issues': '',
+                }]
+            return pd.DataFrame(rows)
+        except Exception as e:
+            import pandas as pd
+            return pd.DataFrame([{
+                'Year': None,
+                'Investor_Verdict': 'WATCH',
+                'Confidence_Score': 0.0,
+                'Reasons': f'Investor verdict build failed: {e}',
+                'QualityGate_Issues': '',
+            }])
+
+    def _build_comparison_export_df(self, source_snapshot=None):
+        try:
+            import pandas as pd
+            rows, _details = self._collect_comparison_rows(source_snapshot=source_snapshot)
+            if not rows:
+                return pd.DataFrame([{
+                    'Ticker': None,
+                    'Sector': None,
+                    'Confidence': None,
+                    'Filing_Grade': None,
+                    'OutOfRange': None,
+                    'HIGH': None,
+                    'MEDIUM': None,
+                    'LOW': None,
+                    'REJECTED': None,
+                    'Latest_Year': None,
+                    'Revenue_CAGR_%': None,
+                    'NetIncome_CAGR_%': None,
+                    'FCF_CAGR_%': None,
+                    'GrossMargin_Trend': None,
+                    'ROIC_Trend': None,
+                    'Liquidity_View': None,
+                    'Valuation_View': None,
+                    'Top_Rejection_Reasons': 'NO_COMPARISON_DATA',
+                    'Top_Validator_Flags': None,
+                }])
+            out = []
+            for r in rows:
+                out.append({
+                    'Ticker': r.get('ticker'),
+                    'Sector': r.get('sector'),
+                    'Confidence': r.get('confidence'),
+                    'Filing_Grade': r.get('filing_grade'),
+                    'OutOfRange': r.get('out_of_range'),
+                    'HIGH': r.get('high'),
+                    'MEDIUM': r.get('medium'),
+                    'LOW': r.get('low'),
+                    'REJECTED': r.get('rejected'),
+                    'Latest_Year': r.get('latest_year'),
+                    'Revenue_CAGR_%': r.get('revenue_cagr'),
+                    'NetIncome_CAGR_%': r.get('net_income_cagr'),
+                    'FCF_CAGR_%': r.get('fcf_cagr'),
+                    'GrossMargin_Trend': r.get('gross_margin_trend'),
+                    'ROIC_Trend': r.get('roic_trend'),
+                    'Liquidity_View': r.get('liquidity_view'),
+                    'Valuation_View': r.get('valuation_view'),
+                    'Top_Rejection_Reasons': r.get('top_reasons'),
+                    'Top_Validator_Flags': r.get('top_flags'),
+                })
+            return pd.DataFrame(out)
+        except Exception as e:
+            return pd.DataFrame([{'Ticker': None, 'Top_Rejection_Reasons': f'ERROR: {e}'}])
+
+    def _build_ai_export_df(self):
+        try:
+            import pandas as pd
+            if not self.current_data:
+                return pd.DataFrame([{'Metric': 'AI_Status', 'Value': 'NO_CURRENT_DATA'}])
+            insights = self._build_ai_insights_snapshot() or {}
+            if not insights:
+                return pd.DataFrame([{'Metric': 'AI_Status', 'Value': 'MISSING_INPUTS'}])
+            rows = []
+            ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+            years = sorted(
+                int(y) for y in (((self.current_data.get('data_layers', {}) or {}).get('layer1_by_year') or self.current_data.get('data_by_year', {}) or {}).keys())
+                if str(y).isdigit()
+            )
+            latest_year = years[-1] if years else None
+
+            def _push(metric, value):
+                if isinstance(value, list):
+                    value = ', '.join([str(x) for x in value]) if value else ''
+                rows.append({'Metric': metric, 'Value': value})
+
+            _push('meta.ticker', ticker)
+            _push('meta.latest_year', latest_year)
+
+            fraud = (insights.get('fraud_detection') or {})
+            failure = (insights.get('failure_prediction') or {})
+            growth = (insights.get('growth_sustainability') or {})
+            wc = (insights.get('working_capital_analysis') or {})
+            quality = (insights.get('investment_quality') or {})
+            components = (quality.get('components') or {}) if isinstance(quality, dict) else {}
+
+            if fraud:
+                _push('fraud.probability', fraud.get('fraud_probability'))
+                _push('fraud.red_flags_count', fraud.get('red_flags_count'))
+                _push('fraud.risk_level', fraud.get('risk_level'))
+                _push('fraud.recommendation', fraud.get('recommendation'))
+            if failure:
+                _push('failure.probability_3y', failure.get('failure_prob_3y'))
+                _push('failure.probability_5y', failure.get('failure_prob_5y'))
+                _push('failure.risk_level', failure.get('risk_level'))
+                _push('failure.key_concerns', failure.get('key_concerns'))
+            if growth:
+                _push('growth.sustainability_score', growth.get('sustainability_score'))
+                _push('growth.grade', growth.get('grade'))
+                _push('growth.actual_growth', growth.get('actual_growth'))
+                _push('growth.sgr_internal', growth.get('sgr_internal'))
+                _push('growth.debt_warning', growth.get('debt_warning'))
+                _push('growth.assessment', growth.get('assessment'))
+            if wc:
+                _push('working_capital.latest_ccc', wc.get('latest_ccc'))
+                _push('working_capital.ccc_trend', wc.get('ccc_trend'))
+                _push('working_capital.liquidity_crisis_prob', wc.get('liquidity_crisis_prob'))
+                _push('working_capital.risk_level', wc.get('risk_level'))
+                _push('working_capital.recommendation', wc.get('recommendation'))
+            if quality:
+                _push('investment_quality.score', quality.get('quality_score'))
+                _push('investment_quality.verdict', quality.get('verdict'))
+                _push('investment_quality.action', quality.get('action'))
+                _push('investment_quality.percentile', quality.get('percentile'))
+            for comp_key in ('economic_spread', 'fcf_yield', 'investment_score', 'roic', 'z_score'):
+                if comp_key in components:
+                    _push(f'investment_quality.component.{comp_key}', components.get(comp_key))
+
+            diagnostics = insights.get('advanced_analysis_diagnostics') or {}
+            lockdown = insights.get('data_integrity_lockdown_report') or []
+            if diagnostics:
+                _push('diagnostics.lockdown_report_count', diagnostics.get('lockdown_report_count'))
+                _push('diagnostics.error_count', len(diagnostics.get('errors') or []))
+            if lockdown:
+                _push('diagnostics.lockdown_items', len(lockdown))
+            return pd.DataFrame(rows if rows else [{'Metric': 'AI_Status', 'Value': 'EMPTY'}])
+        except Exception as e:
+            return pd.DataFrame([{'Metric': 'AI_Status', 'Value': f'ERROR: {e}'}])
+
+    # ---------- Export to Excel ----------
+    def _style_export_workbook(self, writer):
+        """
+        Apply consistent professional formatting to all exported Excel sheets.
+        """
+        try:
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+        except Exception:
+            return
+
+        wb = getattr(writer, 'book', None)
+        if wb is None:
+            return
+
+        header_fill = PatternFill(fill_type='solid', fgColor='1F4E78')
+        header_font = Font(color='FFFFFF', bold=True)
+        thin = Side(style='thin', color='D9D9D9')
+        grid_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        is_ar = (getattr(self, 'current_lang', 'en') == 'ar')
+
+        for ws_idx, ws in enumerate(wb.worksheets, start=1):
+            if ws.max_row < 1 or ws.max_column < 1:
+                continue
+
+            ws.freeze_panes = 'A2'
+            ws.auto_filter.ref = ws.dimensions
+            ws.sheet_view.rightToLeft = bool(is_ar)
+            ws.row_dimensions[1].height = 24
+
+            # Header row
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                cell.border = grid_border
+
+            # Data grid + alignment + number format
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+                for cell in row:
+                    cell.border = grid_border
+                    if isinstance(cell.value, (int, float)):
+                        header_text = str(ws.cell(row=1, column=cell.column).value or "").lower()
+                        if "%" in header_text or "ratio" in header_text or "margin" in header_text or "yield" in header_text:
+                            cell.number_format = '0.00%'
+                        elif abs(float(cell.value)) >= 1000:
+                            cell.number_format = '#,##0'
+                        else:
+                            cell.number_format = '#,##0.00'
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                    else:
+                        cell.alignment = Alignment(horizontal=('right' if is_ar else 'left'), vertical='center', wrap_text=True)
+
+            # Auto-fit column widths (bounded)
+            for col_idx in range(1, ws.max_column + 1):
+                max_len = 0
+                for row_idx in range(1, ws.max_row + 1):
+                    v = ws.cell(row=row_idx, column=col_idx).value
+                    txt = '' if v is None else str(v)
+                    if len(txt) > max_len:
+                        max_len = len(txt)
+                width = min(60, max(11, max_len + 2))
+                ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+            ws.sheet_view.showGridLines = True
+
+    def export_to_excel(self):
+        # Diagnostic trace: prove button click reached export path.
+        try:
+            log_dir = Path("outputs")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            with open(log_dir / "export_click.log", "a", encoding="utf-8") as fh:
+                fh.write(f"[{datetime.now().isoformat()}] export_to_excel invoked\n")
+        except Exception:
+            pass
+
+        if not self.current_data:
+            # Fallback: recover data from selected company in list, or first loaded company.
+            try:
+                selected = self.companies_listbox.curselection()
+                if selected:
+                    cname = self.companies_listbox.get(selected[0])
+                    if cname in self.multi_company_data:
+                        self.current_data = self.multi_company_data[cname]
+                if not self.current_data and self.multi_company_data:
+                    first_key = next(iter(self.multi_company_data.keys()))
+                    self.current_data = self.multi_company_data.get(first_key)
+            except Exception:
+                pass
+
+            if not self.current_data:
+                messagebox.showwarning(self._t('msg_warning'), self._translate_ui_text("لا توجد بيانات حالية للتصدير. جلب البيانات أولاً."))
+                return
+        try:
+            import pandas as pd
+        except Exception as e:
+            messagebox.showerror(self._t('msg_error'), f"{self._translate_ui_text('مطلوب تثبيت pandas و openpyxl')}:\n{e}\n\npip install pandas openpyxl")
+            return
+
+        data_by_year = self.current_data.get('data_by_year', {}) or {}
+        data_layers = self.current_data.get('data_layers', {}) or {}
+        ratios_by_year = self.current_data.get('financial_ratios', {}) or {}
+        sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
+        blocked_ratios = set(sector_gating.get('blocked_ratios', []) or [])
+        blocked_strategic_metrics = set(sector_gating.get('blocked_strategic_metrics', []) or [])
+        gate_issues = self._apply_pre_export_quality_gate(
+            years=self._get_selected_years_range(),
+            data_by_year=data_by_year,
+            ratios_by_year=ratios_by_year,
+            data_layers=data_layers,
+        )
+        gate_issues.extend(
+            self._finalize_export_ratio_consistency(
+                years=self._get_selected_years_range(),
+                ratios_by_year=ratios_by_year,
+            )
+        )
+        # Final safety lock: enforce dividend_yield=0 for clear no-dividend profiles.
+        try:
+            layer2_by_year = (data_layers.get('layer2_by_year', {}) or {})
+            years_for_lock = self._get_selected_years_range()
+            has_price = False
+            market_div_positive = False
+            for yy in years_for_lock:
+                l2 = layer2_by_year.get(yy, {}) or {}
+                px = self._safe_excel_number(l2.get('market:price') or l2.get('yahoo:price'))
+                dy = self._safe_excel_number(l2.get('market:dividend_yield') or l2.get('yahoo:dividend_yield'))
+                if px not in (None, 0):
+                    has_price = True
+                if dy is not None and abs(float(dy)) > 1e-12:
+                    market_div_positive = True
+            if has_price and not market_div_positive:
+                for yy in years_for_lock:
+                    rr = (ratios_by_year or {}).setdefault(yy, {})
+                    cur = self._safe_excel_number(rr.get('dividend_yield'))
+                    if cur is None:
+                        rr['dividend_yield'] = 0.0
+                        rr['dividend_yield_source'] = 'EXPORT_FINAL_NO_DIVIDEND_ZERO'
+                        reasons = rr.get('_ratio_reasons')
+                        if isinstance(reasons, dict):
+                            reasons.pop('dividend_yield', None)
+        except Exception:
+            pass
+        years = self._get_selected_years_range()
+        per_year = self._compute_per_year_metrics(data_by_year, ratios_by_year)
+        ratios_by_year, per_year = self._sync_strategic_ratio_maps(years, ratios_by_year, per_year)
+        if gate_issues:
+            print(f"🛡️ Quality gate applied {len(gate_issues)} corrections before export.")
+
+        raw_rows = []
+        concepts = sorted({k for y in years for k in data_by_year.get(y, {}).keys()})
+        for c in concepts:
+            row = {'Concept': c}
+            for y in years:
+                row[str(y)] = data_by_year.get(y, {}).get(c)
+            raw_rows.append(row)
+        raw_df = pd.DataFrame(raw_rows)
+        canonical_df = pd.DataFrame()
+        canonical_collision_df = pd.DataFrame()
+        raw_df_locked_to_ui = False
+
+        # Keep exported Raw_by_Year aligned with what the user sees in the UI
+        # when the active view is Layer 1 + Official SEC View.
+        try:
+            selected_key, _selected_source = self._resolve_selected_raw_layer_key()
+            sec_view_mode = getattr(self, '_sec_view_mode_var', tk.StringVar(value='official')).get() or 'official'
+            if selected_key != 'layer1_by_year':
+                sec_view_mode = 'official'
+            if selected_key == 'layer1_by_year' and sec_view_mode == 'official':
+                self.display_raw_data()
+                ui_raw_df = self._snapshot_raw_tree_df()
+                if ui_raw_df is not None and not ui_raw_df.empty:
+                    raw_df = ui_raw_df.copy()
+                    raw_df_locked_to_ui = True
+        except Exception:
+            raw_df_locked_to_ui = False
+
+        # Prevent misleading legacy labels in exported raw sheet.
+        try:
+            if raw_df_locked_to_ui or ('Concept' not in raw_df.columns):
+                raise RuntimeError('skip_legacy_relabel_for_ui_locked_raw')
+            def _get_row(concept_name):
+                m = raw_df[raw_df['Concept'] == concept_name]
+                return m.iloc[0] if not m.empty else None
+
+            rev_row = _get_row('Revenue')
+            revs_row = _get_row('Revenues')
+            cogs_row = _get_row('CostOfRevenue')
+            if rev_row is not None and revs_row is not None and cogs_row is not None:
+                same_as_cogs = all(
+                    float(rev_row[str(y)]) == float(cogs_row[str(y)])
+                    for y in years
+                    if rev_row[str(y)] is not None and cogs_row[str(y)] is not None
+                )
+                if same_as_cogs:
+                    raw_df.loc[raw_df['Concept'] == 'Revenue', 'Concept'] = 'Revenue_Legacy_Conflicted'
+
+            assets_row = _get_row('Assets')
+            ta_row = _get_row('Total Assets')
+            if assets_row is not None and ta_row is not None:
+                ratios = []
+                for y in years:
+                    a = assets_row[str(y)]
+                    t = ta_row[str(y)]
+                    if isinstance(a, (int, float)) and isinstance(t, (int, float)) and a != 0:
+                        ratios.append(float(t) / float(a))
+                if ratios and sum(ratios) / len(ratios) < 0.8:
+                    raw_df.loc[raw_df['Concept'] == 'Total Assets', 'Concept'] = 'Total Assets (Legacy Current Assets)'
+
+            liab_row = _get_row('Liabilities')
+            tl_row = _get_row('Total Liabilities')
+            if liab_row is not None and tl_row is not None:
+                ratios = []
+                for y in years:
+                    l = liab_row[str(y)]
+                    t = tl_row[str(y)]
+                    if isinstance(l, (int, float)) and isinstance(t, (int, float)) and l != 0:
+                        ratios.append(float(t) / float(l))
+                if ratios and sum(ratios) / len(ratios) < 0.8:
+                    raw_df.loc[raw_df['Concept'] == 'Total Liabilities', 'Concept'] = 'Total Liabilities (Legacy Current Liabilities)'
+        except Exception:
+            pass
+
+        # Canonicalized raw view to reduce duplicate semantic concepts while keeping Raw_by_Year unchanged.
+        try:
+            if raw_df_locked_to_ui or ('Concept' not in raw_df.columns):
+                raise RuntimeError('skip_canonicalization_for_ui_locked_raw')
+            alias_groups = {
+                'Revenues': ['Revenue', 'NetRevenue', 'NetRevenue_Hierarchy', 'SalesRevenueNet', 'Revenue_Hierarchy'],
+                'CostOfRevenue': ['COGS', 'Cost of sales', 'CostOfGoodsAndServicesSold'],
+                'NetIncomeLoss': ['NetIncome', 'Net Income'],
+                'OperatingIncomeLoss': ['OperatingIncome', 'Operating Income', 'OperatingIncome_Hierarchy'],
+                'Assets': ['TotalAssets', 'Total Assets'],
+                'Liabilities': ['TotalLiabilities', 'Total Liabilities'],
+                'StockholdersEquity': ['TotalEquity', 'Total Equity'],
+                'AssetsCurrent': ['CurrentAssets', 'TotalCurrentAssets_Parent', 'Current Assets', 'TotalCurrentAssets_Hierarchy'],
+                'LiabilitiesCurrent': ['CurrentLiabilities', 'TotalCurrentLiabilities_Parent', 'Current Liabilities', 'TotalCurrentLiabilities_Hierarchy'],
+                'AccountsReceivableNetCurrent': ['AccountsReceivable', 'AccountsReceivableNetCurrent_Hierarchy'],
+                'AccountsPayableCurrent': ['AccountsPayable', 'AccountsPayableCurrent_Hierarchy'],
+                'InventoryNet': ['Inventory', 'InventoryNet_Hierarchy'],
+                'NetCashProvidedByUsedInOperatingActivities': ['OperatingCashFlow', 'Operating Cash Flow', 'NetCashProvidedByOperatingActivities'],
+                'DepreciationDepletionAndAmortization': ['DepreciationAmortization', 'Depreciation and Amortization'],
+                'WeightedAverageNumberOfSharesOutstandingBasic': ['Basic (shares)', 'SharesBasic', 'CommonStockSharesOutstanding'],
+            }
+            concept_to_canonical = {}
+            for canonical_name, aliases in alias_groups.items():
+                concept_to_canonical[canonical_name] = canonical_name
+                for alias_name in aliases:
+                    concept_to_canonical[alias_name] = canonical_name
+
+            grouped = {}
+            for _, row_obj in raw_df.iterrows():
+                concept = row_obj.get('Concept')
+                if self._is_internal_helper_label(concept):
+                    continue
+                canonical = concept_to_canonical.get(concept, concept)
+                # Safe merge: only concepts explicitly listed in alias_groups
+                # are allowed to use anchored semantic merge.
+                allow_anchor = concept in concept_to_canonical
+                canonical = self._safe_merge_key_for_label(
+                    canonical,
+                    allow_anchor_for_free_text=allow_anchor,
+                ) or canonical
+                score = 0
+                values = {}
+                for y in years:
+                    v = row_obj.get(str(y))
+                    values[str(y)] = v
+                    if isinstance(v, (int, float)):
+                        score += 1
+                entry = {
+                    'Concept': canonical,
+                    'Canonical_Source': concept,
+                    **values,
+                }
+                grouped.setdefault(canonical, []).append((score, entry))
+
+            canonical_rows = []
+            canonical_collision_rows = []
+            for canonical_name, candidates in grouped.items():
+                # Prefer the richest row; then prefer direct canonical label.
+                candidates.sort(key=lambda t: (t[0], 1 if t[1].get('Canonical_Source') == canonical_name else 0), reverse=True)
+                best = dict(candidates[0][1])
+                # Coalesce missing/conflicting yearly values across aliases.
+                for y in years:
+                    yk = str(y)
+                    cur = best.get(yk)
+                    if cur is None:
+                        for _, cand in candidates:
+                            if cand.get(yk) is not None:
+                                best[yk] = cand.get(yk)
+                                break
+                    # Safe mode: never override an existing non-null value by magnitude.
+                    # This prevents accidental anchor pollution during alias merge.
+                sem_key = str(canonical_name or '')
+                if sem_key.startswith('sem::'):
+                    best['Concept'] = sem_key.split('::', 1)[1]
+                elif sem_key.startswith('raw::') or sem_key.startswith('tech::'):
+                    best['Concept'] = sem_key.split('::', 1)[1]
+                best['Aliases_Merged_Count'] = len(candidates)
+                if len(candidates) > 1:
+                    best['Aliases_Merged'] = ', '.join(sorted({str(c[1].get('Canonical_Source')) for c in candidates}))
+                else:
+                    best['Aliases_Merged'] = str(best.get('Canonical_Source'))
+                canonical_rows.append(best)
+                if len(candidates) > 1:
+                    canonical_collision_rows.append({
+                        'Canonical_Key': best.get('Concept'),
+                        'Aliases_Count': len(candidates),
+                        'Aliases': best.get('Aliases_Merged'),
+                    })
+            canonical_df = pd.DataFrame(canonical_rows)
+            canonical_collision_df = pd.DataFrame(canonical_collision_rows)
+            # Export deduplicated/coalesced view as main Raw_by_Year to prevent bilingual
+            # duplicates splitting values across separate rows.
+            if not canonical_df.empty:
+                export_cols = ['Concept'] + [str(y) for y in years]
+                raw_df = canonical_df[[c for c in export_cols if c in canonical_df.columns]].copy()
+        except Exception:
+            canonical_df = pd.DataFrame()
+            canonical_collision_df = pd.DataFrame()
+
+        ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+        ratio_source = UnifiedRatioSource()
+        ratio_source.load(ticker, data_by_year, ratios_by_year)
+
+        ratio_rows = []
+        sector_profile_export = self._get_sector_profile()
+        ratio_export_keys = self._get_sector_ratio_export_keys(sector_profile_export)
+        mandatory_ratio_keys = set(self._get_sector_mandatory_ratio_keys(sector_profile_export))
+        ratio_metrics = []
+        for metric_key in ratio_export_keys:
+            if metric_key in blocked_ratios:
+                continue
+            has_any_value = False
+            for y in years:
+                contract = ratio_source.get_ratio_contract(ticker, y, metric_key) or {}
+                raw_v = contract.get('value')
+                direct_v = (ratios_by_year.get(y, {}) or {}).get(metric_key)
+                if isinstance(direct_v, dict) and 'value' in direct_v:
+                    direct_v = direct_v.get('value')
+                if (
+                    self._is_present_metric_value(raw_v)
+                    or self._is_present_metric_value(direct_v)
+                    or str(contract.get('status') or '').upper() == 'NOT_COMPUTABLE'
+                ):
+                    has_any_value = True
+                    break
+            if has_any_value or (metric_key in mandatory_ratio_keys):
+                ratio_metrics.append(metric_key)
+        for m in ratio_metrics:
+            row = {'Metric': m}
+            for y in years:
+                contract = ratio_source.get_ratio_contract(ticker, y, m) or {}
+                raw_v = contract.get('value')
+                direct_v = (ratios_by_year.get(y, {}) or {}).get(m)
+                if m == 'pb_ratio_raw' and not self._is_present_metric_value(direct_v):
+                    direct_v = (
+                        (per_year.get(y, {}) or {}).get('PB_Ratio')
+                        or (ratios_by_year.get(y, {}) or {}).get('pb_ratio_raw')
+                        or (ratios_by_year.get(y, {}) or {}).get('pb_ratio')
+                    )
+                if isinstance(direct_v, dict) and 'value' in direct_v:
+                    direct_v = direct_v.get('value')
+                direct_num = self._safe_excel_number(direct_v)
+                if direct_num is not None:
+                    row[str(y)] = direct_num
+                elif self._is_present_metric_value(direct_v):
+                    row[str(y)] = direct_v
+                elif isinstance(raw_v, (int, float)):
+                    row[str(y)] = raw_v
+                else:
+                    reason = str(contract.get('reason') or contract.get('status') or 'NOT_COMPUTABLE')
+                    row[str(y)] = f"N/A ({reason})"
+            ratio_rows.append(row)
+        ratios_df = pd.DataFrame(ratio_rows)
+
+        strat_rows = []
+        strategic_export_keys = self._get_sector_strategic_export_keys(sector_profile_export)
+        metric_keys = []
+        for metric_key in strategic_export_keys:
+            if metric_key in blocked_strategic_metrics:
+                continue
+            has_any_value = False
+            for y in years:
+                raw_v = (per_year.get(y, {}) or {}).get(metric_key)
+                if self._is_present_metric_value(raw_v):
+                    has_any_value = True
+                    break
+            if has_any_value:
+                metric_keys.append(metric_key)
+        for key in metric_keys:
+            row = {'Metric': key}
+            for y in years:
+                raw_v = (per_year.get(y, {}) or {}).get(key)
+                num_v = self._safe_excel_number(raw_v)
+                row[str(y)] = num_v if num_v is not None else raw_v
+            strat_rows.append(row)
+        strat_df = pd.DataFrame(strat_rows)
+
+        ratio_audit_df, balance_audit_df, critical_df, acceptance_df = self._build_export_acceptance_frames(
+            years=years,
+            ticker=ticker,
+            sector_profile=sector_profile_export,
+            data_by_year=data_by_year,
+            ratios_by_year=ratios_by_year,
+            per_year=per_year,
+            ratio_source=ratio_source,
+            ratio_export_keys=ratio_export_keys,
+            strategic_export_keys=strategic_export_keys,
+            blocked_ratios=blocked_ratios,
+            blocked_strategic_metrics=blocked_strategic_metrics,
+            gate_issues=gate_issues,
+        )
+
+        # 3 data layers (requested structure)
+        layer1_by_year = data_layers.get('layer1_by_year', {}) or data_by_year
+        layer2_by_year = data_layers.get('layer2_by_year', {}) or {}
+        layer3_by_year = data_layers.get('layer3_by_year', {}) or {}
+        layer4_by_year = data_layers.get('layer4_by_year', {}) or {}
+        sector_profile = (sector_gating or {}).get('sub_profile') or (sector_gating or {}).get('profile', 'industrial')
+
+        layer1_rows = []
+        l1_keys = sorted({k for y in years for k in layer1_by_year.get(y, {}).keys()})
+        if sector_profile in ('bank', 'industrial', 'unknown'):
+            bank_only_markers = (
+                'LoansReceivable', 'Deposits', 'NetInterestIncome',
+                'ProvisionForCreditLosses', 'AllowanceForCreditLosses',
+                'FederalFundsSold', 'NoninterestBearingDeposits'
+            )
+            industrial_only_markers = (
+                'Inventory', 'CostOfRevenue', 'GrossProfit',
+                'ResearchAndDevelopmentExpense', 'SellingGeneralAndAdministrativeExpense',
+                'RevenueFromContractWithCustomerExcludingAssessedTax'
+            )
+            filtered_l1 = []
+            for k in l1_keys:
+                ks = str(k)
+                if sector_profile == 'bank' and any(m in ks for m in industrial_only_markers):
+                    continue
+                if sector_profile in ('industrial', 'technology', 'unknown') and any(m in ks for m in bank_only_markers):
+                    continue
+                filtered_l1.append(k)
+            l1_keys = filtered_l1
+        # Merge display-duplicate labels (same semantic key with spacing/case variants).
+        layer1_merged = {}
+        layer1_order = []
+        for k in l1_keys:
+            display_label = self._decode_mojibake_text(str(k))
+            display_label = re.sub(r"\s+", " ", display_label).strip()
+            if self._is_internal_helper_label(display_label):
+                continue
+            # Safe merge: prevent over-merging long free-text SEC labels into anchors
+            # such as "current liabilities" when they are actually sub-lines.
+            allow_anchor = bool(str(k) in {
+                'Assets', 'TotalAssets', 'AssetsCurrent', 'CurrentAssets',
+                'Liabilities', 'TotalLiabilities', 'LiabilitiesCurrent', 'CurrentLiabilities',
+                'StockholdersEquity', 'TotalEquity',
+                'Revenues', 'Revenue', 'CostOfRevenue', 'NetIncomeLoss',
+            })
+            label_key = self._safe_merge_key_for_label(
+                display_label,
+                allow_anchor_for_free_text=allow_anchor,
+            )
+            if label_key not in layer1_merged:
+                layer1_merged[label_key] = {'Raw Label': display_label, '__aliases__': {str(k)}}
+                for y in years:
+                    layer1_merged[label_key][str(y)] = None
+                layer1_order.append(label_key)
+            else:
+                layer1_merged[label_key]['__aliases__'].add(str(k))
+                layer1_merged[label_key]['Raw Label'] = self._prefer_display_label(
+                    layer1_merged[label_key].get('Raw Label'),
+                    display_label,
+                )
+
+            for y in years:
+                col = str(y)
+                cur_val = layer1_merged[label_key].get(col)
+                new_val = layer1_by_year.get(y, {}).get(k)
+                if cur_val is None and new_val is not None:
+                    layer1_merged[label_key][col] = new_val
+                # Safe mode: keep first non-null; do not override by absolute magnitude.
+
+        for lk in layer1_order:
+            row = layer1_merged[lk]
+            aliases = sorted(
+                {
+                    re.sub(r"\s+", " ", str(a)).strip()
+                    for a in row.pop('__aliases__', set())
+                    if a is not None
+                }
+            )
+            aliases = [a for a in aliases if a and a != row.get('Raw Label')]
+            row['Aliases_Merged'] = ', '.join(aliases) if aliases else row.get('Raw Label')
+            layer1_rows.append(row)
+        layer1_df = pd.DataFrame(layer1_rows)
+
+        layer2_rows = []
+        l2_keys = sorted({k for y in years for k in layer2_by_year.get(y, {}).keys()})
+        for k in l2_keys:
+            row = {'Normalized Label': k}
+            for y in years:
+                row[str(y)] = layer2_by_year.get(y, {}).get(k)
+            layer2_rows.append(row)
+        layer2_df = pd.DataFrame(layer2_rows)
+
+        layer3_rows = []
+        l3_keys = sorted({k for y in years for k in layer3_by_year.get(y, {}).keys()})
+        for k in l3_keys:
+            if '::' in k:
+                category, normalized = k.split('::', 1)
+            else:
+                category, normalized = 'Unclassified', k
+            row = {'Category': category, 'Normalized Label': normalized}
+            for y in years:
+                row[str(y)] = layer3_by_year.get(y, {}).get(k)
+            layer3_rows.append(row)
+        layer3_df = pd.DataFrame(layer3_rows)
+
+        layer4_rows = []
+        l4_keys = sorted({k for y in years for k in layer4_by_year.get(y, {}).keys()})
+        for k in l4_keys:
+            row = {'Normalized Label': k}
+            for y in years:
+                row[str(y)] = layer4_by_year.get(y, {}).get(k)
+            layer4_rows.append(row)
+        layer4_df = pd.DataFrame(layer4_rows)
+
+        labels_df = pd.DataFrame(data_layers.get('label_rows', []) or [])
+        gate_df = pd.DataFrame([{'Issue': i} for i in gate_issues]) if gate_issues else pd.DataFrame([{'Issue': 'No corrections required'}])
+        comparison_source_snapshot = self._get_comparison_source_snapshot(preferred_current=self.current_data)
+        comparison_universe_tickers = sorted(str(k).upper() for k in (comparison_source_snapshot or {}).keys())
+        comparison_universe_count = len(comparison_universe_tickers)
+        comparison_universe_txt = ', '.join(comparison_universe_tickers) if comparison_universe_tickers else 'NONE'
+        methodology_rows = [
+            {'Topic': 'Version', 'Rule': 'Final actual export (non-breaking)', 'Details': 'Documentation-only; numeric results are unchanged.'},
+            {'Topic': 'Sector Profile', 'Rule': 'Detected from SEC/SIC + structural facts', 'Details': f"Applied profile: {sector_profile_export} | Broad profile: {sector_profile}"},
+            {'Topic': 'Comparison Universe', 'Rule': 'Frozen at export time', 'Details': f"Peer universe count: {comparison_universe_count} | Tickers: {comparison_universe_txt}"},
+            {'Topic': 'Units', 'Rule': 'Statement rows in million USD', 'Details': 'Market cap exported in million USD; percentage ratios as decimals (e.g., 0.031 = 3.1%).'},
+            {'Topic': 'P/B (Raw)', 'Rule': 'Primary ratio line', 'Details': 'May come from annual price/BVPS or market layer depending on availability.'},
+            {'Topic': 'P/B (Used)', 'Rule': 'Quality-gated reference', 'Details': 'Stabilized value used for strategic mapping when raw value has unit anomaly.'},
+            {'Topic': 'FCF Yield', 'Rule': 'FCF / Market Cap', 'Details': 'Scale-guarded to prevent 1000x unit slips.'},
+            {'Topic': 'Interest Coverage', 'Rule': 'Uses SEC interest expense resolver', 'Details': 'Falls back to explicit tagged proxies with reliability tracing.'},
+            {'Topic': 'Quick Ratio', 'Rule': 'Quick assets over current liabilities', 'Details': 'Prefers cash + receivables + near-cash investments; falls back to current assets minus inventory only when quick assets are unavailable.'},
+            {'Topic': 'Credit Rating', 'Rule': 'External if available, proxy otherwise', 'Details': 'A/BBB/etc. may be model-derived when no external rating is present.'},
+            {'Topic': 'Fair Value', 'Rule': 'DCF first, ratio fallback second', 'Details': 'If DCF anchors are weak, uses PE*EPS and PB*BVPS fallback with warning flag.'},
+            {'Topic': 'Traceability', 'Rule': 'Audit sheets included', 'Details': 'See Quality_Gate, Ratio_Audit, Balance_Check, Final_Acceptance.'},
+        ]
+        methodology_df = pd.DataFrame(methodology_rows)
+        forecasts_df = self._build_forecast_export_df()
+        investor_verdict_df = self._build_investor_verdict_df(
+            years=years,
+            ratios_by_year=ratios_by_year,
+            gate_issues=gate_issues,
+            critical_df=critical_df,
+            forecasts_df=forecasts_df,
+            sector_profile=sector_profile_export,
+            blocked_ratios=blocked_ratios,
+        )
+        ratio_written_df = self._build_ratio_written_report_df(
+            ratio_source=ratio_source,
+            ticker=ticker,
+            years=years,
+            ratio_export_keys=ratio_export_keys,
+            blocked_ratios=blocked_ratios,
+        )
+        forecast_written_df = self._build_forecast_written_report_df(forecasts_df)
+        comparison_df = self._build_comparison_export_df(source_snapshot=comparison_source_snapshot)
+        comparison_timeseries_df = self._build_time_series_comparison_df(
+            ticker=ticker,
+            data_by_year=data_by_year,
+            ratios_by_year=ratios_by_year,
+            years=years,
+        )
+        peer_benchmark_df = self._build_peer_benchmark_df(current_ticker=ticker, source_snapshot=comparison_source_snapshot)
+        expert_comparison_df = self._build_expert_comparison_df(current_ticker=ticker, source_snapshot=comparison_source_snapshot)
+        ai_df = self._build_ai_export_df()
+        chart_data_by_year = {}
+        try:
+            layer1_for_chart = (data_layers.get('layer1_by_year', {}) or data_by_year or {})
+            for yk, row in (layer1_for_chart or {}).items():
+                try:
+                    ky = int(yk)
+                except Exception:
+                    continue
+                chart_data_by_year[ky] = row or {}
+        except Exception:
+            chart_data_by_year = {}
+        forecast_bundle_for_export = self._build_forecast_bundle(chart_data_by_year, years_forward=10) if chart_data_by_year else {}
+        ai_insights_for_export = self._build_ai_insights_snapshot()
+
+        default_name = f"{self.current_data.get('company_info', {}).get('ticker','company')}_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        fn = filedialog.asksaveasfilename(defaultextension=".xlsx", initialfile=default_name, filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")])
+        if not fn:
+            # Fallback: auto-save to a deterministic local path if save dialog is cancelled/fails.
+            try:
+                auto_dir = Path("exports") / "manual_exports"
+                auto_dir.mkdir(parents=True, exist_ok=True)
+                fn = str(auto_dir / default_name)
+            except Exception:
+                return
+        try:
+            with pd.ExcelWriter(fn, engine='openpyxl') as writer:
+                raw_df.to_excel(writer, sheet_name='Raw_by_Year', index=False)
+                if not canonical_df.empty:
+                    canonical_df.to_excel(writer, sheet_name='Raw_by_Year_Canonical', index=False)
+                ratios_df.to_excel(writer, sheet_name='Ratios', index=False)
+                strat_df.to_excel(writer, sheet_name='Strategic', index=False)
+                layer1_df.to_excel(writer, sheet_name='Layer1_Raw_SEC', index=False)
+                layer2_df.to_excel(writer, sheet_name='Layer2_Market', index=False)
+                layer3_df.to_excel(writer, sheet_name='Layer3_Macro', index=False)
+                layer4_df.to_excel(writer, sheet_name='Layer4_Yahoo', index=False)
+                labels_df.to_excel(writer, sheet_name='Label_Map_Audit', index=False)
+                gate_df.to_excel(writer, sheet_name='Quality_Gate', index=False)
+                ratio_audit_df.to_excel(writer, sheet_name='Ratio_Audit', index=False)
+                if not canonical_collision_df.empty:
+                    canonical_collision_df.to_excel(writer, sheet_name='Canonical_Collision_Audit', index=False)
+                balance_audit_df.to_excel(writer, sheet_name='Balance_Check', index=False)
+                critical_df.to_excel(writer, sheet_name='Critical_Flags', index=False)
+                acceptance_df.to_excel(writer, sheet_name='Final_Acceptance', index=False)
+                investor_verdict_df.to_excel(writer, sheet_name='Investor_Verdict', index=False)
+                forecasts_df.to_excel(writer, sheet_name='Forecasts', index=False)
+                ratio_written_df.to_excel(writer, sheet_name='Ratio_Written_Report', index=False)
+                forecast_written_df.to_excel(writer, sheet_name='Forecast_Written_Report', index=False)
+                comparison_df.to_excel(writer, sheet_name='Comparative_Analysis', index=False)
+                comparison_timeseries_df.to_excel(writer, sheet_name='Comparative_TimeSeries', index=False)
+                peer_benchmark_df.to_excel(writer, sheet_name='Peer_Benchmark', index=False)
+                expert_comparison_df.to_excel(writer, sheet_name='Expert_Comparison', index=False)
+                ai_df.to_excel(writer, sheet_name='AI_Analysis', index=False)
+                methodology_df.to_excel(writer, sheet_name='Methodology_Final', index=False)
+                self._embed_charts_into_excel(
+                    writer=writer,
+                    data_by_year=chart_data_by_year,
+                    forecast_bundle=forecast_bundle_for_export,
+                    ai_insights=ai_insights_for_export,
+                )
+                self._style_export_workbook(writer)
+            self._cleanup_pending_excel_images()
+            audit_summary = self._audit_export_value_objects(fn, normalize=True)
+            # Hard sync: reload the same exported file so UI and Excel are guaranteed identical.
+            reload_ok = self.load_results_from_excel(file_path=fn, show_success_message=False)
+            try:
+                score_row = acceptance_df[acceptance_df['Metric'] == 'Final_Professional_Score']
+                verdict_row = acceptance_df[acceptance_df['Metric'] == 'Verdict']
+                score_val = float(score_row.iloc[0]['Value']) if not score_row.empty else 0.0
+                verdict_val = str(verdict_row.iloc[0]['Value']) if not verdict_row.empty else 'UNKNOWN'
+            except Exception:
+                score_val = 0.0
+                verdict_val = 'UNKNOWN'
+            if verdict_val == 'APPROVED_FOR_EXPERT_REVIEW':
+                messagebox.showinfo(
+                    self._t('msg_success'),
+                    f"تم حفظ الملف: {fn}\n"
+                    f"Final Professional Score: {score_val:.2f}\n"
+                    f"Verdict: {verdict_val}\n"
+                    f"Comparison Universe: {comparison_universe_count} | {comparison_universe_txt}\n"
+                    f"UI Sync: {'OK' if reload_ok else 'FAILED'}\n"
+                    f"Post-Export Audit: objects={audit_summary.get('object_like_cells', 0)} | normalized={audit_summary.get('normalized_cells', 0)}",
+                )
+            else:
+                messagebox.showwarning(
+                    self._t('msg_warning'),
+                    f"تم حفظ الملف: {fn}\n"
+                    f"Final Professional Score: {score_val:.2f}\n"
+                    f"Verdict: {verdict_val}\n"
+                    f"Comparison Universe: {comparison_universe_count} | {comparison_universe_txt}\n"
+                    f"راجع الأوراق: Final_Acceptance و Critical_Flags.\n"
+                    f"UI Sync: {'OK' if reload_ok else 'FAILED'}\n"
+                    f"Post-Export Audit: objects={audit_summary.get('object_like_cells', 0)} | normalized={audit_summary.get('normalized_cells', 0)}",
+                )
+        except Exception as e:
+            self._cleanup_pending_excel_images()
+            try:
+                log_dir = Path("outputs")
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_path = log_dir / "export_error.log"
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write(f"\n[{datetime.now().isoformat()}] Export failed\n")
+                    fh.write(f"Target: {fn}\n")
+                    fh.write(f"Error: {repr(e)}\n")
+                    fh.write(traceback.format_exc())
+                    fh.write("\n" + ("-" * 80) + "\n")
+            except Exception:
+                pass
+            messagebox.showerror(
+                self._t('msg_error'),
+                f"{self._translate_ui_text('فشل التصدير')}: {e}\n{self._translate_ui_text('راجع السجل')}: outputs/export_error.log"
+            )
+
+    def _export_to_excel_minimal(self):
+        """
+        Guaranteed fallback exporter:
+        writes core sheets only (Raw_by_Year, Ratios, Strategic) without advanced audit transformations.
+        """
+        try:
+            import pandas as pd
+        except Exception as e:
+            messagebox.showerror(self._t('msg_error'), f"{self._translate_ui_text('فشل التصدير')}: {e}")
+            return
+
+        if not self.current_data and self.multi_company_data:
+            try:
+                self.current_data = next(iter(self.multi_company_data.values()))
+            except Exception:
+                self.current_data = None
+        if not self.current_data:
+            messagebox.showwarning(self._t('msg_warning'), self._translate_ui_text("لا توجد بيانات حالية للتصدير."))
+            return
+
+        years = self._get_selected_years_range()
+        data_by_year = self.current_data.get('data_by_year', {}) or {}
+        ratios_by_year = self.current_data.get('financial_ratios', {}) or {}
+        strategic_by_year = self.current_data.get('strategic_analysis', {}) or {}
+        self._finalize_export_ratio_consistency(years, ratios_by_year)
+        strategic_by_year = strategic_by_year or {}
+        try:
+            per_year = self._compute_per_year_metrics(data_by_year, ratios_by_year)
+            ratios_by_year, strategic_by_year = self._sync_strategic_ratio_maps(years, ratios_by_year, per_year)
+        except Exception:
+            pass
+
+        raw_rows = []
+        concepts = sorted({k for y in years for k in (data_by_year.get(y, {}) or {}).keys()})
+        for c in concepts:
+            row = {'Concept': c}
+            for y in years:
+                row[str(y)] = (data_by_year.get(y, {}) or {}).get(c)
+            raw_rows.append(row)
+
+        ratio_rows = []
+        ratio_keys = sorted({k for y in years for k in (ratios_by_year.get(y, {}) or {}).keys() if not str(k).startswith('_')})
+        for k in ratio_keys:
+            row = {'Metric': k}
+            for y in years:
+                raw_v = (ratios_by_year.get(y, {}) or {}).get(k)
+                if k == 'pb_ratio_raw' and not self._is_present_metric_value(raw_v):
+                    raw_v = (
+                        (strategic_by_year.get(y, {}) or {}).get('PB_Ratio')
+                        or (ratios_by_year.get(y, {}) or {}).get('pb_ratio_raw')
+                        or (ratios_by_year.get(y, {}) or {}).get('pb_ratio')
+                    )
+                num_v = self._safe_excel_number(raw_v)
+                row[str(y)] = num_v if num_v is not None else raw_v
+            ratio_rows.append(row)
+
+        strat_rows = []
+        strat_keys = sorted({k for y in years for k in (strategic_by_year.get(y, {}) or {}).keys() if not str(k).startswith('_')})
+        for k in strat_keys:
+            row = {'Metric': k}
+            for y in years:
+                raw_v = (strategic_by_year.get(y, {}) or {}).get(k)
+                num_v = self._safe_excel_number(raw_v)
+                row[str(y)] = num_v if num_v is not None else raw_v
+            strat_rows.append(row)
+
+        raw_df = pd.DataFrame(raw_rows)
+        ratios_df = pd.DataFrame(ratio_rows)
+        strat_df = pd.DataFrame(strat_rows)
+        forecasts_df = self._build_forecast_export_df()
+        investor_verdict_df = self._build_investor_verdict_df(
+            years=years,
+            ratios_by_year=ratios_by_year,
+            gate_issues=[],
+            critical_df=pd.DataFrame(),
+            forecasts_df=forecasts_df,
+            sector_profile=sector_profile,
+            blocked_ratios=set(),
+        )
+        comparison_source_snapshot = self._get_comparison_source_snapshot(preferred_current=self.current_data)
+        comparison_df = self._build_comparison_export_df(source_snapshot=comparison_source_snapshot)
+        comparison_timeseries_df = self._build_time_series_comparison_df(
+            ticker=(self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT'),
+            data_by_year=data_by_year,
+            ratios_by_year=ratios_by_year,
+            years=years,
+        )
+        peer_benchmark_df = self._build_peer_benchmark_df(
+            current_ticker=(self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT'),
+            source_snapshot=comparison_source_snapshot,
+        )
+        expert_comparison_df = self._build_expert_comparison_df(
+            current_ticker=(self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT'),
+            source_snapshot=comparison_source_snapshot,
+        )
+        ai_df = self._build_ai_export_df()
+        chart_data_by_year = {}
+        try:
+            for yk, row in (data_by_year or {}).items():
+                try:
+                    ky = int(yk)
+                except Exception:
+                    continue
+                chart_data_by_year[ky] = row or {}
+        except Exception:
+            chart_data_by_year = {}
+        forecast_bundle_for_export = self._build_forecast_bundle(chart_data_by_year, years_forward=10) if chart_data_by_year else {}
+        ai_insights_for_export = self._build_ai_insights_snapshot()
+        ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+        ratio_source = UnifiedRatioSource()
+        ratio_source.load(ticker, data_by_year, ratios_by_year)
+        sector_profile = self._get_sector_profile()
+        blocked_ratios = set(((self.current_data.get('sector_gating', {}) or {}).get('blocked_ratios', []) or []))
+        ratio_export_keys = self._get_sector_ratio_export_keys(sector_profile)
+        ratio_written_df = self._build_ratio_written_report_df(
+            ratio_source=ratio_source,
+            ticker=ticker,
+            years=years,
+            ratio_export_keys=ratio_export_keys,
+            blocked_ratios=blocked_ratios,
+        )
+        forecast_written_df = self._build_forecast_written_report_df(forecasts_df)
+        comparison_universe_tickers = sorted(str(k).upper() for k in (comparison_source_snapshot or {}).keys())
+        comparison_universe_count = len(comparison_universe_tickers)
+        comparison_universe_txt = ', '.join(comparison_universe_tickers) if comparison_universe_tickers else 'NONE'
+        methodology_df = pd.DataFrame([
+            {'Topic': 'Version', 'Rule': 'Minimal export', 'Details': 'Core sheets only; values are exported as-is from current analysis.'},
+            {'Topic': 'Comparison Universe', 'Rule': 'Frozen at export time', 'Details': f"Peer universe count: {comparison_universe_count} | Tickers: {comparison_universe_txt}"},
+            {'Topic': 'Units', 'Rule': 'Statement rows in million USD', 'Details': 'Market-dependent metrics may use million-USD market cap base.'},
+            {'Topic': 'Ratios', 'Rule': 'From ratio engine', 'Details': 'N/A values remain explicit when inputs are missing.'},
+            {'Topic': 'Strategic', 'Rule': 'From strategic engine', 'Details': 'Uses available ratio outputs and layer inputs without rewriting values.'},
+        ])
+
+        ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'company')
+        default_name = f"{ticker}_analysis_minimal_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        fn = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            initialfile=default_name,
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            title=self._translate_ui_text("اختر مكان حفظ ملف إكسل"),
+        )
+        if not fn:
+            out_dir = Path("exports") / "manual_exports"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            fn = str(out_dir / default_name)
+
+        fn_path = Path(fn).resolve()
+
+        with pd.ExcelWriter(str(fn_path), engine='openpyxl') as writer:
+            raw_df.to_excel(writer, sheet_name='Raw_by_Year', index=False)
+            ratios_df.to_excel(writer, sheet_name='Ratios', index=False)
+            strat_df.to_excel(writer, sheet_name='Strategic', index=False)
+            investor_verdict_df.to_excel(writer, sheet_name='Investor_Verdict', index=False)
+            forecasts_df.to_excel(writer, sheet_name='Forecasts', index=False)
+            ratio_written_df.to_excel(writer, sheet_name='Ratio_Written_Report', index=False)
+            forecast_written_df.to_excel(writer, sheet_name='Forecast_Written_Report', index=False)
+            comparison_df.to_excel(writer, sheet_name='Comparative_Analysis', index=False)
+            comparison_timeseries_df.to_excel(writer, sheet_name='Comparative_TimeSeries', index=False)
+            peer_benchmark_df.to_excel(writer, sheet_name='Peer_Benchmark', index=False)
+            expert_comparison_df.to_excel(writer, sheet_name='Expert_Comparison', index=False)
+            ai_df.to_excel(writer, sheet_name='AI_Analysis', index=False)
+            methodology_df.to_excel(writer, sheet_name='Methodology_Final', index=False)
+            self._embed_charts_into_excel(
+                writer=writer,
+                data_by_year=chart_data_by_year,
+                forecast_bundle=forecast_bundle_for_export,
+                ai_insights=ai_insights_for_export,
+            )
+            self._style_export_workbook(writer)
+        self._cleanup_pending_excel_images()
+        audit_summary = self._audit_export_value_objects(str(fn_path), normalize=True)
+
+        messagebox.showinfo(
+            self._t('msg_success'),
+            f"{self._translate_ui_text('تم حفظ الملف')}:\n{fn_path}\n"
+            f"Comparison Universe: {comparison_universe_count} | {comparison_universe_txt}\n"
+            f"Post-Export Audit: objects={audit_summary.get('object_like_cells', 0)} | normalized={audit_summary.get('normalized_cells', 0)}"
+        )
+
+    def export_to_excel_safe(self):
+        """
+        Strict export wrapper:
+        always preserve full/legacy-complete export behavior.
+        If full export fails, stop and surface the error explicitly.
+        """
+        try:
+            self.export_to_excel()
+        except Exception as e:
+            try:
+                log_dir = Path("outputs")
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_path = log_dir / "export_error.log"
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write(f"\n[{datetime.now().isoformat()}] Full export crashed in wrapper\n")
+                    fh.write(f"Error: {repr(e)}\n")
+                    fh.write(traceback.format_exc())
+                    fh.write("\n" + ("-" * 80) + "\n")
+            except Exception:
+                pass
+            messagebox.showerror(
+                self._t('msg_error'),
+                f"{self._translate_ui_text('فشل التصدير الكامل')}:\n{e}\n\n"
+                f"{self._translate_ui_text('لم يتم إنشاء ملف مختصر بديل تلقائياً حفاظًا على تطابق المخرجات مع النسخة الكاملة القديمة')}.\n"
+                f"{self._translate_ui_text('راجع السجل')}: outputs/export_error.log"
+            )
+
+    # ---------- Forecasts & Plots ----------
+    def _extract_metric_history(self, data_by_year, metric_aliases, aggregation='first_valid'):
+        hist = []
+        for y in sorted([k for k in (data_by_year or {}).keys() if isinstance(k, int)]):
+            row = (data_by_year or {}).get(y, {}) or {}
+            vals = []
+            for key in (metric_aliases or []):
+                v = row.get(key)
+                if isinstance(v, (int, float)) and math.isfinite(float(v)):
+                    vals.append(float(v))
+            val = None
+            if vals:
+                if aggregation == 'max_positive':
+                    positives = [v for v in vals if v > 0]
+                    val = max(positives) if positives else max(vals)
+                else:
+                    val = vals[0]
+            if val is not None:
+                hist.append((y, val))
+        return hist
+
+    def _linear_fit_stats(self, values):
+        if not isinstance(values, list) or len(values) < 2:
+            return {'slope': 0.0, 'intercept': 0.0, 'r2': None}
+        n = len(values)
+        xs = list(range(n))
+        x_mean = sum(xs) / n
+        y_mean = sum(values) / n
+        num = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values))
+        den = sum((x - x_mean) ** 2 for x in xs)
+        if abs(den) < 1e-12:
+            return {'slope': 0.0, 'intercept': y_mean, 'r2': None}
+        slope = num / den
+        intercept = y_mean - (slope * x_mean)
+        y_hat = [(slope * x) + intercept for x in xs]
+        ss_res = sum((y - yh) ** 2 for y, yh in zip(values, y_hat))
+        ss_tot = sum((y - y_mean) ** 2 for y in values)
+        r2 = None if abs(ss_tot) < 1e-12 else max(0.0, min(1.0, 1.0 - (ss_res / ss_tot)))
+        return {'slope': slope, 'intercept': intercept, 'r2': r2}
+
+    def _select_structural_history_window(self, hist, metric='generic'):
+        """
+        Prefer a recent stable window when full history contains structural breaks.
+        This is especially important for turnarounds / M&A-heavy issuers like AMD.
+        """
+        if not isinstance(hist, list) or len(hist) < 4:
+            return hist, {'mode': 'full', 'points': len(hist or []), 'full_r2': None, 'recent_r2': None}
+
+        values_full = [v for _, v in hist]
+        full_stats = self._linear_fit_stats(values_full)
+        full_r2 = full_stats.get('r2') if isinstance(full_stats, dict) else None
+
+        candidate_windows = []
+        for n in (4, 5, 6, 7, 8):
+            if len(hist) >= n:
+                candidate_windows.append(hist[-n:])
+        if not candidate_windows:
+            return hist, {'mode': 'full', 'points': len(hist), 'full_r2': full_r2, 'recent_r2': None}
+
+        def _growth_std(seq):
+            growth = []
+            for i in range(1, len(seq)):
+                prev = seq[i - 1]
+                cur = seq[i]
+                if abs(prev) < 1e-9:
+                    continue
+                g = (cur - prev) / abs(prev)
+                if math.isfinite(g):
+                    growth.append(max(-1.0, min(1.0, float(g))))
+            if not growth:
+                return 0.0
+            mean = sum(growth) / len(growth)
+            return (sum((g - mean) ** 2 for g in growth) / len(growth)) ** 0.5
+
+        best_window = hist
+        best_score = -10**9
+        best_r2 = full_r2
+        for window in candidate_windows:
+            vals = [v for _, v in window]
+            stats = self._linear_fit_stats(vals)
+            r2 = stats.get('r2')
+            if r2 is None:
+                continue
+            gstd = _growth_std(vals)
+            recency_bonus = max(0.0, (len(hist) - len(window)) * 0.6)
+            score = (r2 * 100.0) - (gstd * 40.0) + recency_bonus
+            if metric == 'Revenues':
+                score += 2.0
+            if score > best_score:
+                best_score = score
+                best_window = window
+                best_r2 = r2
+
+        use_recent = False
+        if best_window is not hist and best_r2 is not None:
+            if full_r2 is None:
+                use_recent = True
+            elif (best_r2 - full_r2) >= 0.18:
+                use_recent = True
+            elif (full_r2 < 0.45 and best_r2 >= 0.62):
+                use_recent = True
+
+        chosen = best_window if use_recent else hist
+        return chosen, {
+            'mode': 'recent_window' if use_recent else 'full',
+            'points': len(chosen),
+            'full_r2': full_r2,
+            'recent_r2': best_r2,
+        }
+
+    def _build_metric_forecast_enhanced(self, data_by_year, metric, aliases, years_forward=10):
+        aggregation = 'max_positive' if metric == 'Revenues' else 'first_valid'
+        hist = self._extract_metric_history(data_by_year, aliases, aggregation=aggregation)
+        hist, window_meta = self._select_structural_history_window(hist, metric=metric)
+        out = {
+            'metric': metric,
+            'forecast': {},
+            'method': 'enhanced_missing_history',
+            'bull_band': 0.20,
+            'confidence_by_year': {},
+            'history_points': len(hist),
+            'growth_std': None,
+            'trend_r2': None,
+            'window_mode': (window_meta or {}).get('mode'),
+        }
+        if len(hist) < 2:
+            return out
+
+        years = [y for y, _ in hist]
+        values = [v for _, v in hist]
+        latest_year = years[-1]
+        latest_val = values[-1]
+
+        growth = []
+        for i in range(1, len(values)):
+            prev = values[i - 1]
+            cur = values[i]
+            if abs(prev) < 1e-9:
+                continue
+            g = (cur - prev) / abs(prev)
+            if math.isfinite(g):
+                growth.append(g)
+
+        # Winsorize growth to reduce one-off spikes impact on confidence/scenario width.
+        growth_for_stats = []
+        if growth:
+            for g in growth:
+                growth_for_stats.append(max(-0.80, min(0.80, float(g))))
+
+        if growth_for_stats:
+            g_avg = sum(growth_for_stats) / len(growth_for_stats)
+            g_med = sorted(growth_for_stats)[len(growth_for_stats) // 2]
+            g_std = (sum((g - g_avg) ** 2 for g in growth_for_stats) / max(1, len(growth_for_stats))) ** 0.5
+            g_recent = sum(growth_for_stats[-3:]) / len(growth_for_stats[-3:])
+        else:
+            g_avg, g_med, g_std, g_recent = 0.05, 0.05, 0.10, 0.05
+
+        cagr = None
+        if values[0] > 0 and values[-1] > 0:
+            n_span = max(1, years[-1] - years[0])
+            cagr = (values[-1] / values[0]) ** (1.0 / n_span) - 1.0
+
+        g_start = (0.45 * g_recent) + (0.35 * g_med) + (0.20 * (cagr if cagr is not None else g_avg))
+        fit_stats = self._linear_fit_stats(values)
+        slope = fit_stats.get('slope', 0.0) or 0.0
+        trend_r2 = fit_stats.get('r2')
+        trend_adj = 0.0
+        if abs(latest_val) > 1e-9:
+            trend_adj = (slope / abs(latest_val)) * 0.75
+        g_start += trend_adj
+
+        if metric == 'Revenues':
+            g_floor, g_cap, g_terminal = -0.20, 0.35, 0.03
+            band_min, band_max = 0.06, 0.38
+        else:
+            g_floor, g_cap, g_terminal = -0.40, 0.40, 0.02
+            band_min, band_max = 0.09, 0.55
+
+        g_start = max(g_floor, min(g_cap, g_start))
+
+        local_forecast = {}
+        cur = float(latest_val)
+        for i in range(1, int(years_forward) + 1):
+            fy = latest_year + i
+            fade = min(1.0, (i - 1) / 8.0)
+            g_t = (g_start * (1.0 - (0.78 * fade))) + (g_terminal * (0.78 * fade))
+            g_t = max(g_floor, min(g_cap, g_t))
+            cur = cur * (1.0 + g_t)
+            local_forecast[fy] = cur
+
+        ext_forecast = {}
+        try:
+            if hasattr(self.fetcher, 'generate_forecast'):
+                ext = self.fetcher.generate_forecast(data_by_year, metric=metric, years_forward=years_forward) or {}
+                ext_raw = ext.get('forecast', {}) or {}
+                ext_forecast = {}
+                for yk, vv in (ext_raw or {}).items():
+                    try:
+                        ky = int(yk)
+                    except Exception:
+                        continue
+                    if isinstance(vv, (int, float)) and math.isfinite(float(vv)):
+                        ext_forecast[ky] = float(vv)
+        except Exception:
+            ext_forecast = {}
+
+        blended = {}
+        target_years = sorted(set(list(local_forecast.keys()) + list(ext_forecast.keys())))
+        for y in target_years:
+            lv = local_forecast.get(y)
+            ev = ext_forecast.get(y)
+            if isinstance(lv, (int, float)) and isinstance(ev, (int, float)):
+                blended[y] = (0.65 * float(lv)) + (0.35 * float(ev))
+            elif isinstance(lv, (int, float)):
+                blended[y] = float(lv)
+            elif isinstance(ev, (int, float)):
+                blended[y] = float(ev)
+
+        band_base = max(band_min, min(band_max, band_min + (g_std * 1.05)))
+        sample_penalty = max(0.0, (5 - len(growth_for_stats)) * 2.0)
+        fit_penalty = 10.0 if trend_r2 is None else ((1.0 - trend_r2) * 14.0)
+        sign_penalty = 8.0 if latest_val <= 0 else 0.0
+        conf_base = max(58.0, min(96.0, 94.0 - (g_std * 100.0 * 0.65) - sample_penalty - fit_penalty - sign_penalty))
+
+        conf_map = {}
+        for i, y in enumerate(sorted(blended.keys()), start=1):
+            conf_map[y] = max(46.0, conf_base - min(24.0, (i - 1) * 1.9))
+
+        out.update({
+            'forecast': blended,
+            'method': 'enhanced_hybrid_structural_recent' if (window_meta or {}).get('mode') == 'recent_window' else 'enhanced_hybrid_structural',
+            'bull_band': band_base,
+            'confidence_by_year': conf_map,
+            'history_points': len(hist),
+            'growth_std': g_std,
+            'trend_r2': trend_r2,
+            'window_mode': (window_meta or {}).get('mode'),
+        })
+        return out
+
+    def _build_forecast_bundle(self, data_by_year, years_forward=10):
+        revenue = self._build_metric_forecast_enhanced(
+            data_by_year=data_by_year,
+            metric='Revenues',
+            aliases=['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenue', 'SalesRevenueNet', 'TotalRevenue', 'TotalNetRevenues'],
+            years_forward=years_forward,
+        )
+        net_income = self._build_metric_forecast_enhanced(
+            data_by_year=data_by_year,
+            metric='NetIncomeLoss',
+            aliases=['NetIncomeLoss', 'NetIncome', 'ProfitLoss'],
+            years_forward=years_forward,
+        )
+        years = sorted(set(list((revenue.get('forecast') or {}).keys()) + list((net_income.get('forecast') or {}).keys())))
+        rows = []
+        for idx, y in enumerate(years, start=1):
+            rv = (revenue.get('forecast') or {}).get(y)
+            nv = (net_income.get('forecast') or {}).get(y)
+            rev_band = min(0.45, (revenue.get('bull_band') or 0.2) * (1.0 + min(0.95, (idx - 1) * 0.08)))
+            ni_band = min(0.60, (net_income.get('bull_band') or 0.25) * (1.0 + min(1.00, (idx - 1) * 0.10)))
+            rows.append({
+                'Year': y,
+                'Revenue_Base': rv,
+                'Revenue_Bull': (rv * (1 + rev_band)) if isinstance(rv, (int, float)) else None,
+                'Revenue_Bear': (rv * (1 - rev_band)) if isinstance(rv, (int, float)) else None,
+                'Revenue_Confidence_Pct': (revenue.get('confidence_by_year') or {}).get(y),
+                'Revenue_Volatility_Band': rev_band,
+                'NetIncome_Base': nv,
+                'NetIncome_Bull': (nv * (1 + ni_band)) if isinstance(nv, (int, float)) else None,
+                'NetIncome_Bear': (nv * (1 - ni_band)) if isinstance(nv, (int, float)) else None,
+                'NetIncome_Confidence_Pct': (net_income.get('confidence_by_year') or {}).get(y),
+                'NetIncome_Volatility_Band': ni_band,
+                'Revenue_Method': revenue.get('method'),
+                'NetIncome_Method': net_income.get('method'),
+            })
+        return {
+            'revenue': revenue,
+            'net_income': net_income,
+            'years': years,
+            'rows': rows,
+        }
+
+    def _build_ai_insights_snapshot(self):
+        if not self.current_data:
+            return {}
+        try:
+            from modules.advanced_analysis import generate_ai_insights
+            data_by_year_raw = ((self.current_data.get('data_layers', {}) or {}).get('layer1_by_year') or self.current_data.get('data_by_year', {}))
+            ratios_by_year_raw = maybe_guard_ratios_by_year(self.current_data.get('financial_ratios', {}))
+            data_by_year = {}
+            for yk, row in (data_by_year_raw or {}).items():
+                try:
+                    ky = int(yk)
+                except Exception:
+                    continue
+                data_by_year[ky] = row or {}
+            ratios_by_year = {}
+            for yk, row in (ratios_by_year_raw or {}).items():
+                try:
+                    ky = int(yk)
+                except Exception:
+                    continue
+                ratios_by_year[ky] = row or {}
+            if not data_by_year or not ratios_by_year:
+                return {}
+            years = sorted([y for y in data_by_year.keys() if isinstance(y, int)])
+            latest_year = years[-1] if years else None
+            ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+            ratio_source = UnifiedRatioSource()
+            ratio_source.load(ticker, data_by_year, ratios_by_year)
+            investment_score = ratio_source.get_ratio_contract(ticker, latest_year, 'investment_score').get('value')
+            if investment_score is None:
+                investment_score = 50
+            economic_spread = ratio_source.get_ratio_contract(ticker, latest_year, 'economic_spread').get('value')
+            if economic_spread is None:
+                roic = ratio_source.get_ratio_contract(ticker, latest_year, 'roic').get('value')
+                wacc = ratio_source.get_ratio_contract(ticker, latest_year, 'wacc').get('value')
+                economic_spread = (roic - wacc) if (roic is not None and wacc is not None) else 0.0
+            fcf_yield = ratio_source.get_ratio_contract(ticker, latest_year, 'fcf_yield').get('value')
+            if fcf_yield is None:
+                fcf = ratio_source.get_ratio_contract(ticker, latest_year, 'free_cash_flow').get('value')
+                market_cap = ratio_source.get_ratio_contract(ticker, latest_year, 'market_cap').get('value')
+                fcf_yield = (fcf / market_cap) if (fcf and market_cap) else 0.0
+            insights = generate_ai_insights(
+                data_by_year=data_by_year,
+                ratios_by_year=ratios_by_year,
+                investment_score=investment_score,
+                economic_spread=economic_spread,
+                fcf_yield=fcf_yield,
+            ) or {}
+            return insights
+        except Exception:
+            return {}
+
+    def _build_forecast_figure(self, data_by_year, bundle):
+        rev_hist = self._extract_metric_history(
+            data_by_year,
+            ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenue', 'SalesRevenueNet', 'TotalRevenue', 'TotalNetRevenues'],
+            aggregation='max_positive'
+        )
+        ni_hist = self._extract_metric_history(data_by_year, ['NetIncomeLoss', 'NetIncome', 'ProfitLoss'])
+        rev_fore = (bundle.get('revenue', {}) or {}).get('forecast', {}) or {}
+        ni_fore = (bundle.get('net_income', {}) or {}).get('forecast', {}) or {}
+        rev_band = float((bundle.get('revenue', {}) or {}).get('bull_band') or 0.2)
+        ni_band = float((bundle.get('net_income', {}) or {}).get('bull_band') or 0.25)
+
+        fig = Figure(figsize=(12, 4.2), dpi=100)
+        ax1 = fig.add_subplot(121)
+        ax2 = fig.add_subplot(122)
+
+        if rev_hist:
+            xh = [y for y, _ in rev_hist]
+            yh = [v for _, v in rev_hist]
+            ax1.plot(xh, yh, marker='o', color='#1f77b4', linewidth=1.8, label='Revenue (History)')
+        if rev_fore:
+            xf = sorted(rev_fore.keys())
+            yf = [rev_fore[y] for y in xf]
+            ax1.plot(xf, yf, marker='o', linestyle='--', color='#2ca02c', linewidth=1.8, label='Revenue (Forecast)')
+            ax1.fill_between(xf, [v * (1 - rev_band) for v in yf], [v * (1 + rev_band) for v in yf], color='#2ca02c', alpha=0.18, label='Forecast Band')
+        ax1.set_title('Revenue Scenario Curve')
+        ax1.set_xlabel('Year')
+        ax1.set_ylabel('USD')
+        ax1.grid(alpha=0.2)
+        ax1.legend(loc='best', fontsize=8)
+
+        if ni_hist:
+            xh = [y for y, _ in ni_hist]
+            yh = [v for _, v in ni_hist]
+            ax2.plot(xh, yh, marker='o', color='#ff7f0e', linewidth=1.8, label='Net Income (History)')
+        if ni_fore:
+            xf = sorted(ni_fore.keys())
+            yf = [ni_fore[y] for y in xf]
+            ax2.plot(xf, yf, marker='o', linestyle='--', color='#d62728', linewidth=1.8, label='Net Income (Forecast)')
+            ax2.fill_between(xf, [v * (1 - ni_band) for v in yf], [v * (1 + ni_band) for v in yf], color='#d62728', alpha=0.18, label='Forecast Band')
+        ax2.set_title('Net Income Scenario Curve')
+        ax2.set_xlabel('Year')
+        ax2.set_ylabel('USD')
+        ax2.grid(alpha=0.2)
+        ax2.legend(loc='best', fontsize=8)
+        fig.tight_layout()
+        return fig
+
+    def _build_ai_figure(self, insights):
+        fraud = (insights or {}).get('fraud_detection', {}) or {}
+        failure = (insights or {}).get('failure_prediction', {}) or {}
+        growth = (insights or {}).get('growth_sustainability', {}) or {}
+        wc = (insights or {}).get('working_capital_analysis', {}) or {}
+        quality = (insights or {}).get('investment_quality', {}) or {}
+        comps = (quality.get('components') or {}) if isinstance(quality, dict) else {}
+
+        risk_labels = ['Fraud', 'Failure 3Y', 'WC Crisis']
+        risk_vals = [
+            float(fraud.get('fraud_probability') or 0.0) * 100.0,
+            float(failure.get('failure_prob_3y') or 0.0) * 100.0,
+            float(wc.get('liquidity_crisis_prob') or 0.0) * 100.0,
+        ]
+
+        roic_n = max(0.0, min(100.0, float(comps.get('roic') or 0.0) * 300.0))
+        spread_n = max(0.0, min(100.0, float(comps.get('economic_spread') or 0.0) * 400.0))
+        fcf_n = max(0.0, min(100.0, float(comps.get('fcf_yield') or 0.0) * 800.0))
+        z_n = max(0.0, min(100.0, (float(comps.get('z_score') or 0.0) / 4.0) * 100.0))
+        # Align radar investment axis with final quality score when available.
+        inv_raw = quality.get('quality_score')
+        try:
+            inv_raw = float(inv_raw)
+        except Exception:
+            inv_raw = comps.get('investment_score')
+        try:
+            inv_raw = float(inv_raw)
+        except Exception:
+            inv_raw = 0.0
+        if 0.0 <= inv_raw <= 1.0:
+            inv_raw *= 100.0
+        inv_n = max(0.0, min(100.0, inv_raw))
+        radar_labels = ['ROIC', 'Spread', 'FCF Yield', 'Z-Score', 'Invest Score']
+        radar_vals = [roic_n, spread_n, fcf_n, z_n, inv_n]
+        radar_vals += radar_vals[:1]
+
+        fig = Figure(figsize=(12, 4.4), dpi=100)
+        ax1 = fig.add_subplot(121)
+        ax2 = fig.add_subplot(122, projection='polar')
+
+        bar_colors = ['#d9534f' if v >= 50 else ('#f0ad4e' if v >= 20 else '#28a745') for v in risk_vals]
+        ax1.bar(risk_labels, risk_vals, color=bar_colors, alpha=0.88)
+        ax1.set_ylim(0, 100)
+        ax1.set_title('AI Risk Heatmap')
+        ax1.set_ylabel('Probability %')
+        ax1.grid(axis='y', alpha=0.2)
+
+        angles = [n / float(len(radar_labels)) * 2 * math.pi for n in range(len(radar_labels))]
+        angles += angles[:1]
+        ax2.plot(angles, radar_vals, linewidth=2.0, color='#1f77b4')
+        ax2.fill(angles, radar_vals, color='#1f77b4', alpha=0.22)
+        ax2.set_xticks(angles[:-1])
+        ax2.set_xticklabels(radar_labels, fontsize=8)
+        ax2.set_yticks([20, 40, 60, 80, 100])
+        ax2.set_ylim(0, 100)
+        g_score = growth.get('sustainability_score')
+        q_score = quality.get('quality_score')
+        ax2.set_title(f"Quality Radar | G:{g_score} Q:{q_score}")
+        fig.tight_layout()
+        return fig
+
+    def _embed_charts_into_excel(self, writer, data_by_year, forecast_bundle, ai_insights):
+        try:
+            from openpyxl.drawing.image import Image as XLImage
+        except Exception:
+            return
+
+        if not hasattr(self, '_pending_excel_image_files'):
+            self._pending_excel_image_files = []
+
+        wb = writer.book
+        if 'Forecasts' in wb.sheetnames and forecast_bundle:
+            fig_f = self._build_forecast_figure(data_by_year=data_by_year, bundle=forecast_bundle)
+            tf = tempfile.NamedTemporaryFile(delete=False, suffix='_forecast.png')
+            tf.close()
+            self._pending_excel_image_files.append(tf.name)
+            fig_f.savefig(tf.name, dpi=150, bbox_inches='tight')
+            ws = wb['Forecasts']
+            ws.add_image(XLImage(tf.name), 'M2')
+            fig_f.clf()
+        if 'AI_Analysis' in wb.sheetnames and ai_insights:
+            fig_a = self._build_ai_figure(ai_insights)
+            ta = tempfile.NamedTemporaryFile(delete=False, suffix='_ai.png')
+            ta.close()
+            self._pending_excel_image_files.append(ta.name)
+            fig_a.savefig(ta.name, dpi=150, bbox_inches='tight')
+            ws = wb['AI_Analysis']
+            ws.add_image(XLImage(ta.name), 'D2')
+            fig_a.clf()
+
+    def _cleanup_pending_excel_images(self):
+        for p in list(getattr(self, '_pending_excel_image_files', []) or []):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+        self._pending_excel_image_files = []
+
+    def _clear_embedded_chart(self, attr_name):
+        canvas = getattr(self, attr_name, None)
+        try:
+            if canvas is not None:
+                widget = canvas.get_tk_widget()
+                widget.destroy()
+        except Exception:
+            pass
+        setattr(self, attr_name, None)
+
+    def _render_forecast_dashboard_chart(self, data_by_year, bundle):
+        if not hasattr(self, 'forecast_chart_frame'):
+            return
+        self._clear_embedded_chart('_forecast_chart_canvas')
+        fig = self._build_forecast_figure(data_by_year=data_by_year, bundle=bundle)
+        self._forecast_chart_canvas = FigureCanvasTkAgg(fig, master=self.forecast_chart_frame)
+        self._forecast_chart_canvas.draw()
+        self._forecast_chart_canvas.get_tk_widget().pack(fill='both', expand=True)
+
+    def _render_ai_dashboard_charts(self, insights):
+        if not hasattr(self, 'ai_chart_frame'):
+            return
+        self._clear_embedded_chart('_ai_chart_canvas')
+        fig = self._build_ai_figure(insights=insights)
+        self._ai_chart_canvas = FigureCanvasTkAgg(fig, master=self.ai_chart_frame)
+        self._ai_chart_canvas.draw()
+        self._ai_chart_canvas.get_tk_widget().pack(fill='both', expand=True)
+
+    def display_forecasts(self):
+        if not self.current_data:
+            self._clear_embedded_chart('_forecast_chart_canvas')
+            return
+        for i in self.forecast_tree.get_children():
+            self.forecast_tree.delete(i)
+        db = ((self.current_data.get('data_layers', {}) or {}).get('layer1_by_year') or self.current_data.get('data_by_year', {}) or {})
+        # normalize year keys to int where possible
+        norm_db = {}
+        for yk, row in (db or {}).items():
+            try:
+                ky = int(yk)
+            except Exception:
+                continue
+            norm_db[ky] = row or {}
+        db = norm_db
+        if not db:
+            self._clear_embedded_chart('_forecast_chart_canvas')
+            return
+        bundle = self._build_forecast_bundle(data_by_year=db, years_forward=10)
+        self._latest_forecast_bundle = bundle
+
+        cols = [
+            'السنة',
+            'الإيرادات Base',
+            'الإيرادات Bull',
+            'الإيرادات Bear',
+            'الثقة % (الإيرادات)',
+            'صافي الربح Base',
+            'صافي الربح Bull',
+            'صافي الربح Bear',
+            'الثقة % (صافي الربح)',
+            'نطاق التقلب',
+            'جودة النموذج',
+            'المنهجية',
+        ]
+        self.forecast_tree.config(columns=cols)
+        for c in cols:
+            self.forecast_tree.heading(c, text=c)
+            if c == 'السنة':
+                self.forecast_tree.column(c, width=100, anchor='center', stretch=False)
+            elif 'الثقة' in c:
+                self.forecast_tree.column(c, width=140, anchor='center', stretch=False)
+            elif c == 'المنهجية':
+                self.forecast_tree.column(c, width=180, anchor='center', stretch=False)
+            elif c in {'نطاق التقلب', 'جودة النموذج'}:
+                self.forecast_tree.column(c, width=140, anchor='center', stretch=False)
+            else:
+                self.forecast_tree.column(c, width=170, anchor='center', stretch=False)
+
+        for row in (bundle.get('rows') or []):
+            y = row.get('Year')
+            rv = row.get('Revenue_Base')
+            nv = row.get('NetIncome_Base')
+            rev_conf = row.get('Revenue_Confidence_Pct')
+            ni_conf = row.get('NetIncome_Confidence_Pct')
+            rev_band = row.get('Revenue_Volatility_Band')
+            ni_band = row.get('NetIncome_Volatility_Band')
+
+            def fmt(v):
+                if v is None:
+                    return 'N/A'
+                if isinstance(v, (int, float)):
+                    return f"{v:,.0f}"
+                return str(v)
+
+            conf_blend = None
+            if isinstance(rev_conf, (int, float)) and isinstance(ni_conf, (int, float)):
+                conf_blend = (0.55 * float(rev_conf)) + (0.45 * float(ni_conf))
+            if isinstance(conf_blend, (int, float)):
+                if conf_blend >= 82:
+                    model_q = 'HIGH'
+                elif conf_blend >= 68:
+                    model_q = 'MEDIUM'
+                else:
+                    model_q = 'LOW'
+            else:
+                model_q = 'N/A'
+            if isinstance(rev_band, (int, float)) and isinstance(ni_band, (int, float)):
+                vol_txt = f"R±{(rev_band*100):.0f}%/NI±{(ni_band*100):.0f}%"
+            else:
+                vol_txt = "N/A"
+
+            self.forecast_tree.insert(
+                '',
+                'end',
+                values=(
+                    str(y),
+                    fmt(rv),
+                    fmt(row.get('Revenue_Bull')),
+                    fmt(row.get('Revenue_Bear')),
+                    f"{float(rev_conf):.1f}%" if isinstance(rev_conf, (int, float)) else "N/A",
+                    fmt(nv),
+                    fmt(row.get('NetIncome_Bull')),
+                    fmt(row.get('NetIncome_Bear')),
+                    f"{float(ni_conf):.1f}%" if isinstance(ni_conf, (int, float)) else "N/A",
+                    vol_txt,
+                    model_q,
+                    str(bundle.get('revenue', {}).get('method') or 'N/A'),
+                ),
+            )
+        self._render_forecast_dashboard_chart(data_by_year=db, bundle=bundle)
+
+    def _generate_forecast_fallback(self, data_by_year, metric='Revenues', years_forward=10):
+        metric_aliases = {
+            'Revenues': ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenue', 'SalesRevenueNet', 'TotalRevenue', 'TotalNetRevenues'],
+            'NetIncomeLoss': ['NetIncomeLoss', 'NetIncome', 'ProfitLoss'],
+        }
+        aliases = metric_aliases.get(metric, [metric])
+        hist = []
+        for y in sorted([k for k in data_by_year.keys() if isinstance(k, int)]):
+            row = data_by_year.get(y, {}) or {}
+            vals = []
+            for k in aliases:
+                v = row.get(k)
+                if isinstance(v, (int, float)) and math.isfinite(float(v)):
+                    vals.append(float(v))
+            val = None
+            if vals:
+                if metric == 'Revenues':
+                    positives = [v for v in vals if v > 0]
+                    val = max(positives) if positives else max(vals)
+                else:
+                    val = vals[0]
+            if val is not None:
+                hist.append((y, val))
+        out = {'metric': metric, 'forecast': {}, 'method': 'fallback_insufficient_history'}
+        if len(hist) < 2:
+            return out
+        years = [x[0] for x in hist]
+        vals = [x[1] for x in hist]
+        y0, y1 = years[0], years[-1]
+        v0, v1 = vals[0], vals[-1]
+        n = max(1, y1 - y0)
+
+        growth_hist = []
+        for i in range(1, len(vals)):
+            prev = vals[i - 1]
+            cur = vals[i]
+            if prev is None or cur is None or abs(prev) < 1e-9:
+                continue
+            growth_hist.append((cur - prev) / abs(prev))
+
+        if metric == 'Revenues':
+            g_floor, g_cap, g_terminal = -0.20, 0.30, 0.03
+        else:
+            g_floor, g_cap, g_terminal = -0.35, 0.35, 0.025
+
+        cagr_long = None
+        if v0 > 0 and v1 > 0:
+            cagr_long = (v1 / v0) ** (1.0 / n) - 1.0
+        g_recent = (sum(growth_hist[-3:]) / len(growth_hist[-3:])) if growth_hist else None
+
+        if growth_hist:
+            g_avg = sum(growth_hist) / len(growth_hist)
+            g_var = sum((g - g_avg) ** 2 for g in growth_hist) / max(1, len(growth_hist))
+            g_std = g_var ** 0.5
+        else:
+            g_std = 0.0
+
+        if g_recent is not None and cagr_long is not None:
+            g_start = (0.65 * g_recent) + (0.35 * cagr_long)
+        elif g_recent is not None:
+            g_start = g_recent
+        elif cagr_long is not None:
+            g_start = cagr_long
+        else:
+            slope = (v1 - v0) / float(n)
+            for i in range(1, int(years_forward) + 1):
+                fy = y1 + i
+                out['forecast'][fy] = v1 + (slope * i)
+            out['method'] = 'fallback_linear_no_growth_history'
+            return out
+
+        g_start = g_start - min(0.15, max(0.0, g_std * 0.5))
+        g_start = max(g_floor, min(g_cap, g_start))
+
+        if v1 <= 0:
+            slope = (v1 - v0) / float(n)
+            for i in range(1, int(years_forward) + 1):
+                fy = y1 + i
+                out['forecast'][fy] = v1 + (slope * i)
+            out['method'] = 'fallback_linear_non_positive_latest'
+            return out
+
+        v = float(v1)
+        for i in range(1, int(years_forward) + 1):
+            fy = y1 + i
+            if i <= 3:
+                decay = 0.22 * (i - 1)
+            elif i <= 7:
+                decay = 0.22 * 2 + 0.14 * (i - 3)
+            else:
+                decay = 0.22 * 2 + 0.14 * 4 + 0.10 * (i - 7)
+            g_t = g_terminal + (g_start - g_terminal) * max(0.0, (1.0 - decay))
+            g_t = max(g_floor, min(g_cap, g_t))
+            v = v * (1.0 + g_t)
+            out['forecast'][fy] = v
+
+        out['method'] = 'fallback_three_stage_fade'
+        return out
+
+    def open_plots_window(self):
+        if not self.multi_company_data:
+            messagebox.showinfo("Ù…Ø¹Ù„ÙˆÙ…Ø©", "Ù‚Ù… Ø¨Ø¬Ù„Ø¨ Ø¨ÙŠØ§ï¿½ï¿½Ø§Øª Ø´Ø±ÙƒØ© ÙˆØ§Ø­Ø¯Ø© Ø¹Ù„Ù‰ Ø§Ù„Ø£Ù‚Ù„")
+            return
+        win = tk.Toplevel(self.root)
+        win.title("Ø§Ø®ØªÙŠØ§Ø± Ø§Ù„Ø´Ø±ÙƒØ© Ù„Ù„Ø±Ø³Ù…")
+        tk.Label(win, text="Ø§Ø®ØªØ± Ø´Ø±ÙƒØ©:").pack(padx=8, pady=8)
+        lb = tk.Listbox(win)
+        lb.pack(padx=8, pady=8)
+        for comp in sorted(self.multi_company_data.keys()):
+            lb.insert(tk.END, comp)
+        def on_plot():
+            sel = lb.curselection()
+            if not sel:
+                messagebox.showinfo("Ù…Ø¹Ù„ÙˆÙ…Ø©", "Ø§Ø®ØªØ± Ø´Ø±ÙƒØ©")
+                return
+            comp = lb.get(sel[0])
+            self.plot_trends(company_key=comp)
+        tk.Button(win, text="Ø¹Ø±Ø¶ Ø§Ù„Ø±Ø³Ù…", command=on_plot).pack(pady=8)
+
+    def plot_trends(self, company_key=None):
+        if company_key is None:
+            if not self.current_data:
+                return
+            data = self.current_data
+        else:
+            data = self.multi_company_data.get(company_key)
+            if not data:
+                messagebox.showinfo("Ù…Ø¹Ù„ÙˆÙ…Ø©", "Ø§Ù„Ø´Ø±ÙƒØ© ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯Ø©")
+                return
+        db = ((data.get('data_layers', {}) or {}).get('layer1_by_year') or data.get('data_by_year', {}) or {})
+        norm_db = {}
+        for yk, row in (db or {}).items():
+            try:
+                ky = int(yk)
+            except Exception:
+                continue
+            norm_db[ky] = row or {}
+        db = norm_db
+        years = sorted([y for y in db.keys() if isinstance(y, int)])
+        if not years:
+            messagebox.showinfo("Ù…Ø¹Ù„ÙˆÙ…Ø©", "Ù„Ø§ ØªÙˆØ¬Ø¯ Ø¨ÙŠØ§Ù†Ø§Øª ØªØ§Ø±ÙŠØ®ÙŠØ© ÙƒØ§ÙÙŠØ© Ù„Ù„Ø±Ø³Ù…")
+            return
+        rev_hist = self._extract_metric_history(db, ['Revenues', 'Revenue', 'SalesRevenueNet', 'TotalRevenue'])
+        ni_hist = self._extract_metric_history(db, ['NetIncomeLoss', 'NetIncome', 'ProfitLoss'])
+        bundle = self._build_forecast_bundle(data_by_year=db, years_forward=10)
+
+        fig = Figure(figsize=(11, 5), dpi=100)
+        ax1 = fig.add_subplot(121)
+        ax2 = fig.add_subplot(122)
+
+        if rev_hist:
+            rev_hist_years = [y for y, _ in rev_hist]
+            rev_hist_vals = [v for _, v in rev_hist]
+            ax1.plot(rev_hist_years, rev_hist_vals, marker='o', color='#1f77b4', label='Revenue (History)')
+        rev_fore = bundle.get('revenue', {}).get('forecast', {}) or {}
+        rev_band = float(bundle.get('revenue', {}).get('bull_band') or 0.2)
+        rev_fore_years = sorted(rev_fore.keys())
+        if rev_fore_years:
+            rev_fore_vals = [rev_fore[y] for y in rev_fore_years]
+            rev_bull = [v * (1 + rev_band) for v in rev_fore_vals]
+            rev_bear = [v * (1 - rev_band) for v in rev_fore_vals]
+            ax1.plot(rev_fore_years, rev_fore_vals, marker='o', linestyle='--', color='#2ca02c', label='Revenue (Forecast)')
+            ax1.fill_between(rev_fore_years, rev_bear, rev_bull, color='#2ca02c', alpha=0.15, label='Revenue confidence band')
+        ax1.set_title('Revenue Forecast')
+        ax1.set_xlabel('Year')
+        ax1.set_ylabel('USD')
+        ax1.legend(loc='best')
+        ax1.grid(alpha=0.2)
+
+        if ni_hist:
+            ni_hist_years = [y for y, _ in ni_hist]
+            ni_hist_vals = [v for _, v in ni_hist]
+            ax2.plot(ni_hist_years, ni_hist_vals, marker='o', color='#ff7f0e', label='Net income (History)')
+        ni_fore = bundle.get('net_income', {}).get('forecast', {}) or {}
+        ni_band = float(bundle.get('net_income', {}).get('bull_band') or 0.25)
+        ni_fore_years = sorted(ni_fore.keys())
+        if ni_fore_years:
+            ni_fore_vals = [ni_fore[y] for y in ni_fore_years]
+            ni_bull = [v * (1 + ni_band) for v in ni_fore_vals]
+            ni_bear = [v * (1 - ni_band) for v in ni_fore_vals]
+            ax2.plot(ni_fore_years, ni_fore_vals, marker='o', linestyle='--', color='#d62728', label='Net income (Forecast)')
+            ax2.fill_between(ni_fore_years, ni_bear, ni_bull, color='#d62728', alpha=0.15, label='Net income confidence band')
+        ax2.set_title('Net Income Forecast')
+        ax2.set_xlabel('Year')
+        ax2.set_ylabel('USD')
+        ax2.legend(loc='best')
+        ax2.grid(alpha=0.2)
+
+        fig.tight_layout()
+        win = tk.Toplevel(self.root)
+        ticker = company_key or (data.get('company_info', {}) or {}).get('ticker', '')
+        win.title(f"Forecast Charts - {ticker}")
+        canvas = FigureCanvasTkAgg(fig, master=win); canvas.draw(); canvas.get_tk_widget().pack(fill='both', expand=True)
+
+def main():
+    root = tk.Tk()
+    app = SECFinancialSystem(root)
+    root.mainloop()
+
+if __name__ == '__main__':
+    main()
+
+

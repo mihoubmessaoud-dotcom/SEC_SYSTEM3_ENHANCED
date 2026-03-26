@@ -1,0 +1,291 @@
+            elif txt.endswith('B'):
+                mult = 1_000_000_000.0
+                txt = txt[:-1]
+            elif txt.endswith('M'):
+                mult = 1_000_000.0
+                txt = txt[:-1]
+            if neg:
+                txt = txt[1:-1]
+            num = float(txt)
+            if neg:
+                num = -num
+            return num * mult
+        except Exception:
+            return None
+
+    def _resolve_selected_raw_layer_key(self):
+        data_layers = self.current_data.get('data_layers', {}) if self.current_data else {}
+        selected_layer_display = self.raw_layer_var.get() if hasattr(self, 'raw_layer_var') else self._t('layer1')
+        selected_layer = getattr(self, '_raw_layer_display_to_real', {}).get(selected_layer_display, selected_layer_display)
+        catalog = (data_layers or {}).get('layer_catalog') or []
+        selected_key = None
+        selected_source = None
+        for item in catalog:
+            if str(item.get('title')) == selected_layer:
+                selected_key = str(item.get('key'))
+                selected_source = str(item.get('source') or '')
+                break
+        if not selected_key:
+            if selected_layer.startswith('Layer 2') or selected_layer.startswith('?????? 2'):
+                selected_key = 'layer2_by_year'
+                selected_source = 'MARKET'
+            elif selected_layer.startswith('Layer 3') or selected_layer.startswith('?????? 3'):
+                selected_key = 'layer3_by_year'
+                selected_source = 'MACRO'
+            elif selected_layer.startswith('Layer 4') or selected_layer.startswith('?????? 4'):
+                selected_key = 'layer4_by_year'
+                selected_source = 'YAHOO'
+            else:
+                selected_key = 'layer1_by_year'
+                selected_source = 'SEC'
+        return selected_key, selected_source
+
+    def _snapshot_raw_tree_df(self):
+        try:
+            import pandas as pd
+        except Exception:
+            return None
+        if not hasattr(self, 'raw_tree'):
+            return None
+        cols = list(self.raw_tree.cget('columns') or [])
+        if not cols:
+            return None
+        rows = []
+        for iid in self.raw_tree.get_children(''):
+            vals = list(self.raw_tree.item(iid, 'values') or [])
+            if not vals:
+                continue
+            if len(vals) < len(cols):
+                vals.extend([''] * (len(cols) - len(vals)))
+            rows.append({str(cols[i]): vals[i] for i in range(len(cols))})
+        if not rows:
+            return None
+        return pd.DataFrame(rows, columns=cols)
+
+    def _sheet_to_year_dict(self, df, label_candidates, allow_text=False, key_prefix=None):
+        out = {}
+        if df is None or df.empty:
+            return out
+        cols = [str(c) for c in df.columns]
+        year_cols_map = {}
+        for c in cols:
+            c_txt = str(c).strip()
+            y_match = re.search(r'(19|20)\d{2}', c_txt)
+            if y_match:
+                year_cols_map[c_txt] = int(y_match.group(0))
+        year_cols = list(year_cols_map.keys())
+        if not year_cols:
+            return out
+        label_col = None
+        for cand in label_candidates:
+            if cand in cols:
+                label_col = cand
+                break
+        if not label_col:
+            label_col = cols[0]
+        for _, row in df.iterrows():
+            raw_key = row.get(label_col)
+            if raw_key is None:
+                continue
+            key = str(raw_key).strip()
+            if not key:
+                continue
+            if key_prefix:
+                key = f"{key_prefix}{key}"
+            for yc in year_cols:
+                y = year_cols_map.get(str(yc))
+                if y is None:
+                    continue
+                val = row.get(yc)
+                num = self._safe_excel_number(val)
+                if num is not None:
+                    out.setdefault(y, {})[key] = num
+                elif allow_text:
+                    sval = str(val).strip() if val is not None else ''
+                    if sval and not sval.upper().startswith('N/A'):
+                        out.setdefault(y, {})[key] = sval
+        return out
+
+    def _merge_year_dict(self, base, extra):
+        out = {int(y): dict(v or {}) for y, v in (base or {}).items()}
+        for y, row in (extra or {}).items():
+            y_int = int(y)
+            slot = out.setdefault(y_int, {})
+            for k, v in (row or {}).items():
+                if slot.get(k) is None and v is not None:
+                    slot[k] = v
+        return out
+
+    def load_results_from_excel(self, file_path=None, show_success_message=True):
+        fn = file_path
+        if not fn:
+            fn = filedialog.askopenfilename(
+                title=self._t('load_excel_title'),
+                filetypes=[("Excel files", "*.xlsx;*.xlsm"), ("All files", "*.*")],
+            )
+        if not fn:
+            return False
+        try:
+            import pandas as pd
+
+            xls = pd.ExcelFile(fn)
+            sheets = set(xls.sheet_names or [])
+
+            def _norm_sheet_name(s: str) -> str:
+                return re.sub(r'[^a-z0-9]+', '', str(s or '').lower())
+
+            sheet_index = {_norm_sheet_name(n): n for n in sheets}
+
+            def _pick_sheet(*aliases):
+                for alias in aliases:
+                    hit = sheet_index.get(_norm_sheet_name(alias))
+                    if hit:
+                        return hit
+                return None
+
+            def _read_sheet(*aliases):
+                sheet_name = _pick_sheet(*aliases)
+                if not sheet_name:
+                    return None
+                return pd.read_excel(fn, sheet_name=sheet_name)
+
+            raw_df = _read_sheet('Raw_by_Year', 'Raw by Year', 'Financial Data', '???????? ???????')
+            layer1_df = _read_sheet('Layer1_Raw_SEC', 'Layer1 Raw SEC', 'SEC_Official_Statement')
+            ratios_df = _read_sheet('Ratios', 'Financial Ratios', '????? ???????')
+            strategic_df = _read_sheet('Strategic', 'Strategic Analysis', '??????? ???????????')
+            layer2_df = _read_sheet('Layer2_Market', 'Layer2 Market', 'Market')
+            layer3_df = _read_sheet('Layer3_Macro', 'Layer3 Macro', 'Macro')
+            layer4_df = _read_sheet('Layer4_Yahoo', 'Layer4 Yahoo', 'Yahoo')
+            income_df = _read_sheet('Income Statement', 'StatementOfIncome')
+            balance_df = _read_sheet('Balance Sheet', 'StatementOfBalanceSheet')
+            cashflow_df = _read_sheet('Cash Flow', 'StatementOfCashFlows')
+
+            data_by_year = self._sheet_to_year_dict(raw_df, ['Concept', 'Line Item', 'Item', '?????'], allow_text=False)
+            layer1_by_year = self._sheet_to_year_dict(layer1_df, ['Raw Label', 'Line Item', 'Concept', 'Item', '?????'], allow_text=False)
+            for stmt_df in (income_df, balance_df, cashflow_df):
+                stmt_rows = self._sheet_to_year_dict(stmt_df, ['Line Item', 'Item', 'Concept', '?????'], allow_text=False)
+                data_by_year = self._merge_year_dict(data_by_year, stmt_rows)
+            if not data_by_year:
+                data_by_year = dict(layer1_by_year)
+            else:
+                data_by_year = self._merge_year_dict(data_by_year, layer1_by_year)
+
+            ratios_by_year = self._sheet_to_year_dict(ratios_df, ['Metric', 'Ratio', 'Name', '??????'], allow_text=False)
+            strategic_by_year = self._sheet_to_year_dict(strategic_df, ['Metric', 'Indicator', '???????'], allow_text=True)
+            imported_ratio_metrics = set()
+            imported_strategic_metrics = set()
+            try:
+                if ratios_df is not None and not ratios_df.empty:
+                    rcols = [str(c) for c in ratios_df.columns]
+                    rk = 'Metric' if 'Metric' in rcols else ('Ratio' if 'Ratio' in rcols else (rcols[0] if rcols else None))
+                    if rk:
+                        for _, rr in ratios_df.iterrows():
+                            mv = str(rr.get(rk) or '').strip().lower()
+                            if mv:
+                                imported_ratio_metrics.add(mv)
+                if strategic_df is not None and not strategic_df.empty:
+                    scols = [str(c) for c in strategic_df.columns]
+                    sk = 'Metric' if 'Metric' in scols else ('Indicator' if 'Indicator' in scols else (scols[0] if scols else None))
+                    if sk:
+                        for _, rr in strategic_df.iterrows():
+                            mv = str(rr.get(sk) or '').strip().lower()
+                            if mv:
+                                imported_strategic_metrics.add(mv)
+            except Exception:
+                imported_ratio_metrics = set()
+                imported_strategic_metrics = set()
+            layer2_by_year = self._sheet_to_year_dict(layer2_df, ['Normalized Label', 'Item', '????? ????????'], allow_text=True)
+            layer4_by_year = self._sheet_to_year_dict(layer4_df, ['Normalized Label', 'Item', '????? ????????'], allow_text=True)
+
+            layer3_by_year = {}
+            if layer3_df is not None and not layer3_df.empty:
+                cols = [str(c) for c in layer3_df.columns]
+                year_cols = [c for c in cols if re.search(r'(19|20)\d{2}', str(c))]
+                cat_col = 'Category' if 'Category' in cols else None
+                lbl_col = 'Normalized Label' if 'Normalized Label' in cols else (cols[0] if cols else None)
+                if lbl_col:
+                    for _, row in layer3_df.iterrows():
+                        label = str(row.get(lbl_col) or '').strip()
+                        if not label:
+                            continue
+                        category = str(row.get(cat_col) or '').strip() if cat_col else ''
+                        key = f"{category}::{label}" if category else label
+                        for yc in year_cols:
+                            m = re.search(r'(19|20)\d{2}', str(yc))
+                            if not m:
+                                continue
+                            y = int(m.group(0))
+                            v = row.get(yc)
+                            num = self._safe_excel_number(v)
+                            if num is not None:
+                                layer3_by_year.setdefault(y, {})[key] = num
+                            else:
+                                sval = str(v).strip() if v is not None else ''
+                                if sval and not sval.upper().startswith('N/A'):
+                                    layer3_by_year.setdefault(y, {})[key] = sval
+
+            if not data_by_year:
+                messagebox.showerror(self._t('msg_error'), self._translate_ui_text("?? ??? ?????? ??? ?????? ????? ????? ???? ?????."))
+                return
+
+            ticker_guess = Path(fn).stem.split('_')[0].upper()
+            company_info = {'ticker': ticker_guess, 'name': ticker_guess, 'cik': None}
+            data_layers = {
+                'layer1_by_year': layer1_by_year or data_by_year,
+                'layer2_by_year': layer2_by_year,
+                'layer3_by_year': layer3_by_year,
+                'layer4_by_year': layer4_by_year,
+                'label_rows': [],
+                'layer_catalog': [
+                    {'key': 'layer1_by_year', 'title': 'Layer 1 - SEC XBRL (EDGAR)', 'source': 'SEC'},
+                    {'key': 'layer2_by_year', 'title': 'Layer 2 - Market (Polygon)', 'source': 'MARKET'},
+                    {'key': 'layer3_by_year', 'title': 'Layer 3 - Macro (FRED)', 'source': 'MACRO'},
+                    {'key': 'layer4_by_year', 'title': 'Layer 4 - Yahoo (yfinance)', 'source': 'YAHOO'},
+                ],
+            }
+
+            loaded = {
+                'success': True,
+                'company_info': company_info,
+                'data_by_year': data_by_year,
+                'financial_ratios': ratios_by_year,
+                'strategic_analysis': strategic_by_year,
+                'data_layers': data_layers,
+                'ui_lock_excel': True,
+                'ui_lock_excel_ratio_metrics': sorted(imported_ratio_metrics),
+                'ui_lock_excel_strategic_metrics': sorted(imported_strategic_metrics),
+            }
+            self.current_data = loaded
+            self.multi_company_data[ticker_guess] = loaded
+            if ticker_guess not in self.companies_listbox.get(0, tk.END):
+                self.companies_listbox.insert(tk.END, ticker_guess)
+            all_years = sorted({
+                int(y)
+                for src in (data_by_year, ratios_by_year, strategic_by_year)
+                for y in (src or {}).keys()
+                if str(y).isdigit()
+            })
+            if all_years:
+                self.start_year_var.set(str(min(all_years)))
+                self.end_year_var.set(str(max(all_years)))
+            self._sync_layer_selector_from_data()
+            # Enforce deterministic SEC display mode after Excel load.
+            try:
+                if hasattr(self, '_sec_view_mode_var'):
+                    self._sec_view_mode_var.set('official')
+                if hasattr(self, 'sec_view_mode_display_var'):
+                    self.sec_view_mode_display_var.set(self._t('sec_view_mode_official'))
+            except Exception:
+                pass
+            self.display_all()
+            self.display_comparison()
+            if show_success_message:
+                messagebox.showinfo(self._t('msg_success'), f"{self._t('load_excel_success')}\n{fn}")
+            return True
+        except Exception as e:
+            messagebox.showerror(self._t('msg_error'), f"{self._t('load_excel_failed')}: {e}")
+            return False
+
+    def _build_forecast_export_df(self):
+        try:
+            import pandas as pd

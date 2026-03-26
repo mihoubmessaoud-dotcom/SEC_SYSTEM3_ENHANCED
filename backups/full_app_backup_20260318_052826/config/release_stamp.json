@@ -1,0 +1,16 @@
+{
+  "version": "v4-definitive",
+  "release_date_utc": "2026-02-28",
+  "status": "FINAL_TECHNICAL_CLOSURE",
+  "baseline_artifacts": [
+    "outputs/quick_eval_20260227_latest.json",
+    "outputs/final_multi_company_validation.json",
+    "outputs/final_integrity_validation_20260226.json"
+  ],
+  "notes": [
+    "Sector and confidence fallback chain locked",
+    "Historical split cutoff logic locked",
+    "Market-cap/share anchor quality gate hardened",
+    "Debt fallback constrained for missing SEC debt only"
+  ]
+}

@@ -1,0 +1,230 @@
+{
+  "version": "v1",
+  "global": {
+    "annual_revenue": [
+      "Revenue_Hierarchy",
+      "NetRevenue_Hierarchy",
+      "NetRevenue",
+      "Revenues",
+      "SalesRevenueNet",
+      "RevenueFromContractWithCustomerExcludingAssessedTax",
+      "Revenue",
+      "NetSales"
+    ],
+    "annual_cogs": [
+      "CostOfRevenue",
+      "CostOfGoodsAndServicesSold",
+      "COGS",
+      "CostOfSales",
+      "CostOfProductsSold"
+    ],
+    "total_equity": [
+      "StockholdersEquity",
+      "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+      "TotalEquity"
+    ],
+    "accounts_receivable": [
+      "AccountsReceivableNetCurrent_Hierarchy",
+      "AccountsReceivableNetCurrent",
+      "AccountsReceivable",
+      "ReceivablesNetCurrent"
+    ],
+    "accounts_payable": [
+      "AccountsPayableCurrent_Hierarchy",
+      "AccountsPayableCurrent",
+      "AccountsPayableAndAccruedLiabilitiesCurrentAndNoncurrent",
+      "AccountsPayable"
+    ],
+    "inventory": [
+      "InventoryNet_Hierarchy",
+      "InventoryNet",
+      "Inventory"
+    ]
+  },
+  "sector_overrides": {
+    "technology": {
+      "annual_revenue": [
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "Revenues",
+        "SalesRevenueNet",
+        "NetSales"
+      ],
+      "annual_cogs": [
+        "CostOfRevenue",
+        "CostOfSales",
+        "CostOfGoodsAndServicesSold"
+      ]
+    },
+    "industrial": {
+      "annual_revenue": [
+        "SalesAndServicesRevenues",
+        "NetRevenues",
+        "Revenues"
+      ],
+      "annual_cogs": [
+        "CostOfSales",
+        "CostOfRevenue",
+        "CostOfGoodsAndServicesSold"
+      ]
+    },
+    "healthcare": {
+      "annual_revenue": [
+        "NetRevenues",
+        "ProductRevenue",
+        "ServiceRevenue",
+        "Revenues"
+      ],
+      "annual_cogs": [
+        "CostOfProductsSold",
+        "CostOfRevenue",
+        "CostOfSales"
+      ]
+    },
+    "consumer": {
+      "annual_revenue": [
+        "NetSales",
+        "SalesRevenueNet",
+        "Revenues"
+      ],
+      "annual_cogs": [
+        "CostOfSales",
+        "CostOfGoodsAndServicesSold",
+        "CostOfRevenue"
+      ]
+    },
+    "energy": {
+      "annual_revenue": [
+        "SalesAndOtherOperatingRevenues",
+        "RevenuesAndOtherIncome",
+        "Revenues"
+      ],
+      "annual_cogs": [
+        "ProductionCosts",
+        "OperatingCosts",
+        "LiftingCosts",
+        "CostOfRevenue"
+      ]
+    },
+    "telecom": {
+      "annual_revenue": [
+        "OperatingRevenues",
+        "TotalRevenues",
+        "ServiceRevenue",
+        "Revenues"
+      ],
+      "annual_cogs": [
+        "CostOfServices",
+        "NetworkCosts",
+        "CostOfRevenue"
+      ]
+    },
+    "utility": {
+      "annual_revenue": [
+        "UtilityRevenue",
+        "OperatingRevenues",
+        "TotalRevenues"
+      ],
+      "annual_cogs": [
+        "CostOfFuelAndPurchasedPower",
+        "OperatingExpenses",
+        "CostOfRevenue"
+      ]
+    },
+    "materials": {
+      "annual_revenue": [
+        "NetSales",
+        "SalesAndServicesRevenues",
+        "Revenues"
+      ],
+      "annual_cogs": [
+        "CostOfProductsSold",
+        "CostOfSales",
+        "CostOfGoodsAndServicesSold"
+      ]
+    },
+    "transport": {
+      "annual_revenue": [
+        "OperatingRevenues",
+        "PassengerRevenue",
+        "FreightRevenue",
+        "Revenues"
+      ],
+      "annual_cogs": [
+        "OperatingExpenses",
+        "CostOfServices",
+        "CostOfRevenue"
+      ]
+    },
+    "aerospace_defense": {
+      "annual_revenue": [
+        "SalesRevenueGoodsNet",
+        "SalesRevenueServicesNet",
+        "Revenues"
+      ],
+      "annual_cogs": [
+        "CostOfProductsSold",
+        "CostOfServices",
+        "CostOfRevenue"
+      ]
+    },
+    "bank": {
+      "annual_revenue": [
+        "TotalRevenue",
+        "NetRevenue",
+        "NetInterestIncome",
+        "NoninterestIncome",
+        "TotalNetRevenue"
+      ],
+      "accounts_receivable": [
+        "ReceivablesNetCurrent",
+        "AccountsReceivableNetCurrent"
+      ]
+    },
+    "broker_dealer": {
+      "annual_revenue": [
+        "NetRevenues",
+        "TradingRevenue",
+        "InvestmentBankingRevenue",
+        "CommissionRevenue"
+      ],
+      "accounts_receivable": [
+        "ReceivablesNetCurrent",
+        "AccountsReceivableNetCurrent"
+      ]
+    },
+    "insurance": {
+      "annual_revenue": [
+        "TotalRevenue",
+        "NetRevenue",
+        "PremiumsEarned",
+        "PremiumsEarnedNet"
+      ]
+    },
+    "reit": {
+      "annual_revenue": [
+        "TotalRevenues",
+        "RentalIncome",
+        "LeaseRevenue",
+        "RealEstateRevenueNet"
+      ]
+    }
+  },
+  "not_applicable": {
+    "bank": [
+      "annual_cogs",
+      "inventory"
+    ],
+    "broker_dealer": [
+      "annual_cogs",
+      "inventory"
+    ],
+    "insurance": [
+      "annual_cogs",
+      "inventory"
+    ],
+    "reit": [
+      "annual_cogs",
+      "inventory"
+    ]
+  }
+}

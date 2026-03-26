@@ -1,0 +1,278 @@
+{
+  "run_at": "2026-02-20T16:56:54.808096Z",
+  "start_year": 2023,
+  "end_year": 2025,
+  "tickers": [
+    "AAPL",
+    "TSLA",
+    "XOM",
+    "JPM",
+    "BAC",
+    "WFC",
+    "GS",
+    "AIG",
+    "PGR",
+    "UNH"
+  ],
+  "details": {
+    "AAPL": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 90.67
+    },
+    "TSLA": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 90.84
+    },
+    "XOM": {
+      "success": true,
+      "profile": "industrial",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 96.43
+    },
+    "JPM": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 81.7
+    },
+    "BAC": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 80.87
+    },
+    "WFC": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 83.74
+    },
+    "GS": {
+      "success": true,
+      "profile": "bank",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 71.54
+    },
+    "AIG": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 81.54
+    },
+    "PGR": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 73.21
+    },
+    "UNH": {
+      "success": true,
+      "profile": "insurance",
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "latest_year": 2025,
+      "coverage_latest_pct": 100.0,
+      "coverage_any_pct": 100.0,
+      "missing_latest": [],
+      "missing_any": [],
+      "elapsed_sec": 75.9
+    }
+  },
+  "summary": {
+    "industrial": {
+      "count": 3,
+      "avg_coverage_latest_pct": 100.0,
+      "avg_coverage_any_pct": 100.0,
+      "worst_latest": [
+        [
+          100.0,
+          "AAPL"
+        ],
+        [
+          100.0,
+          "TSLA"
+        ],
+        [
+          100.0,
+          "XOM"
+        ]
+      ],
+      "worst_any": [
+        [
+          100.0,
+          "AAPL"
+        ],
+        [
+          100.0,
+          "TSLA"
+        ],
+        [
+          100.0,
+          "XOM"
+        ]
+      ]
+    },
+    "bank": {
+      "count": 4,
+      "avg_coverage_latest_pct": 100.0,
+      "avg_coverage_any_pct": 100.0,
+      "worst_latest": [
+        [
+          100.0,
+          "BAC"
+        ],
+        [
+          100.0,
+          "GS"
+        ],
+        [
+          100.0,
+          "JPM"
+        ],
+        [
+          100.0,
+          "WFC"
+        ]
+      ],
+      "worst_any": [
+        [
+          100.0,
+          "BAC"
+        ],
+        [
+          100.0,
+          "GS"
+        ],
+        [
+          100.0,
+          "JPM"
+        ],
+        [
+          100.0,
+          "WFC"
+        ]
+      ]
+    },
+    "insurance": {
+      "count": 3,
+      "avg_coverage_latest_pct": 100.0,
+      "avg_coverage_any_pct": 100.0,
+      "worst_latest": [
+        [
+          100.0,
+          "AIG"
+        ],
+        [
+          100.0,
+          "PGR"
+        ],
+        [
+          100.0,
+          "UNH"
+        ]
+      ],
+      "worst_any": [
+        [
+          100.0,
+          "AIG"
+        ],
+        [
+          100.0,
+          "PGR"
+        ],
+        [
+          100.0,
+          "UNH"
+        ]
+      ]
+    }
+  }
+}

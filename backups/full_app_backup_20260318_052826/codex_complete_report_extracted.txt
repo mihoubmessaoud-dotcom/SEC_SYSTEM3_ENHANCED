@@ -1,0 +1,888 @@
+
+CODEX v5 — تقرير المراجعة النهائية
+هل التطبيق وصل للمستوى الاحترافي؟
+NVDA  •  JPM  •  TSLA  •  UNH  |  21 فبراير 2026
+
+1. الحكم الإجمالي — هل التطبيق احترافي؟
+
+بعد الفحص الدقيق لكل النسب والمخرجات عبر الشركات الأربع، الإجابة الصريحة:
+
+NVDA
+JPM
+TSLA
+UNH
+82%
+78%
+80%
+55%
+قوي لسنوات 2022-2025
+مشكلة Stock Split 2020
+إصلاح ممتاز لـ Cost_of_Debt
+مشاكل متبقية في 2020/2021
+نسب ربحية ممتازة
+مشاكل بيانات 2020
+أضعف الأربعة
+12 نسبة مكررة + Beta خاطئ
+
+✅ ما تم إنجازه
+• ROE/ROA/Net_Margin: دقة 100% لكل الشركات
+• JPM Cost_of_Debt: إصلاح كامل (من 21% → 3.4%)
+• NVDA: نسب 2022-2025 دقيقة تماماً
+• TSLA Fair_Value: أصبح بالدولار/سهم ✅
+• UNH: نسبة التحمل الطبي + رأس المال موجودة
+❌ مشاكل لا تزال قائمة
+• NVDA EPS/PE 2020: خطأ 10x (Stock Split)
+• UNH: 12 نسبة مكررة بين 2024 و2025
+• UNH Beta 2025: 0.046 (يجب 0.55-0.70)
+• JPM/TSLA: بيانات 2020/2021 ناقصة ومكررة
+• NVDA/TSLA Fair_Value: منهجية DCF تحتاج مراجعة
+
+الخلاصة: التطبيق وصل لمستوى جيد في نسب الربحية والكفاءة، لكنه لم يصل للمستوى الاحترافي الكامل بسبب 4 مشاكل جوهرية تؤثر على موثوقية التحليل. السنة الأقدم (2020) معطوبة في أغلب الشركات، وUNH تحتاج إعادة بناء لبيانات 2025.
+
+2. NVDA — نفيديا (تقنية / رقائق الذكاء الاصطناعي)
+
+2.1 ما هو دقيق ✅ — نسب 2022-2025 بدقة 100%
+النسبة
+2021
+2022
+2023
+2024
+2025
+تقييم
+Gross Margin
+62.3%
+64.9%
+56.9%
+72.7%
+75.0%
+✅ دقة 100%
+Operating Margin
+27.2%
+37.3%
+15.7%
+54.1%
+62.4%
+✅ دقة 100%
+Net Margin
+26.0%
+36.2%
+16.2%
+48.9%
+55.9%
+✅ دقة 100%
+ROE
+25.6%
+36.7%
+19.8%
+69.2%
+91.9%
+✅ ارتفاع مذهل
+ROA
+15.1%
+22.1%
+10.6%
+45.3%
+65.3%
+✅ استثنائي
+ROIC
+14.4%
+19.9%
+9.6%
+47.3%
+68.8%
+✅ أفضل في القطاع
+EPS (2022-2025)
+1.756
+3.907
+0.176
+1.205
+2.968
+✅ split-adjusted
+P/E 2025
+—
+—
+—
+111.4x
+62.8x
+✅ منطقي لـ AI
+Cost_of_Debt
+—
+—
+—
+—
+2.32%
+✅
+WACC 2025
+—
+—
+—
+—
+15.6%
+✅ مناسب لـ high-risk
+EV/EBITDA 2025
+—
+—
+—
+—
+54.8x
+✅ AI premium
+
+2.2 المشاكل المكتشفة ❌
+المشكلة #1 — Stock Split 10:1 (يونيو 2024)
+NVDA أجرت تجزئة أسهم بنسبة 10:1 في يونيو 2024. CODEX لا يُعدّل بيانات 2020 و2021 لتعكس هذه التجزئة:
+
+المقياس
+2020 CODEX
+2020 الصحيح
+2021 CODEX
+2021 الصحيح
+التأثير
+Shares (M)
+609M 🔴
+6,090M ✅
+2,467M 🔴
+24,670M ✅
+10x خطأ
+EPS
+4.591 🔴
+0.459 ✅
+1.756 🔴
+0.176 ✅
+10x خطأ
+P/E
+2.84x 🔴
+~60x ✅
+16.75x 🔴
+~65x ✅
+مُضلل كلياً
+Fair_Value
+NaN 🔴
+—
+$14.9 🔴
+~$5-15 ✅
+التقييم مشوه
+
+الإصلاح المطلوب:
+# NVDA Stock Split: 10:1 في يونيو 2024
+SPLIT_DATES = {'NVDA': {'date': '2024-06', 'ratio': 10}}
+
+# عند استخراج Shares لسنوات قبل 2024:
+if ticker == 'NVDA' and int(year) < 2024:
+    shares_adjusted = raw_shares * split_ratio  # 609 → 6,090
+    eps_adjusted = net_income / shares_adjusted  # 2796/6090 = 0.459
+
+# نتيجة: P/E 2020 = mcap_2020/share / eps_adjusted = 52.1/0.459 = 113x ✅
+
+المشكلة #2 — Fair_Value 2025 = $438.81 (مبالغ)
+السعر الفعلي لـ NVDA في 2025 ≈ $120-135 بعد التجزئة. CODEX يعطي $438.81 أي ثلاثة أضعاف السعر.
+السبب المحتمل: حساب DCF يستخدم أسهم pre-split (2.45B) بدل post-split (24.5B)، ما يُضخّم القيمة/سهم 10x.
+
+3. JPM — جيبي مورغان (مصرفي)
+
+3.1 الإنجازات — تحسّن ملحوظ ✅
+المقياس
+2022
+2023
+2024
+2025
+حكم
+Cost_of_Debt 🔧 مُصلَح
+0.85%
+2.95%
+3.56%
+3.40%
+✅ إصلاح كامل
+ROE
+12.9%
+15.1%
+16.1%
+15.7%
+✅ دقيق
+Net Interest Margin
+2.51%
+4.52%
+4.67%
+4.37%
+✅ يعكس رفع الفائدة
+Bank Efficiency Ratio
+NaN
+47.7%
+52.3%
+50.6%
+⚠️ NaN 2020-2022
+P/B Ratio
+1.35x
+1.49x
+1.85x
+2.40x
+✅ الأهم للبنوك
+EPS
+$12.70
+$16.86
+$20.34
+$20.55
+✅ دقيق
+
+3.2 المشاكل المتبقية ❌
+المشكلة
+قيمة CODEX
+القيمة الصحيحة
+الشدة
+الإصلاح
+total_debt 2020
+1,025,995M
+~450,000M
+🔴 حرج
+استخدام مجموع LT+ST Debt فقط بدل الإجمالي المشوه
+total_debt 2021 (مكرر من 2020)
+1,025,995M
+~400,000M
+🔴 حرج
+نفس الإصلاح — تعريف ثابت للـ debt
+Bank Efficiency Ratio 2020-2022
+NaN
+60-65%
+⚠️ متوسط
+استخراج NonInterestExpense من 10-K 2020-2022
+WACC 2025 مكرر من 2024
+7.60%
+7-9%
+⚠️ متوسط
+WACC يجب أن يُحسب سنوياً بـ Beta و rf محدّثَين
+loan_to_deposit 2025 = 2024
+54.01%
+~55%
+⚠️ منخفض
+بيانات Loans/Deposits 2025 لم تُضاف بعد
+
+4. TSLA — تسلا (سيارات كهربائية)
+
+4.1 نسب دقيقة ومهمة ✅
+النسبة
+2020
+2021
+2022
+2024
+2025
+حكم
+Gross Margin
+38.0%
+37.3%
+25.6%
+17.9%
+18.0%
+✅ يعكس ضغط الأسعار
+Net Margin
+10.5%
+6.9%
+15.5%
+7.3%
+4.1%
+✅ تراجع واضح
+ROE
+25.4%
+12.6%
+28.2%
+9.8%
+4.7%
+✅ دقيق
+WACC
+12.9%
+15.1%
+17.2%
+14.4%
+15.3%
+✅ مناسب للمخاطر
+Fair_Value $/سهم
+NaN
+$111.6
+$66.1
+$152.8
+$97.4
+✅ وحدة صحيحة الآن
+EV/EBITDA
+—
+—
+21.8x
+104x
+160x
+✅ يعكس توقعات FSD
+Economic_Spread
+—
+-5.9%
++2.2%
+-8.4%
+-12.1%
+✅ ROIC<WACC=تدمير قيمة
+
+4.2 المشاكل المتبقية ❌
+المشكلة
+القيمة الخاطئة
+الصحيح
+التشخيص والإصلاح
+inventory_turnover 2020
+165x 🔴
+5-8x
+Inventory 2020 = 202M في Layer1 — ضغير جداً. المصدر: CostOfSales 2020 = 33,394M يُستخدم مع Inventory 2020 الخاطئة
+eps_basic 2020 = 2021
+1.907 مكرر
+NI2020/shares2020
+Layer1 يُكرر قيم 2021 في 2020 لـ TSLA. NI 2020 = 721M / 3,163M أسهم = 0.228 — يجب معالجة التكرار في استخراج البيانات
+quick_ratio/cash_ratio 2020
+NaN
+~0.8
+CurrentAssets/CurrentLiabilities 2020 غير متاح. يجب جلب Balance Sheet 2020 من 10-K مباشرة
+Fair_Value 2021: $111/سهم
+$111.6
+—
+سعر 2021 كان $700-1100. DCF يُقدّر بخصم 88% عن السعر السوقي. DCF متحفظ جداً لشركات النمو — يجب إضافة تعليق تحذيري
+
+5. UNH — يونايتد هيلث (تأمين صحي)
+
+UNH هي أكبر شركة تأمين صحي في العالم. المراجعة كشفت أن بياناتها لسنة 2025 غير مكتملة، ما أدى لتكرار 12 نسبة من 2024.
+
+5.1 ما هو صحيح ✅
+النسبة
+2022
+2023
+2024
+حكم
+ROE
+25.3%
+24.5%
+15.5%
+✅ يعكس تراجع 2024
+ROA
+8.4%
+8.5%
+5.1%
+✅ دقيق
+Net Margin
+6.4%
+6.2%
+3.8%
+✅ يعكس ضغط المطالبات
+Combined Ratio Proxy
+82.0%
+83.2%
+85.6%
+✅ نسبة تأمين صحيحة
+P/E
+24.1x
+21.1x
+30.6x
+✅ مناسب
+EPS
+$22.03
+$24.94
+$16.55
+✅ يعكس الغرامة القانونية
+Dividend Yield
+1.21%
+1.38%
+1.62%
+✅
+
+5.2 المشاكل الحرجة في UNH ❌
+المشكلة #1 — 12 نسبة مكررة بين 2024 و2025 (الأخطر)
+بيانات 2025 لـ UNH غير متوفرة كاملة، ما جعل CODEX يُكرر قيم 2024 بدلاً من وضع NaN أو التوضيح:
+
+النسبة المكررة
+2024
+2025 CODEX
+2025 الصحيح
+الخطر
+roa
+5.11%
+5.11% 🔴
+مجهول
+يُوهم المحلل بأن 2025 = 2024، قد يؤدي لقرارات استثمارية خاطئة
+roe
+15.51%
+15.51% 🔴
+مجهول
+نفس الخطر
+net_margin
+3.81%
+3.81% 🔴
+مجهول
+UNH 2025 تأثرت بأزمة الرعاية الصحية — الهامش قد يكون أدنى
+combined_ratio_proxy
+85.6%
+85.6% 🔴
+مجهول
+نسبة المطالبات/الأقساط يجب أن تُحسب من بيانات 2025 الفعلية
+capital_adequacy_proxy
+32.95%
+32.95% 🔴
+مجهول
+وبالإضافة: net_income_to_assets مكررة أيضاً
+
+الإصلاح المطلوب:
+# بدل تكرار القيم، يجب:
+if data_not_available(ticker, year):
+    ratio_value = np.nan  # وضع NaN واضح
+    data_note = f'{year}: بيانات غير مكتملة'
+    # لا تُكرر القيمة السابقة أبداً
+
+المشكلة #2 — Beta/WACC 2025 خاطئان جذرياً
+المقياس
+2021
+2022
+2023
+2024
+2025 — المشكلة
+Beta
+0.82
+0.74
+0.50
+0.33
+0.046 🔴 — مستحيل! UNH Beta الفعلي ≈ 0.55-0.70
+WACC
+5.68%
+7.45%
+6.38%
+6.13%
+4.34% 🔴 — منخفض جداً (يعتمد على Beta الخاطئ)
+السبب: بيانات Layer3_Macro أو Layer2_Market لـ 2025 تحتوي على Beta غير صحيح (0.046). WACC يُبنى على Beta، فيتأثر تبعاً لذلك.
+الأثر: كل حسابات Fair_Value وInvestment_Score وEconomic_Spread لـ 2025 مشوّهة.
+
+المشكلة #3 — Credit_Rating 2025 = NaN
+بينما Credit_Rating 2024 = A، قيمة 2025 غائبة تماماً بدون سبب واضح. يجب إما الحفاظ على آخر تقييم أو وضع NaN مع تفسير.
+
+6. المشاكل الهيكلية المشتركة — تؤثر على جميع الشركات
+
+#
+المشكلة الهيكلية
+NVDA
+JPM
+TSLA
+UNH
+الحل
+1
+تكرار بيانات السنة الأولى من السنة الثانية
+—
+2020=2021
+2020=2021
+—
+وضع NaN للسنوات غير المكتملة
+2
+تكرار بيانات آخر سنة متاحة في سنة مستقبلية
+—
+2024=2025 (5)
+div=0 فقط
+12 نسبة
+مؤشر واضح عدم الاكتمال
+3
+Stock Split لم يُعالَج
+10:1 ❌
+—
+—
+—
+قاموس split تلقائي
+4
+Beta معطوب يُشوه WACC والتقييم
+—
+—
+—
+2025❌
+Validation: 0.1<Beta<3
+5
+Fair_Value DCF لا يُعدَّل لـ Stock Split
+$438 ❌
+—
+⚠️ متحفظ
+—
+ربط FV بعدد الأسهم المُعدَّل
+6
+Efficiency Ratio مفقود للسنوات الأولى (JPM)
+—
+NaN 2020-22
+—
+—
+جلب NonInterestExpense من 10-K
+7
+غياب نسب النمو (Revenue/NI Growth)
+مفقود
+مفقود
+مفقود
+مفقود
+إضافة لجميع الشركات
+
+7. أوامر الإصلاح — مرتبة حسب الأولوية
+
+أولوية
+شركة
+المشكلة
+الأثر
+الكود
+P1
+UNH
+12 نسبة مكررة 2024→2025
+يُوهم بأن 2025 مكتمل
+if v24==v25: v25=NaN
+P1
+NVDA
+EPS/PE 2020-2021 خطأ 10x (Stock Split)
+P/E 2020 = 2.84x بدل 60x+
+shares*=10 if yr<2024
+P1
+UNH
+Beta 2025 = 0.046 (يجب 0.55-0.70)
+WACC 4.3% بدل 7-9% → FV خاطئ
+assert 0.1<beta<3.0
+P2
+JPM
+total_debt 2020/2021 = 1,025,994M (مكرر ومشوه)
+D/E وDebt_to_Assets مشوهان
+LongTermDebt+ShortTermDebt
+P2
+TSLA
+بيانات 2020 مكررة من 2021 (Inventory, EPS, Interest)
+inventory_turnover 2020 = 165x
+جلب 10-K 2020 TSLA مباشرة
+P2
+NVDA
+Fair_Value 2025 = $438 بدل ~$135 (split غير محسوب)
+DCF يُبالغ 3.25x
+fv_per_share/=split_ratio
+P3
+الكل
+Revenue Growth YoY مفقود من جميع الشركات
+لا يمكن قياس زخم النمو
+(R_t-R_{t-1})/R_{t-1}
+P3
+JPM
+Bank Efficiency Ratio NaN لـ 2020/2021/2022
+فجوة تحليلية في 3 سنوات
+NonInterestExpense/Revenue
+
+8. الحكم النهائي — هل التطبيق احترافي؟
+
+الشركة
+نسب الربحية
+نسب التقييم
+بيانات تاريخية
+نسب قطاعية
+الحكم والتوصية
+NVDA
+✅ 100%
+⚠️ 70%
+❌ 50%
+⚠️ 75%
+قوي جداً لـ 2022-2025. 2020-2021 مشوهان بسبب Stock Split. الإصلاح سريع (سطر واحد).
+JPM
+✅ 95%
+✅ 85%
+⚠️ 65%
+✅ 85%
+تحسن ملحوظ جداً. Cost_of_Debt مُصلَح. مشاكل بيانات 2020 تحتاج جلب 10-K المفقودة.
+TSLA
+✅ 100%
+✅ 85%
+⚠️ 65%
+✅ 80%
+ممتاز لـ 2021-2025. 2020 يكرر 2021 — مشكلة في الاستخراج. Fair_Value وحدة صحيحة الآن.
+UNH
+⚠️ 80%
+⚠️ 70%
+❌ 40%
+⚠️ 60%
+أضعف الأربعة. 2025 غير مكتمل ويُعرض كأنه مكتمل. Beta معطوب. يحتاج أكبر إعادة عمل.
+
+🏆 الحكم الأخير
+
+التطبيق وصل لمستوى احترافي جزئي (75%) وليس احترافياً كاملاً بعد.
+
+✅ نسب الربحية والكفاءة (ROE, ROA, Margins, ROIC, Cost_of_Debt): دقة استثنائية — يمكن الاعتماد عليها.
+✅ التحليل الاستراتيجي (WACC, Economic_Spread, Beta, EV/EBITDA): جيد لـ NVDA/JPM/TSLA.
+❌ السنوات التاريخية الأولى (2020/2021): معطوبة في 3 شركات من 4.
+❌ UNH 2025: بيانات مكررة كاملة — لا يمكن الاعتماد على أي نسبة.
+❌ Stock Split: NVDA EPS/PE 2020-2021 مشوهان 10x.
+
+للوصول للاحترافية الكاملة: حل P1 + P2 كافٍ (تقدر 3-5 أيام عمل). بعدها ستصل الدقة لـ 92%+.
+
+CODEX Final Audit  |  4 شركات  |  فبراير 2026  |  تحليل مستقل
+
+الملحق — رسالة التصحيح لكودكس
+أضف هذه الرسالة مباشرة لكودكس مع الكود المصدري للتطبيق
+نُسخ الرسالة الكاملة أدناه — ابدأ من السطر التالي للفاصل
+
+📋  رسالة تصحيح لكودكس — أولوية قصوى
+
+الموضوع: 4 مشاكل حرجة يجب إصلاحها في محرك CODEX (مُحددة بأرقام ومبررة)
+المصدر: مراجعة مستقلة لمخرجات NVDA / JPM / TSLA / UNH — 21 فبراير 2026
+الأثر: هذه المشاكل تجعل مخرجات بعض الشركات غير موثوقة للاستخدام الاستثماري
+
+🔴 المشكلة #1 — UNH: 12 نسبة مكررة من 2024 إلى 2025
+
+البند
+الوضع الحالي ❌
+المطلوب ✅
+المشكلة
+بيانات 2025 لـ UNH غير مكتملة، لكن CODEX يُكرر قيم 2024 بدلاً من الإشارة لذلك. النتيجة: المستخدم يظن أن 2025 محسوب فعلاً.
+إذا لم تتوفر بيانات السنة → ضع NaN صريح، ولا تُكرر قيمة السنة السابقة أبداً.
+النسب المكررة
+roa، roe، net_margin، combined_ratio_proxy، capital_adequacy_proxy، net_income_to_assets، Capital_Adequacy_Proxy، Combined_Ratio_Proxy، Net_Income_to_Assets، Net_Margin، ROA، ROE
+كل هذه = NaN في 2025 حتى تتوفر البيانات الرسمية
+إثبات رقمي
+ROE 2024 = 0.1551 | ROE 2025 = 0.1551 (فارق = 0.0000 → مستحيل في الواقع)
+UNH في 2025 تأثرت بأزمة الرعاية الصحية — الهامش بالتأكيد تغيّر
+
+الكود المطلوب:
+# بعد حساب كل النسب لكل سنة:
+def detect_and_null_duplicates(df, ticker):
+    """إذا كانت قيمة 2025 = 2024 للأكثر من 5 نسب → الغِ 2025 كلها"""
+    cols = [c for c in df.columns if str(c).isdigit()]
+    if len(cols) < 2: return df
+    yr_last, yr_prev = str(cols[-1]), str(cols[-2])
+    numeric_rows = df.select_dtypes(include='number')
+    matches = (numeric_rows[yr_last] == numeric_rows[yr_prev]).sum()
+    if matches > 5:  # أكثر من 5 نسب متطابقة = بيانات مكررة
+        print(f'WARNING: duplicate year detected')
+        df[yr_last] = df[yr_last].where(df[yr_last] != df[yr_prev], other=float('nan'))
+    return df
+
+🔴 المشكلة #2 — NVDA: تجزئة الأسهم (Stock Split 10:1) لم تُعالَج
+
+البند
+الوضع الحالي ❌
+المطلوب ✅
+التفاصيل
+NVDA أجرت تجزئة أسهم 10:1 في يونيو 2024. CODEX يستخدم عدد الأسهم القديم (609M في 2020) بدل المُعدَّل (6,090M).
+ضاعف عدد الأسهم × 10 لكل سنة قبل 2024، وأعِد حساب EPS وFair_Value.
+إثبات رقمي
+EPS 2020 CODEX = 4.591 | الصحيح = 0.459
+P/E 2020 CODEX = 2.84x | الصحيح = ~113x
+Fair_Value 2025 = $438 | الصحيح ~$130-140
+NI 2020 = 2,796M ÷ 6,090M سهم (بعد تعديل) = EPS 0.459
+P/E = سعر $52 ÷ EPS $0.459 = 113x ✅
+
+الكود المطلوب:
+# قاموس جميع تجزئات الأسهم — يجب توسيعه لكل الشركات
+STOCK_SPLITS = {
+    'NVDA': [{'year': 2024, 'ratio': 10}],  # 10:1 يونيو 2024
+    'TSLA': [{'year': 2022, 'ratio': 3}],   # 3:1 أغسطس 2022
+    'AAPL': [{'year': 2020, 'ratio': 4}],   # 4:1 أغسطس 2020
+}
+
+def adjust_for_splits(ticker, year, shares_raw, ni, fair_value_total):
+    splits = STOCK_SPLITS.get(ticker, [])
+    cumulative_ratio = 1
+    for split in splits:
+        if int(year) < split['year']:
+            cumulative_ratio *= split['ratio']
+    shares_adjusted = shares_raw * cumulative_ratio
+    eps_adjusted = ni / shares_adjusted
+    fv_per_share = fair_value_total / shares_adjusted
+    return shares_adjusted, eps_adjusted, fv_per_share
+
+# مثال NVDA 2020:
+# shares_adjusted = 609 * 10 = 6,090M
+# eps = 2,796 / 6,090 = 0.459  ✅
+# P/E = price(5.21 × 10) / 0.459 = 113x  ✅
+
+🔴 المشكلة #3 — UNH/كل الشركات: Beta معطوب يُشوه WACC والتقييم
+
+البند
+الوضع الحالي ❌
+المطلوب ✅
+التفاصيل
+Beta UNH 2025 = 0.046 (مستحيل لشركة من هذا الحجم). Beta الفعلي لـ UNH ≈ 0.55-0.70. النتيجة: WACC = 4.34% بدل 7-9%، وكل حسابات Fair_Value وInvestment_Score معطوبة.
+أضف validation صارم: إذا كان Beta خارج النطاق المنطقي، استخدم قيمة السنة السابقة أو القيمة التاريخية للقطاع.
+إثبات رقمي
+Beta 2020=0.73 | 2021=0.82 | 2022=0.74 | 2023=0.50 | 2024=0.33 | 2025=0.046
+كل السنوات منطقية ما عدا 2025 — قفزة مستحيلة
+Beta الصحيح 2025 ≈ 0.5-0.7 (يعتمد على تراجع السهم وليس على خطأ في البيانات)
+
+الكود المطلوب:
+# حدود Beta المقبولة حسب القطاع
+BETA_BOUNDS = {
+    'technology':   (0.8, 3.0),
+    'banking':      (0.8, 2.0),
+    'healthcare':   (0.3, 1.5),
+    'auto_ev':      (1.0, 3.5),
+    'default':      (0.1, 3.0),
+}
+
+def validate_beta(ticker, year, beta_raw, sector, beta_prev_year):
+    lo, hi = BETA_BOUNDS.get(sector, BETA_BOUNDS['default'])
+    if not (lo <= beta_raw <= hi):
+        print('WARNING: Beta out of range')
+        # خيار 1: استخدم Beta السنة السابقة
+        if beta_prev_year and (lo <= beta_prev_year <= hi):
+            return beta_prev_year, 'fallback_prev_year'
+        # خيار 2: استخدم وسط النطاق
+        return (lo + hi) / 2, 'fallback_sector_median'
+    return beta_raw, 'ok'
+
+🔴 المشكلة #4 — TSLA/JPM: بيانات السنة الأولى مكررة من السنة التالية
+
+البند
+الوضع الحالي ❌
+المطلوب ✅
+TSLA 2020
+eps_basic 2020 = 1.907 = eps_basic 2021
+interest_coverage 2020 = 17.58 = 2021
+inventory_turnover 2020 = 165x (مستحيل)
+quick_ratio/cash_ratio 2020 = NaN
+EPS 2020 الصحيح = NI 721M ÷ 3,163M سهم = 0.228
+inventory_turnover 2020 = 33,394M ÷ Inventory 2020 الصحيح
+جلب Balance Sheet 2020 من 10-K مباشرة
+JPM 2020/2021
+total_debt 2020 = 1,025,994M
+total_debt 2021 = 1,025,994M (مكرر تماماً)
+bank_efficiency_ratio 2020/2021/2022 = NaN
+total_debt = LongTermDebt + ShortTermDebt فقط
+جلب NonInterestExpense من 10-K لحساب Efficiency Ratio
+إثبات رقمي TSLA
+NI 2020 = 721M | NI 2021 = 5,519M
+لكن EPS 2020 = EPS 2021 = 1.907 → مستحيل
+EPS 2020 = 721M / 3,163M = 0.228 ✅
+EPS 2021 = 5,519M / 3,036M = 1.817 ✅
+
+الكود المطلوب:
+def detect_year_duplication(df, ticker, fc):
+    """كشف إذا كانت أول سنة مكررة من الثانية"""
+    cols = [c for c in df.columns[1:] if str(c).isdigit()]
+    if len(cols) < 2: return
+    yr0, yr1 = str(cols[0]), str(cols[1])
+    numeric = df.select_dtypes(include='number')
+    identical = (numeric[yr0] == numeric[yr1]).sum()
+    total = numeric[yr0].notna().sum()
+    if total > 0 and identical / total > 0.5:
+        print(f'❌ {ticker}: سنة {yr0} = {yr1} ({{}{identical}/{{}{total}}} نسبة) → تكرار')
+        df[yr0] = float('nan')  # امسح السنة المشبوهة
+
+# لـ JPM total_debt — تعريف ثابت:
+def get_total_debt(layer1, year):
+    lt = get_value(layer1, 'LongTermDebt', year) or 0
+    st = get_value(layer1, 'ShortTermBorrowings', year) or 0
+    cp = get_value(layer1, 'LongTermDebtCurrentMaturities', year) or 0
+    return lt + st + cp  # وليس إجمالي كل الخصوم!
+
+⚠️ إصلاحات إضافية — أولوية P2
+
+#
+الشركة
+المشكلة
+الإصلاح
+5
+الكل
+Revenue Growth YoY مفقود من جميع الشركات — أهم مقياس لزخم النمو
+revenue_growth = (Rev_t - Rev_{t-1}) / Rev_{t-1} لكل سنة من 2021
+6
+NVDA
+Fair_Value 2025 = $438 (مبالغ × 3.25 عن السعر الفعلي) — سبب: DCF لا يُطبق Split
+fair_value_per_share = dcf_total / shares_adjusted (بعد ضرب × 10)
+7
+NVDA
+Altman Z 2024 = 3.92 (منخفض لشركة بـ ROE 69% و ROA 45%) — يبدو خطأ في المقام
+تحقق من معادلة Altman Z: يجب استخدام Total Assets وليس Net Assets
+8
+JPM
+Bank Efficiency Ratio: NaN في 2020/2021/2022 — فجوة تحليلية في 3 سنوات
+efficiency = NonInterestExpense / (NetInterestIncome + NonInterestIncome)
+9
+UNH
+Credit_Rating 2025 = NaN — الغياب بدون سبب يُربك المستخدم
+إذا لم تتغير البيانات: احتفظ بآخر تقييم وأضف ملاحظة 'غير مُحدَّث'
+10
+TSLA
+Fair_Value 2021 = $111/سهم (السعر الفعلي كان $700-1100) — DCF متحفظ جداً
+أضف تعليق تحذيري: 'DCF يعكس التدفقات الأساسية — لا يشمل توقعات FSD/AI'
+
+🛡️ إطار التحقق الشامل — أضِفه للـ Pipeline
+
+هذا الكود يكتشف تلقائياً كل المشاكل الأربع ويرفض المخرجات الخاطئة قبل حفظها:
+
+class CODEXValidator:
+    BETA_MIN, BETA_MAX = 0.1, 3.5
+    PE_MIN,  PE_MAX   = 3.0, 1500.0
+    MARGIN_MIN = -0.5   # -50% أدنى هامش مقبول
+    MARGIN_MAX =  0.95  # 95% أعلى هامش مقبول
+
+    STOCK_SPLITS = {
+        'NVDA': [('2024', 10)],
+        'TSLA': [('2022', 3)],
+        'AAPL': [('2020', 4)],
+    }
+
+    def validate(self, ticker, year, ratios: dict, prev_year_ratios: dict):
+        errors, warnings = [], []
+
+        # 1. كشف التكرار مع السنة السابقة
+        if prev_year_ratios:
+            matches = sum(1 for k in ratios
+                if k in prev_year_ratios
+                and ratios[k] == prev_year_ratios[k]
+                and ratios[k] is not None)
+            if matches > 5:
+                errors.append('DUPLICATE_YEAR: نسب مكررة من السنة السابقة')
+
+        # 2. Beta
+        beta = ratios.get('beta')
+        if beta and not (self.BETA_MIN <= beta <= self.BETA_MAX):
+            errors.append('INVALID_BETA: Beta خارج النطاق المسموح')
+
+        # 3. Stock Split
+        splits = self.STOCK_SPLITS.get(ticker, [])
+        for split_year, ratio in splits:
+            if int(year) < int(split_year):
+                eps = ratios.get('eps_basic', 0)
+                eps_prev = (prev_year_ratios or {}).get('eps_basic', 0)
+                if eps and eps_prev and eps / eps_prev > ratio * 0.8:
+                    warnings.append('SPLIT_UNADJUSTED: EPS لم يُعدَّل للـ Stock Split')
+
+        # 4. نسب مستحيلة
+        for m in ['gross_margin','net_margin','operating_margin']:
+            v = ratios.get(m)
+            if v is not None and not (self.MARGIN_MIN <= v <= self.MARGIN_MAX):
+                errors.append(f'IMPOSSIBLE_MARGIN: هامش مستحيل')
+
+        return {'errors': errors, 'warnings': warnings,
+                'status': 'FAIL' if errors else ('WARN' if warnings else 'OK')}
+
+📋 خطوات التنفيذ — بالترتيب الدقيق
+
+الخطوة
+الشركة
+الإجراء
+معيار النجاح
+1
+NVDA
+أضف STOCK_SPLITS dictionary → طبّق adjust_for_splits() على كل سنة قبل 2024
+P/E 2020 يجب أن يصبح 90-120x | EPS 2020 = 0.459
+2
+UNH
+أضف detect_and_null_duplicates() في نهاية pipeline → طبّق على UNH 2025
+12 نسبة تصبح NaN في 2025 بدل قيم مكررة
+3
+الكل
+أضف validate_beta() قبل حساب WACC → إذا Beta خاطئ استخدم fallback
+WACC UNH 2025 يجب أن يصبح 7-9% بدل 4.34%
+4
+TSLA/JPM
+أضف detect_year_duplication() → إذا 2020=2021 بنسبة >50% → امسح 2020
+inventory_turnover 2020 TSLA يصبح NaN | EPS 2020 يُحسب من Layer1
+5
+NVDA
+بعد تطبيق Split على الأسهم → أعِد حساب Fair_Value per share = DCF / adjusted_shares
+Fair_Value 2025 يصبح ~$130-150 بدل $438
+6
+الكل
+أضف revenue_growth = (Rev_t - Rev_{t-1}) / Rev_{t-1} لكل شركة من 2021 فصاعداً
+نسبة جديدة في Ratios وStrategic لكل شركة
+7
+الكل
+أضف CODEXValidator في نهاية كل تحليل — إذا status='FAIL' لا تحفظ الملف
+صفر مخرجات بمشاكل P1 في المستقبل
+
+نتيجة متوقعة بعد تطبيق الإصلاحات
+
+الدقة الحالية:  NVDA 82% | JPM 78% | TSLA 80% | UNH 55%  →  متوسط 74%
+الدقة المتوقعة بعد P1+P2:  NVDA 96% | JPM 90% | TSLA 93% | UNH 85%  →  متوسط 91%
+
+وقت التنفيذ المقدَّر: 3-5 أيام عمل  |  الأثر: من تطبيق جيد → تطبيق احترافي
+
+نهاية رسالة التصحيح  |  CODEX Audit v5  |  21 فبراير 2026

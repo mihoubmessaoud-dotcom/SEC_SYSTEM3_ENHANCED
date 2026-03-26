@@ -1,0 +1,106 @@
+{
+  "AAPL": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  },
+  "MSFT": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  },
+  "TSLA": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  },
+  "CVX": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  },
+  "PFE": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 69.56521739130434,
+    "any_cov": 78.26086956521739,
+    "missing_latest": [
+      "pe_ratio",
+      "pb_ratio",
+      "dividend_yield",
+      "eps_basic",
+      "book_value_per_share",
+      "cost_of_debt",
+      "wacc"
+    ],
+    "missing_any": [
+      "pe_ratio",
+      "pb_ratio",
+      "dividend_yield",
+      "cost_of_debt",
+      "wacc"
+    ]
+  },
+  "NEE": {
+    "success": true,
+    "profile": "industrial",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  },
+  "JPM": {
+    "success": true,
+    "profile": "bank",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  },
+  "BAC": {
+    "success": true,
+    "profile": "bank",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  },
+  "AIG": {
+    "success": true,
+    "profile": "insurance",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  },
+  "PGR": {
+    "success": true,
+    "profile": "insurance",
+    "latest_year": 2025,
+    "latest_cov": 100.0,
+    "any_cov": 100.0,
+    "missing_latest": [],
+    "missing_any": []
+  }
+}

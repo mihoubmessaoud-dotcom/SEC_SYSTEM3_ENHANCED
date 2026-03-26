@@ -1,0 +1,340 @@
+تقرير التدقيق المقارن
+CODEX v2 → v3  |  ما الذي تغيّر؟ ما الذي بقي؟
+AAPL  •  JPM  •  TSLA  |  فبراير 2026
+1. بطاقة النتائج المقارنة: قبل وبعد
+المشكلة
+AAPL قبل
+AAPL بعد
+JPM قبل
+JPM بعد
+TSLA قبل / بعد
+ROE
+0.00088 ❌
+87%–197% ✅
+1.5×10⁻¹⁰ ❌
+15%–16% ✅
+2.5×10⁻⁷ ❌ → 5%–28% ✅
+Gross Margin
+غير موثوق ❌
+38%–47% ✅
+غ.م. ⚠️
+غ.م. ⚠️
+غير موثوق ❌ → 18%–38% ✅
+Balance Sheet
+6/6 ✅
+6/6 ✅
+فشل 2/3 ❌
+2024 ✅ فقط ⚠️
+-82K gap ❌ → 5/6 ✅
+Cost_of_Debt
+4% ثابت ⚠️
+غائب ❓
+2.09×10⁻⁷ ❌
+غائب ❓
+نانو ❌ → غائب ❓
+EV/EBITDA
+NaN ❌
+غائب ❓
+NaN ❌
+غائب ❓
+NaN ❌ → غائب ❓
+Fair Value
+0.023 ❌
+غائب ❓
+27M/سهم ❌
+غائب ❓
+5→150→7 ❌ → غائب ❓
+market_cap
+~2T دولار ❌
+~2T دولار ❌
+~490B دولار ❌
+~490B دولار ❌
+~883B دولار ❌ → ❌
+Net Margin / ROA
+✅
+✅
+✅
+✅
+✅ → ✅
+موثوقية إجمالية
+65% ⚠️
+72% ⚠️
+25% ❌
+60% ⚠️
+20%→65% ⚠️
+2. المكتسبات المؤكدة (الإصلاح نجح)
+2.1 ROE — إصلاح كامل ومثالي
+الشركة / النسبة
+2020
+2021
+2022
+2023
+2024
+2025
+AAPL ROE
+87.9% ✅
+150.1% ✅
+196.9% ✅
+156.1% ✅
+164.6% ✅
+151.9% ✅
+JPM ROE
+—
+—
+—
+15.1% ✅
+16.1% ✅
+NaN ❓
+TSLA ROE
+25.4% ✅
+12.6% ✅
+28.2% ✅
+23.9% ✅
+9.8% ✅
+4.7% ✅
+2.2 Gross Margin — إصلاح كامل
+الشركة
+2020
+2021
+2022
+2023
+2024
+2025
+AAPL Gross Margin
+38.2% ✅
+41.8% ✅
+43.3% ✅
+44.1% ✅
+46.2% ✅
+46.9% ✅
+TSLA Gross Margin
+38.0% ✅
+37.3% ✅
+25.6% ✅
+18.2% ✅
+17.9% ✅
+18.0% ✅
+2.3 Balance Sheet — تحسن جوهري
+الشركة
+2020
+2021
+2022
+2023
+2024
+2025
+قبل
+بعد
+AAPL
+✅
+✅
+✅
+✅
+✅
+✅
+6/6 ✅
+6/6 ✅ لا تغيير
+JPM
+—
+—
+—
+⚠️ gap*
+✅
+❌ NaN
+1/3
+1/3 → بيانات 2025 مفقودة
+TSLA
+⚠️ gap
+✅
+✅
+✅
+✅
+✅
+0/6 ❌
+5/6 ✅ تحسن كبير
+* JPM 2023: فجوة ظاهرة في الفحص بسبب وحدة Assets الخام (بالدولار) — القيم الفعلية صحيحة بعد التصحيح
+3. المشاكل المتبقية — أوامر إصلاح جديدة
+🔴 3.1 market_cap — لا يزال بالدولار الكامل (كل الشركات)
+market_cap مخزون كعدد ضخم (بالدولار) بينما كل النسب تعمل بالمليون دولار. يؤثر على: EV، EV/EBITDA، FCF_Yield، Fair Value.
+الشركة
+القيمة الحالية (خاطئة)
+القيمة الصحيحة (÷1M)
+التحقق من السعر الحالي
+AAPL 2025
+4,016,258,247,195 ❌
+4,016,258M = 4.0T$ ✅
+سعر ~248$ × 16.2B سهم ≈ 4.0T ✅
+JPM 2025
+868,769,567,291 ❌
+868,770M = 869B$ ✅
+سعر ~268$ × 2.7B سهم ≈ 724B ✅
+TSLA 2025
+1,686,899,724,579 ❌
+1,686,900M = 1.69T$ ✅
+سعر ~382$ × 3.2B سهم ≈ 1.22T ✅
+الأمر لكودكس:
+# في كل مكان يُخزن فيه market_cap:
+market_cap_M = shares_outstanding * price_per_share
+# إذا كان الناتج > 1_000_000_000:
+#   market_cap_M = market_cap_M / 1_000_000  (تحويل من دولار إلى مليون)
+# ثبّت القاعدة: market_cap دائماً بالمليون دولار
+# التحقق: 1M < market_cap < 20_000_000M (1M$ إلى 20T$)
+🔴 3.2 total_debt — متناقض بين السنوات
+total_debt يتناوب بين الدولار الكامل وبعض السنوات بالمليون — مما يعني أن منطق الاستخراج يختار مصادر مختلفة.
+الشركة
+2020
+2021
+2022
+2023
+2024
+2025
+حالة
+AAPL
+90,509M ✅
+111,495M ✅
+132,480M ✅
+111,088M ✅
+106,629M ✅
+98,657M ✅
+✅
+JPM
+436B ❌
+454,311M ✅
+—
+—
+—
+500B ❌
+❌
+TSLA
+14.7B ❌
+34,000M ✅
+5,748M ✅
+9,573M ✅
+13,623M ✅
+14,719M ✅
+⚠️
+الأمر لكودكس:
+# أضف total_debt إلى قاموس الأولويات:
+'TotalDebt': {
+'preferred': ['LongTermDebtAndCapitalLeaseObligation',
+'LongTermDebt', 'ShortTermBorrowings', 'total_debt'],
+'normalize': lambda v: v/1_000_000 if v > 1_000_000_000 else v
+}
+# التحقق: total_debt يجب أن يكون < Total Assets
+🟡 3.3 نسب مفقودة: ev_ebitda، cost_of_debt، wacc، fair_value
+هذه النسب لم تعد موجودة في ورقة Ratios — ليست خاطئة، لكنها غائبة كلياً. يحتمل أن CODEX حذفها بسبب فشل الحساب بدلاً من تصحيحها.
+النسبة
+الحالة
+المدخلات المطلوبة بعد إصلاح market_cap
+النطاق الصحيح المتوقع
+cost_of_debt
+❌ غائبة
+InterestExpense (M) ÷ TotalDebt (M)
+AAPL ~2.5-3.5% | JPM ~3-4% | TSLA ~3-6%
+wacc
+❌ غائبة
+يعتمد على cost_of_debt + ROE (محلول الآن)
+AAPL ~8-10% | JPM ~9-11% | TSLA ~10-14%
+ev_ebitda
+❌ غائبة
+(market_cap_M + total_debt_M - cash_M) ÷ EBITDA_M
+AAPL 28-50x | JPM 10-20x | TSLA 20-100x
+enterprise_value
+❌ غائبة
+market_cap_M + total_debt_M - cash_M
+AAPL ~3-4T$ | JPM ~500-700B$
+fair_value
+❌ غائبة
+DCF أو Graham — يعتمد على WACC
+قريب من السعر الحالي ±50%
+الأمر لكودكس:
+هذه النسب كانت تُحسب سابقاً لكنها أعطت نتائج مجنونة فحذفها CODEX. الآن بعد إصلاح market_cap وtotal_debt، يجب إعادة تفعيلها مع الصيغ الصحيحة:
+# enterprise_value (كل شيء بالمليون)
+EV_M = market_cap_M + total_debt_M - cash_M
+# ev_ebitda
+ev_ebitda = EV_M / EBITDA_M
+assert 1 < ev_ebitda < 200, f'ev_ebitda={ev_ebitda} خارج النطاق'
+# cost_of_debt
+cost_of_debt = InterestExpense_M / ((TotalDebt_start + TotalDebt_end) / 2)
+assert 0.005 < cost_of_debt < 0.25, f'UNIT_ERROR: cost_of_debt={cost_of_debt}'
+# wacc
+E = market_cap_M; D = total_debt_M; V = E + D
+wacc = (E/V)*cost_of_equity + (D/V)*cost_of_debt*(1-tax_rate)
+🟡 3.4 JPM 2025 — بيانات الميزانية غائبة من SEC
+في Layer1_Raw_SEC لـ JPM 2025، يوجد Net Income وRevenue وDepreciation، لكن Assets وLiabilities وEquity كلها NaN. هذا يعني أن بيانات الميزانية السنوية (Annual 10-K 2025) لم تُجمع بعد أو لم تُنشر حين جمع البيانات.
+البند
+JPM 2025
+التفسير
+Net Income
+57,048M ✅
+متاح — من تقارير ربعية
+Revenue
+87,004M ✅
+متاح — من تقارير ربعية
+Assets / Liabilities / Equity
+NaN ❌
+غائب — Annual 10-K 2025 لم يُنشر أو لم يُجمع
+ROE / ROA / Balance
+NaN ❌
+تعتمد على Equity/Assets → NaN بالتبعية
+الأمر لكودكس:
+# خيار 1: استخدام بيانات Q4 2025 (ربعية) كبديل
+# خيار 2: استخدام 2024 كأحدث سنة كاملة متاحة
+# الإجراء الفوري: إضافة تحذير في Quality_Gate:
+if 'Assets' not in data[2025] or pd.isna(data[2025]['Assets']):
+quality_gate.add('JPM 2025: Balance Sheet غير متاح — NaN propagation expected')
+# لا تُدرج 2025 في نسب تعتمد على الميزانية
+🟡 3.5 TSLA 2020 — فجوة 1,505M (Noncontrolling Interest)
+Assets=52,148M | Liabilities=28,418M | StockholdersEquity=22,225M | المجموع=50,643M | الفجوة=1,505M
+السبب: في 2020 كان لـ TSLA مصالح غير مسيطر عليها (Noncontrolling Interests) بقيمة ~1,505M في الميزانية. هذه لم تُصنَّف ضمن Equity ولا Liabilities.
+الأمر لكودكس:
+# أضف إلى قاموس التصنيف:
+EQUITY_COMPONENTS = [
+'StockholdersEquity',
+'NoncontrollingInterest',           # ← أضف هذا
+'MinorityInterest',                 # ← وهذا
+'RedeemableNoncontrollingInterest', # ← وهذا
+]
+# Total Equity = StockholdersEquity + NoncontrollingInterest
+total_equity = sum(get_val(c) for c in EQUITY_COMPONENTS if available)
+4. جدول الأوامر المرتبة بالأولوية
+#
+الأمر
+السبب
+الأثر
+الشركات المتأثرة
+1
+÷1M لـ market_cap عند الحساب أو التخزين
+يُصلح EV / ev_ebitda / fair_value
+حرج
+AAPL + JPM + TSLA
+2
+إعادة تفعيل ev_ebitda وcost_of_debt وwacc وfair_value
+نسب أساسية كانت محذوفة
+حرج
+الكل
+3
+normalize total_debt عبر القاموس
+JPM 2023/2025 + TSLA 2020 خاطئة
+عالي
+JPM + TSLA
+4
+تصنيف NoncontrollingInterest ضمن Equity
+يُصلح TSLA 2020 balance gap
+متوسط
+TSLA 2020
+5
+JPM 2025: استخدام Q4 بدلاً من Annual أو علامة NaN صريحة
+الميزانية غائبة كلياً
+متوسط
+JPM 2025
+5. الخلاصة
+الإصلاح الأخير حقق نقلة نوعية حقيقية في الدقة المالية:
+✅ ROE لكل الشركات الثلاث انتقل من قيم نانو (10⁻¹⁰) إلى قيم منطقية 100% (5%–197%)
+✅ Gross Margin لـ AAPL وTSLA صحيح تماماً (38%–47% و18%–38%)
+✅ Balance Sheet: AAPL 6/6، TSLA 5/6 مقابل 0/6 سابقاً
+✅ كل نسب الكفاءة والسيولة والربحية منطقية ومتسقة
+المشاكل المتبقية كلها مرتبطة بمصدر واحد: market_cap لا يزال بالدولار الكامل:
+❌ market_cap بالدولار → EV خاطئ → ev_ebitda / fair_value / wacc كلها خاطئة أو محذوفة
+❌ total_debt غير متسق في JPM 2025 وTSLA 2020
+⚠️ JPM 2025 بيانات ميزانية مفقودة من المصدر (ليست مشكلة كودكس)
+تقرير CODEX v3  |  إعداد: نظام التدقيق  |  فبراير 2026

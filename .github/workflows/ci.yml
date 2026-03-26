@@ -27,3 +27,11 @@ jobs:
       - name: Baseline release gate test
         run: |
           python -m unittest tests.test_release_v4_baseline -v
+
+      - name: Strict quality gate (fail-closed)
+        run: |
+          python tools/strict_quality_gate.py
+
+      - name: Compile Critical Pipelines
+        run: |
+          python -m py_compile tools/batch_investor_gate.py tools/institutional_campaign_runner.py tools/ops_sla_monitor.py tools/enterprise_readiness_gate.py tools/strict_quality_gate.py modules/sec_fetcher.py modules/ratio_engine.py

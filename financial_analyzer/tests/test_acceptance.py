@@ -33,13 +33,27 @@ def run_pipeline(ticker: str):
 
 @pytest.fixture(scope="module")
 def all_results():
-    files = {
-        "AAPL": "exports/manual_exports/AAPL_analysis_20260318_180212.xlsx",
-        "MSFT": "exports/manual_exports/MSFT_analysis_20260312_071533.xlsx",
-        "NVDA": "exports/manual_exports/NVDA_analysis_20260321_151137.xlsx",
-        "AIG": "exports/manual_exports/AIG_analysis_20260317_193812.xlsx",
-        "TSLA": "exports/manual_exports/TSLA_analysis_20260306_171858.xlsx",
-    }
+    def _try_resolve(ticker: str) -> str | None:
+        roots = [
+            Path("exports/manual_exports"),
+            Path(r"c:\Users\user\OneDrive\Bureau\MS PROD\test 3\TEQST"),
+        ]
+        candidates: list[Path] = []
+        for root in roots:
+            if not root.exists():
+                continue
+            candidates.extend(root.glob(f"{ticker}_analysis_*.xlsx"))
+        if not candidates:
+            return None
+        latest = sorted(candidates, key=lambda p: p.stat().st_mtime)[-1]
+        return str(latest)
+
+    tickers = ["AAPL", "MSFT", "NVDA", "AIG", "TSLA"]
+    files = {t: _try_resolve(t) for t in tickers}
+    missing = [t for t, f in files.items() if not f]
+    if missing:
+        pytest.skip(f"Acceptance fixtures missing for: {', '.join(missing)}")
+
     orch = PipelineOrchestrator()
     cache = {}
     out = {}

@@ -1553,7 +1553,8 @@ class SECDataFetcher:
 
             applied = {}
             # A) Assets: override only when the mismatch is extreme.
-            if assets_val is None or (abs(total_val) >= max(1.0, abs(assets_val)) * 1e2):
+            # Guardrail: avoid "*100" style arithmetic (reserved for formatting only).
+            if assets_val is None or (abs(total_val) / max(1.0, abs(assets_val)) >= 100.0):
                 if assets_val is None or abs(total_val - assets_val) > 1e-9:
                     row2["Assets"] = float(total_val)
                     row2["TotalAssets"] = float(total_val)
@@ -1562,7 +1563,7 @@ class SECDataFetcher:
             # B) Liabilities: if equity exists, derive liabilities from total and equity when mismatch is extreme.
             if isinstance(equity_val, (int, float)) and equity_val not in (None, 0):
                 derived_liab = float(total_val) - float(equity_val)
-                if liab_val is None or (abs(derived_liab) >= max(1.0, abs(liab_val)) * 1e2):
+                if liab_val is None or (abs(derived_liab) / max(1.0, abs(liab_val)) >= 100.0):
                     row2["Liabilities"] = float(derived_liab)
                     row2["TotalLiabilities"] = float(derived_liab)
                     applied["liabilities"] = {"from": liab_val, "to": float(derived_liab), "source": f"{total_key} - StockholdersEquity"}

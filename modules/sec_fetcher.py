@@ -1256,6 +1256,128 @@ class SECDataFetcher:
             return fv / 1_000_000.0
         return fv
 
+    def _resolve_bank_anchor_value(
+        self,
+        data: dict,
+        *,
+        kind: str,
+        assets: float | None,
+        prev_value: float | None,
+    ):
+        """
+        Resolve bank balance anchors (loans/deposits) robustly across issuer/year tag drift.
+
+        Returns: (value, tag, confidence, details)
+        - value is in the same scale as SEC layer values in this app (typically USD_million).
+        - confidence is 0..1.
+        """
+        if not isinstance(data, dict) or not data:
+            return None, None, 0.0, "empty_row"
+
+        kind = str(kind or "").strip().lower()
+        if kind not in ("loans", "deposits"):
+            return None, None, 0.0, "unsupported_kind"
+
+        assets_v = self._safe_float(assets)
+        prev_v = self._safe_float(prev_value)
+
+        if kind == "loans":
+            primary = [
+                "LoansAndLeasesReceivableNetReportedAmount",
+                "LoansAndLeasesReceivable",
+                "LoansReceivable",
+                "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss",
+                "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss",
+                "FinancingReceivable",
+                "NetLoans",
+                "LoansHeldForSale",
+            ]
+            include_tokens = ("loan", "loans", "lease", "financingreceivable", "financing receivable")
+            exclude_tokens = ("allowance", "loss", "provision", "nonperform", "reserve", "chargeoff", "pastdue")
+            target = 0.45
+            min_ratio = 0.05
+            max_ratio = 0.95
+        else:
+            primary = [
+                "Deposits",
+                "DepositLiabilities",
+                "CustomerDeposits",
+                "DepositsInterestBearing",
+                "DepositsNoninterestBearing",
+                "TotalDeposits",
+            ]
+            include_tokens = ("deposit", "deposits")
+            exclude_tokens = ("premium", "insurance")
+            target = 0.70
+            min_ratio = 0.05
+            max_ratio = 1.20
+
+        # Build candidate tags: primary list + token matches in row.
+        candidates = []
+        seen = set()
+        for tag in primary:
+            if tag in seen:
+                continue
+            seen.add(tag)
+            candidates.append((tag, "primary"))
+        for k in list(data.keys()):
+            lk = str(k or "").lower().replace("_", "").replace("-", "").replace(" ", "")
+            if not lk:
+                continue
+            if any(tok.replace(" ", "") in lk for tok in include_tokens) and not any(tok.replace(" ", "") in lk for tok in exclude_tokens):
+                if k not in seen:
+                    seen.add(k)
+                    candidates.append((k, "token"))
+
+        scales = [1.0, 1e-3, 1e-6, 1e3, 1e6]
+        best = None  # (score, value, tag, conf, details)
+
+        for tag, source_kind in candidates:
+            raw = self._safe_float(data.get(tag))
+            if raw in (None, 0):
+                continue
+            for s in scales:
+                v = float(raw) * float(s)
+                if v in (None, 0) or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
+                    continue
+                ratio_to_assets = None
+                if assets_v not in (None, 0):
+                    ratio_to_assets = abs(v) / max(abs(float(assets_v)), 1e-12)
+                    if ratio_to_assets < min_ratio or ratio_to_assets > max_ratio:
+                        continue
+                # Prefer closeness to previous year when available (stability).
+                prev_pen = 0.0
+                if prev_v not in (None, 0):
+                    gap = max(abs(v), abs(prev_v)) / max(min(abs(v), abs(prev_v)), 1e-12)
+                    if gap > 1.50:
+                        prev_pen = min(1.0, (gap - 1.50) / 2.0)
+                # Prefer minimal scaling adjustments.
+                try:
+                    scale_pen = abs(math.log10(abs(s))) if s not in (0.0, 1.0) else 0.0
+                except Exception:
+                    scale_pen = 0.0
+                # Core plausibility: target ratio to assets.
+                if ratio_to_assets is not None:
+                    core = abs(ratio_to_assets - target)
+                else:
+                    core = 0.25  # weak without assets
+                score = core + (0.25 * prev_pen) + (0.10 * scale_pen)
+
+                base_conf = 0.90 if source_kind == "primary" else 0.70
+                if ratio_to_assets is None:
+                    base_conf -= 0.20
+                base_conf -= min(0.30, 0.10 * scale_pen)
+                base_conf -= min(0.30, 0.20 * prev_pen)
+                conf = max(0.0, min(1.0, base_conf))
+
+                details = f"{source_kind}:{tag}:scale={s}"
+                if best is None or score < best[0]:
+                    best = (score, v, tag, conf, details)
+
+        if best is None:
+            return None, None, 0.0, "no_candidate"
+        return best[1], best[2], float(best[3]), best[4]
+
     @staticmethod
     def _infer_money_scale_from_anchors(anchor_values: list):
         try:
@@ -9182,6 +9304,35 @@ class SECDataFetcher:
                     ['deposit', 'deposits'],
                     ['insurance', 'premium']
                 )
+            # Bank anchor resolver: prefer stable balance anchors over generic proxies.
+            # Only activates when anchors are missing (or unstable) to preserve previously-good behavior.
+            try:
+                if loans is None:
+                    l_val, l_tag, l_conf, l_det = self._resolve_bank_anchor_value(
+                        data,
+                        kind='loans',
+                        assets=assets,
+                        prev_value=prev_loans,
+                    )
+                    if l_val not in (None, 0) and l_conf >= 0.55:
+                        loans = l_val
+                        ratios['loans_anchor_tag'] = l_tag
+                        ratios['loans_anchor_confidence'] = l_conf
+                        ratios['loans_anchor_details'] = l_det
+                if deposits is None:
+                    d_val, d_tag, d_conf, d_det = self._resolve_bank_anchor_value(
+                        data,
+                        kind='deposits',
+                        assets=assets,
+                        prev_value=prev_deposits,
+                    )
+                    if d_val not in (None, 0) and d_conf >= 0.55:
+                        deposits = d_val
+                        ratios['deposits_anchor_tag'] = d_tag
+                        ratios['deposits_anchor_confidence'] = d_conf
+                        ratios['deposits_anchor_details'] = d_det
+            except Exception:
+                pass
             # Detect bank profile from native anchors only (before synthetic proxies).
             native_bank_signal = any(v is not None for v in (net_interest_income, loans, deposits, cet1))
             # Bank proxy hardening: if explicit deposit/loan tags are absent,
@@ -9927,6 +10078,22 @@ class SECDataFetcher:
                             ratios['loan_to_deposit_ratio'] = ldr_proxy_assets
                             ratios['loan_to_deposit_proxy_used'] = 'ASSETS_MINUS_CASH_OVER_DEPOSITS_PROXY'
                     ldr_val = self._safe_float(ratios.get('loan_to_deposit_ratio'))
+                    # Hard realism gate: block LDR when it is outside plausible economic range.
+                    # This prevents proxies (or missing tags) from producing misleading risk signals.
+                    if ldr_val is not None:
+                        try:
+                            ldr_abs = abs(float(ldr_val))
+                        except Exception:
+                            ldr_abs = None
+                        if ldr_abs is not None and (ldr_abs < 0.20 or ldr_abs > 1.60):
+                            ratios['loan_to_deposit_ratio'] = None
+                            ratios['loan_to_deposit_source'] = 'LDR_OUT_OF_RANGE_UNTRUSTED'
+                            reasons_map = ratios.get('_ratio_reasons')
+                            if not isinstance(reasons_map, dict):
+                                reasons_map = {}
+                                ratios['_ratio_reasons'] = reasons_map
+                            reasons_map['loan_to_deposit_ratio'] = 'BANK_ANCHOR_INCONSISTENT'
+                            ldr_val = None
                     raw_dep_missing = (
                         data.get('Deposits') in (None, 0)
                         and data.get('DepositLiabilities') in (None, 0)

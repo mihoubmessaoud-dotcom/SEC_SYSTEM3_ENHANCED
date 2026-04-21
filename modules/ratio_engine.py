@@ -127,6 +127,15 @@ class RatioEngine:
     @classmethod
     def _extend_tags_from_learned(cls) -> None:
         learned = cls._load_learned_tag_map()
+        # Guardrail: prevent known-bad learned tags from polluting canonical tag buckets.
+        # These can appear when keyword-based learning misclassifies statement totals.
+        deny_by_bucket = {
+            # LiabilitiesAndStockholdersEquity is effectively total assets, not equity.
+            'equity': {
+                'LiabilitiesAndStockholdersEquity',
+                'Assets',
+            },
+        }
         map_keys = {
             'assets': 'ASSETS_TAGS',
             'current_assets': 'CURRENT_ASSETS_TAGS',
@@ -144,8 +153,11 @@ class RatioEngine:
             extra = learned.get(learned_key, [])
             if not extra:
                 continue
+            deny = deny_by_bucket.get(learned_key, set())
             current = list(getattr(cls, attr, []))
             for t in extra:
+                if t in deny:
+                    continue
                 if t not in current:
                     current.append(t)
             setattr(cls, attr, current)

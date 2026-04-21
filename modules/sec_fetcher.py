@@ -23,6 +23,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 import io
 import zipfile
+from core.audit_pack import build_institutional_audit_pack, write_audit_pack_to_outputs
+from core.classification_debug import write_classification_debug
+from .canonical_classification import (
+    build_canonical_classification,
+    canonical_sector_gating_from_classification,
+)
 from .xbrl_statement_tree import (
     parse_presentation_linkbase,
     parse_calculation_linkbase,
@@ -475,6 +481,92 @@ class SECDataFetcher:
         if isinstance(dl, dict):
             for lk in ('layer1_by_year', 'layer2_by_year', 'layer3_by_year', 'layer4_by_year'):
                 dl[lk] = self._normalize_year_keyed_dict(dl.get(lk) or {})
+            # Shares unit harmonization must apply on cache hits too (Layer2/Layer4 are frequently cached).
+            try:
+                l2_fixed, l2_diag = self._harmonize_layer_shares_units_to_million(
+                    dl.get('layer2_by_year') or {},
+                    layer_name="LAYER2_MARKET_CACHE",
+                )
+                dl['layer2_by_year'] = l2_fixed
+                if l2_diag:
+                    dl.setdefault('layer2_diagnostics', {})['shares_unit_harmonization'] = l2_diag
+            except Exception:
+                pass
+            try:
+                l4_fixed, l4_diag = self._harmonize_layer_shares_units_to_million(
+                    dl.get('layer4_by_year') or {},
+                    layer_name="LAYER4_YAHOO_CACHE",
+                )
+                dl['layer4_by_year'] = l4_fixed
+                if l4_diag:
+                    dl.setdefault('layer4_diagnostics', {})['shares_unit_harmonization'] = l4_diag
+            except Exception:
+                pass
+            # Cross-source reconciliation must apply on cache hits too to prevent extreme
+            # Polygon/Yahoo divergences from leaking into visible Layer2_Market outputs.
+            try:
+                l2_rec, rec_diag = self._reconcile_market_layer_against_yahoo(
+                    dl.get('layer2_by_year') or {},
+                    dl.get('layer4_by_year') or {},
+                )
+                dl['layer2_by_year'] = l2_rec
+                if rec_diag:
+                    dl.setdefault('layer2_diagnostics', {})['market_vs_yahoo_reconciliation'] = rec_diag
+            except Exception:
+                pass
+
+            # Money and balance-sheet reconciliation must also apply on cache hits; otherwise
+            # old cached runs can keep 1000x-scale balance anchors (e.g., bank Assets) and
+            # leak absurd ROA/ROE values into visible outputs.
+            l1 = dl.get('layer1_by_year') or {}
+            l1_changed = False
+            try:
+                l1_fixed, money_diag = self._harmonize_layer1_money_units_to_million(l1 or {})
+                if money_diag:
+                    dl.setdefault('unit_harmonization', {})['money_usd_million_cache'] = money_diag
+                if l1_fixed is not None:
+                    l1 = l1_fixed
+            except Exception:
+                pass
+            try:
+                l1_fixed, bs_diag = self._reconcile_balance_sheet_totals(l1 or {})
+                if bs_diag:
+                    dl.setdefault('unit_harmonization', {})['balance_sheet_totals_cache'] = bs_diag
+                if l1_fixed is not None:
+                    l1 = l1_fixed
+            except Exception:
+                bs_diag = {}
+            try:
+                l1_fixed, series_diag = self._harmonize_layer1_series_scale_to_million(l1 or {})
+                if series_diag:
+                    dl.setdefault('unit_harmonization', {})['series_scale_to_million_cache'] = series_diag
+                if l1_fixed is not None:
+                    l1 = l1_fixed
+            except Exception:
+                series_diag = {}
+            # Detect changes by presence of diagnostics (cheap, deterministic).
+            if (
+                (dl.get('unit_harmonization') or {}).get('money_usd_million_cache')
+                or (dl.get('unit_harmonization') or {}).get('balance_sheet_totals_cache')
+                or (dl.get('unit_harmonization') or {}).get('series_scale_to_million_cache')
+            ):
+                l1_changed = True
+            if l1_changed:
+                dl['layer1_by_year'] = l1
+                normalized['data_by_year'] = l1
+                # Recompute visible ratios/strategic on cache hits if anchors were corrected.
+                try:
+                    normalized['financial_ratios'] = self._calculate_financial_ratios(l1 or {})
+                except Exception:
+                    pass
+                try:
+                    normalized['strategic_analysis'] = self.generate_strategic_analysis(
+                        l1 or {},
+                        normalized.get('financial_ratios') or {},
+                    )
+                except Exception:
+                    pass
+
             extra = dl.get('extra_layers_by_year') or {}
             if isinstance(extra, dict):
                 fixed_extra = {}
@@ -482,6 +574,55 @@ class SECDataFetcher:
                     fixed_extra[exk] = self._normalize_year_keyed_dict(exv or {})
                 dl['extra_layers_by_year'] = fixed_extra
             normalized['data_layers'] = dl
+
+        # Ensure phase-1 audit pack is available even for cache hits.
+        if not normalized.get('audit_pack_path'):
+            try:
+                audit_pack = build_institutional_audit_pack(
+                    ticker=(normalized.get('company_info') or {}).get('ticker') or normalized.get('ticker') or 'UNKNOWN',
+                    period=str(normalized.get('period') or ''),
+                    data_by_year=normalized.get('data_by_year') or {},
+                    financial_ratios=normalized.get('financial_ratios') or {},
+                    canonical_money_unit="usd_million",
+                    canonical_shares_unit="shares_million",
+                )
+                audit_pack_path = write_audit_pack_to_outputs(audit_pack=audit_pack, outputs_dir="outputs")
+                normalized['audit_pack'] = audit_pack
+                normalized['audit_pack_path'] = audit_pack_path
+            except Exception:
+                pass
+
+        # Canonical classification SSOT for cache hits (avoid mixed/legacy sector labels).
+        try:
+            if not isinstance(normalized.get('canonical_classification'), dict) or not normalized.get('canonical_classification'):
+                ci = normalized.get('company_info', {}) or {}
+                sg = normalized.get('sector_gating', {}) or {}
+                canonical_cls = build_canonical_classification(
+                    ticker=ci.get('ticker') or normalized.get('ticker') or 'UNKNOWN',
+                    company_name=ci.get('name') or '',
+                    sic=ci.get('sic') or '',
+                    naics='',
+                    sic_description=ci.get('sic_description') or '',
+                    sector_profile_hint=sg.get('profile') or ci.get('sector') or '',
+                    sub_sector_profile_hint=sg.get('sub_profile') or '',
+                    institutional_primary_profile='',
+                    institutional_diag={},
+                ).to_dict()
+                canonical_sg = canonical_sector_gating_from_classification(canonical_cls)
+                normalized['canonical_classification'] = canonical_cls
+                normalized['sector_gating'] = {
+                    **(normalized.get('sector_gating', {}) or {}),
+                    **canonical_sg,
+                }
+                dbg_path = write_classification_debug(
+                    canonical_classification=canonical_cls,
+                    outputs_dir="outputs",
+                    ticker=ci.get('ticker') or normalized.get('ticker') or '',
+                )
+                if dbg_path and not normalized.get('canonical_classification_debug_path'):
+                    normalized['canonical_classification_debug_path'] = dbg_path
+        except Exception:
+            pass
         return normalized
 
     @staticmethod
@@ -507,6 +648,244 @@ class SECDataFetcher:
                 if v is not None:
                     return v
         return None
+
+    def _harmonize_layer_shares_units_to_million(self, layer_by_year: dict, *, layer_name: str = "LAYER") -> tuple[dict, dict]:
+        """
+        Harmonize shares-outstanding style fields to canonical shares_million units.
+
+        This fixes mixed-unit market/Yahoo payloads where:
+        - Some years store raw shares (e.g., 2.43e10)
+        - Other years store shares_million (e.g., 24661)
+
+        Uses anchors when available:
+          market_cap (usd_million) ≈ price (usd) * shares (shares_million)
+        """
+        if not isinstance(layer_by_year, dict) or not layer_by_year:
+            return layer_by_year or {}, {}
+
+        out = {}
+        diag = {}
+
+        def _num(x):
+            try:
+                if x is None:
+                    return None
+                if isinstance(x, str):
+                    s = x.strip().replace(",", "")
+                    if not s or s.lower() in {"nan", "none", "null", "n/a", "na", "--"}:
+                        return None
+                    return float(s)
+                return float(x)
+            except Exception:
+                return None
+
+        shares_keys = ("market:shares_outstanding", "yahoo:shares_outstanding")
+        price_keys = ("market:price", "yahoo:price")
+        mcap_keys = ("market:market_cap", "yahoo:market_cap")
+
+        for y, row in (layer_by_year or {}).items():
+            try:
+                yy = int(y)
+            except Exception:
+                yy = y
+            r = dict(row or {}) if isinstance(row, dict) else {}
+            yr_diag = {"scaled_keys": {}, "rule": None}
+
+            px = None
+            for k in price_keys:
+                px = _num(r.get(k))
+                if px not in (None, 0):
+                    break
+            mc = None
+            for k in mcap_keys:
+                mc = _num(r.get(k))
+                if mc not in (None, 0):
+                    break
+
+            for sk in shares_keys:
+                sh = _num(r.get(sk))
+                if sh in (None, 0):
+                    continue
+
+                # Candidate A: assume already shares_million.
+                sh_m = float(sh)
+                # Candidate B: assume raw shares, convert to shares_million.
+                sh_from_raw_m = float(sh) / 1_000_000.0
+
+                scale = 1.0
+                rule = None
+                if mc not in (None, 0) and px not in (None, 0):
+                    implied_a = sh_m * float(px)  # million USD
+                    implied_b = sh_from_raw_m * float(px)  # million USD
+                    err_a = abs(implied_a - float(mc)) / max(abs(float(mc)), 1.0)
+                    err_b = abs(implied_b - float(mc)) / max(abs(float(mc)), 1.0)
+                    if err_b + 1e-12 < err_a:
+                        scale = 1.0 / 1_000_000.0
+                        rule = "ANCHOR_MATCH_MC_PRICE"
+                else:
+                    # Heuristic: huge values are almost certainly raw shares.
+                    if abs(float(sh)) >= 50_000_000.0:
+                        scale = 1.0 / 1_000_000.0
+                        rule = "HEURISTIC_BIG_RAW_SHARES"
+
+                if scale != 1.0:
+                    r[sk] = float(sh) * scale
+                    yr_diag["scaled_keys"][sk] = scale
+                    yr_diag["rule"] = rule or yr_diag["rule"]
+                else:
+                    # Ensure type is numeric float for Excel.
+                    r[sk] = float(sh)
+
+            out[yy] = r
+            if yr_diag["scaled_keys"]:
+                diag[str(yy)] = {"layer": layer_name, **yr_diag}
+
+        return out, diag
+
+    def _reconcile_market_layer_against_yahoo(self, market_by_year: dict, yahoo_by_year: dict):
+        """
+        Cross-source sanity check: reconcile obvious Polygon/Yahoo divergences for price/market_cap.
+
+        This prevents nonsense like price=1463 when Yahoo has price=20 for the same year.
+        Policy: only override when divergence is extreme (>=10x) and Yahoo value is present.
+        """
+        if not isinstance(market_by_year, dict) or not isinstance(yahoo_by_year, dict):
+            return market_by_year or {}, {}
+
+        def _num(x):
+            try:
+                if x is None:
+                    return None
+                if isinstance(x, str):
+                    s = x.strip().replace(",", "")
+                    if not s or s.lower() in {"nan", "none", "null", "na", "n/a", "--"}:
+                        return None
+                    return float(s)
+                v = float(x)
+                # Normalize NaN/Inf to None so downstream logic can heal gaps.
+                if v != v or math.isinf(v):
+                    return None
+                return v
+            except Exception:
+                return None
+
+        out = {}
+        diag = {}
+        for y, mrow in (market_by_year or {}).items():
+            try:
+                yy = int(y)
+            except Exception:
+                yy = y
+            m = dict(mrow or {}) if isinstance(mrow, dict) else {}
+            yrow = (yahoo_by_year or {}).get(yy) or (yahoo_by_year or {}).get(str(yy)) or {}
+            yrow = dict(yrow or {}) if isinstance(yrow, dict) else {}
+
+            px_m = _num(m.get("market:price") or m.get("yahoo:price"))
+            px_y = _num(yrow.get("yahoo:price") or yrow.get("market:price"))
+            mc_m = _num(m.get("market:market_cap") or m.get("yahoo:market_cap"))
+            mc_y = _num(yrow.get("yahoo:market_cap") or yrow.get("market:market_cap"))
+            sh_m = _num(m.get("market:shares_outstanding") or m.get("yahoo:shares_outstanding"))
+            sh_y = _num(yrow.get("yahoo:shares_outstanding") or yrow.get("market:shares_outstanding"))
+
+            def _ratio(a, b):
+                if a in (None, 0) or b in (None, 0):
+                    return None
+                mx = max(abs(float(a)), abs(float(b)))
+                mn = max(min(abs(float(a)), abs(float(b))), 1e-12)
+                return mx / mn
+
+            yr_diag = {}
+            r_px = _ratio(px_m, px_y)
+            r_mc = _ratio(mc_m, mc_y)
+            if r_px is not None and r_px >= 10.0 and px_y not in (None, 0):
+                # Override market price with Yahoo when divergence is extreme.
+                yr_diag["price_override"] = {"from": px_m, "to": px_y, "ratio": r_px, "source": "YAHOO"}
+                m["market:price"] = float(px_y)
+                px_m = float(px_y)
+            if r_mc is not None and r_mc >= 10.0 and mc_y not in (None, 0):
+                yr_diag["market_cap_override"] = {"from": mc_m, "to": mc_y, "ratio": r_mc, "source": "YAHOO"}
+                m["market:market_cap"] = float(mc_y)
+                mc_m = float(mc_y)
+
+            # Fill missing shares_outstanding when market cap + price exist.
+            # Canonical units in this repo:
+            # - market_cap: million USD
+            # - price: USD
+            # => shares_outstanding: million shares
+            if sh_m in (None, 0):
+                base_mc = mc_m if mc_m not in (None, 0) else mc_y
+                base_px = px_m if px_m not in (None, 0) else px_y
+                if base_mc not in (None, 0) and base_px not in (None, 0):
+                    derived = float(base_mc) / float(base_px)
+                    # Plausibility guardrail (million shares).
+                    if 1e-6 < abs(derived) <= 10_000_000.0:
+                        m["market:shares_outstanding"] = derived
+                        yr_diag["shares_derived"] = {"value": derived, "source": "MCAP_OVER_PRICE"}
+                        sh_m = derived
+                elif sh_y not in (None, 0):
+                    # Secondary fallback: adopt Yahoo shares if present.
+                    m["market:shares_outstanding"] = float(sh_y)
+                    yr_diag["shares_fallback"] = {"value": float(sh_y), "source": "YAHOO"}
+
+            out[yy] = m
+            if yr_diag:
+                diag[str(yy)] = yr_diag
+
+        return out, diag
+
+    def _reconcile_revenue_concepts(self, layer1_by_year: dict):
+        """
+        Resolve conflicting revenue concepts (common in SEC facts):
+        - Prefer SalesRevenueNet / RevenueFromContractWithCustomerExcludingAssessedTax when present.
+        - If 'Revenues' exists but differs materially, override it so ratio engine doesn't pick a wrong sub-line.
+        """
+        if not isinstance(layer1_by_year, dict) or not layer1_by_year:
+            return layer1_by_year or {}, {}
+
+        def _sf(x):
+            return self._safe_float(x)
+
+        preferred_keys = (
+            "SalesRevenueNet",
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+            "RevenueFromContractWithCustomerIncludingAssessedTax",
+            "Revenue",
+        )
+        reconcile_targets = ("Revenues", "Revenue")
+
+        out = {}
+        diag = {}
+        for y, row in (layer1_by_year or {}).items():
+            if not isinstance(row, dict):
+                out[y] = row
+                continue
+            r = dict(row)
+            pref = None
+            for pk in preferred_keys:
+                v = _sf(r.get(pk))
+                if v is not None and v > 0:
+                    pref = float(v)
+                    pref_key = pk
+                    break
+            if pref is None:
+                out[y] = r
+                continue
+
+            yr_diag = {}
+            for tk in reconcile_targets:
+                cur = _sf(r.get(tk))
+                if cur is None or cur <= 0:
+                    continue
+                rel = abs(float(cur) - float(pref)) / max(abs(float(pref)), 1.0)
+                # Only reconcile when mismatch is material.
+                if rel >= 0.25:
+                    yr_diag[tk] = {"from": float(cur), "to": float(pref), "preferred_key": pref_key, "rel_diff": rel}
+                    r[tk] = float(pref)
+            out[y] = r
+            if yr_diag:
+                diag[str(y)] = yr_diag
+
+        return out, diag
 
     def _build_fas_raw_metrics(self, data_by_year: dict, financial_ratios: dict) -> dict:
         years = sorted(
@@ -576,14 +955,33 @@ class SECDataFetcher:
         out['net_income_growth'] = ratio_growth_ni
         return out
 
-    def _run_financial_analysis_system(self, ticker: str, data_by_year: dict, financial_ratios: dict) -> dict:
+    def _run_financial_analysis_system(
+        self,
+        ticker: str,
+        data_by_year: dict,
+        financial_ratios: dict,
+        canonical_classification: dict | None = None,
+    ) -> dict:
         if self.financial_analysis_system is None:
             return {'status': 'DISABLED', 'reason': 'FINANCIAL_ANALYSIS_SYSTEM_NOT_AVAILABLE'}
         try:
             raw_metrics = self._build_fas_raw_metrics(data_by_year or {}, financial_ratios or {})
+            forced_model = None
+            try:
+                cc = canonical_classification or {}
+                entity_type = str(cc.get("entity_type") or "").strip().lower()
+                sub = str(cc.get("operating_sub_sector") or "").strip().lower()
+                if entity_type == "bank":
+                    forced_model = "commercial_bank"
+                elif sub.startswith("semiconductor"):
+                    # FAS currently supports fabless/idm; treat diversified as fabless for KPIs.
+                    forced_model = "semiconductor_idm" if sub.endswith("idm") else "semiconductor_fabless"
+            except Exception:
+                forced_model = None
             return self.financial_analysis_system.analyze(
                 ticker=str(ticker or '').upper(),
                 raw_metrics_by_year=raw_metrics,
+                forced_model=forced_model,
             )
         except Exception as exc:
             return {'status': 'ERROR', 'reason': f'FINANCIAL_ANALYSIS_SYSTEM_FAILED: {exc}'}
@@ -857,6 +1255,284 @@ class SECDataFetcher:
         if abs(fv) > 1_000_000_000:
             return fv / 1_000_000.0
         return fv
+
+    @staticmethod
+    def _infer_money_scale_from_anchors(anchor_values: list):
+        try:
+            if not anchor_values:
+                return None
+            abs_vals = [abs(float(v)) for v in anchor_values if v not in (None, 0)]
+            if not abs_vals:
+                return None
+            # Heuristic: if we see a mix of very large (raw USD) and small (already USD_million) anchors,
+            # prefer scaling raw USD to million USD. Use a high threshold to avoid scaling large banks' assets.
+            has_small_million = any(1.0 <= v <= 1_000_000.0 for v in abs_vals)
+            has_raw_like = any(v >= 100_000_000.0 for v in abs_vals)  # >= $100m in raw USD scale
+            if has_small_million and has_raw_like:
+                return 1_000_000.0
+
+            # Secondary: thousands-scale (rare) when anchors look like thousands of USD.
+            has_small_thousands = any(1.0 <= v <= 1_000.0 for v in abs_vals)
+            has_large_thousands = any(v >= 100_000.0 for v in abs_vals)
+            if has_small_thousands and has_large_thousands:
+                return 1_000.0
+
+            return None
+        except Exception:
+            return None
+
+    def _harmonize_layer1_money_units_to_million(self, layer1_by_year: dict):
+        """
+        Ensure Layer1 statement values are consistently in USD_million when a clear scale mismatch is detected.
+        This prevents EPS/BVPS explosions when net income/revenue are in raw USD while equity/assets are in USD_million.
+        """
+        if not isinstance(layer1_by_year, dict):
+            return layer1_by_year, {}
+
+        out = {}
+        diagnostics = {}
+        skip_tokens = (
+            'share',
+            'shares',
+            'eps',
+            'per share',
+            'ratio',
+            'margin',
+            '%',
+            'return',
+            'roe',
+            'roa',
+            'roic',
+            'turnover',
+            'days',
+        )
+        anchor_keys = (
+            'Revenues',
+            'Revenue',
+            'SalesRevenueNet',
+            'RevenueFromContractWithCustomerExcludingAssessedTax',
+            'NetIncomeLoss',
+            'ProfitLoss',
+            'Assets',
+            'TotalAssets',
+            'StockholdersEquity',
+            'TotalEquity',
+            'Liabilities',
+            'LiabilitiesCurrent',
+        )
+        for y, row in (layer1_by_year or {}).items():
+            if not isinstance(row, dict):
+                out[y] = row
+                continue
+            row2 = dict(row)
+            anchors = []
+            for ak in anchor_keys:
+                if ak in row2:
+                    fv = self._safe_float(row2.get(ak))
+                    if fv is not None:
+                        anchors.append(fv)
+            scale = self._infer_money_scale_from_anchors(anchors)
+            adjusted = 0
+            if scale:
+                for k, v in list(row2.items()):
+                    if not isinstance(k, str):
+                        continue
+                    lk = k.lower()
+                    if any(tok in lk for tok in skip_tokens):
+                        continue
+                    fv = self._safe_float(v)
+                    if fv is None:
+                        continue
+                    if abs(fv) >= 1_000_000.0:
+                        row2[k] = fv / scale
+                        adjusted += 1
+            else:
+                # Even when anchors look consistent, individual non-anchor concepts can still
+                # appear in raw USD in a single year (e.g., COGS=653,000,000 alongside
+                # Revenues=5,253 in USD_million). Apply a high-threshold guard per cell.
+                for k, v in list(row2.items()):
+                    if not isinstance(k, str):
+                        continue
+                    lk = k.lower()
+                    if any(tok in lk for tok in skip_tokens):
+                        continue
+                    fv = self._safe_float(v)
+                    if fv is None:
+                        continue
+                    # 10,000,000 in USD_million is $10T; beyond plausible for line items here.
+                    if abs(fv) >= 10_000_000.0:
+                        row2[k] = fv / 1_000_000.0
+                        adjusted += 1
+            out[y] = row2
+            diagnostics[str(y)] = {
+                'scale_applied': scale,
+                'adjusted_key_count': adjusted,
+            }
+        return out, diagnostics
+
+    def _reconcile_balance_sheet_totals(self, layer1_by_year: dict):
+        """
+        Reconcile balance-sheet anchors when duplicate concepts exist at different scales.
+
+        Real-world issue observed in some bank tickers:
+        - Assets/Liabilities concepts may appear 1,000x smaller than the true totals.
+        - LiabilitiesAndStockholdersEquity (or similarly named "total liabilities and shareholders' equity")
+          can carry the correct total-assets scale.
+
+        Policy:
+        - Fail-closed unless mismatch is extreme (>= 100x).
+        - When applied, record diagnostics so it is not a silent repair.
+        """
+        if not isinstance(layer1_by_year, dict):
+            return layer1_by_year, {}
+
+        def _sf(x):
+            return self._safe_float(x)
+
+        def _find_total_key(row: dict):
+            cands = []
+            for k, v in (row or {}).items():
+                if not isinstance(k, str):
+                    continue
+                lk = k.lower()
+                if (
+                    ("liabilit" in lk)
+                    and ("equity" in lk)
+                    and (("shareholder" in lk) or ("stockholder" in lk))
+                ):
+                    fv = _sf(v)
+                    if fv is not None and fv != 0:
+                        cands.append((abs(fv), k, float(fv)))
+            if not cands:
+                return None
+            cands.sort(key=lambda t: t[0], reverse=True)
+            return cands[0]
+
+        out = {}
+        diag = {}
+        for y, row in (layer1_by_year or {}).items():
+            if not isinstance(row, dict):
+                out[y] = row
+                continue
+            row2 = dict(row)
+            found = _find_total_key(row2)
+            if not found:
+                out[y] = row2
+                continue
+
+            total_abs, total_key, total_val = found
+            assets_val = _sf(row2.get("Assets") if "Assets" in row2 else row2.get("TotalAssets"))
+            liab_val = _sf(row2.get("Liabilities") if "Liabilities" in row2 else row2.get("TotalLiabilities"))
+            equity_val = _sf(
+                row2.get("StockholdersEquity")
+                if "StockholdersEquity" in row2
+                else (row2.get("TotalEquity") if "TotalEquity" in row2 else row2.get("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"))
+            )
+
+            applied = {}
+            # A) Assets: override only when the mismatch is extreme.
+            if assets_val is None or (abs(total_val) >= max(1.0, abs(assets_val)) * 1e2):
+                if assets_val is None or abs(total_val - assets_val) > 1e-9:
+                    row2["Assets"] = float(total_val)
+                    row2["TotalAssets"] = float(total_val)
+                    applied["assets"] = {"from": assets_val, "to": float(total_val), "source_key": total_key}
+
+            # B) Liabilities: if equity exists, derive liabilities from total and equity when mismatch is extreme.
+            if isinstance(equity_val, (int, float)) and equity_val not in (None, 0):
+                derived_liab = float(total_val) - float(equity_val)
+                if liab_val is None or (abs(derived_liab) >= max(1.0, abs(liab_val)) * 1e2):
+                    row2["Liabilities"] = float(derived_liab)
+                    row2["TotalLiabilities"] = float(derived_liab)
+                    applied["liabilities"] = {"from": liab_val, "to": float(derived_liab), "source": f"{total_key} - StockholdersEquity"}
+
+            out[y] = row2
+            if applied:
+                diag[str(y)] = applied
+
+        return out, diag
+
+    def _harmonize_layer1_series_scale_to_million(self, layer1_by_year: dict):
+        """
+        Fix within-concept mixed scales across years (e.g., Deposits reported as 1,260.934 in one year
+        and 1,197,259 in another, both representing USD_million but one accidentally in USD_billion).
+
+        Heuristic (safe, fail-closed):
+        - Only applies when a concept has at least one "large" observation (>= 100_000) and one "small"
+          observation (<= 10_000).
+        - Each small observation is scaled by 1000x only when doing so makes it consistent with the
+          large-cluster median (allows real growth across years; not a strict 1000x ratio check).
+        - Skips per-share/ratio-like concepts using the same token list as money harmonizer.
+        """
+        if not isinstance(layer1_by_year, dict) or not layer1_by_year:
+            return layer1_by_year or {}, {}
+
+        skip_tokens = (
+            'share',
+            'shares',
+            'eps',
+            'per share',
+            'ratio',
+            'margin',
+            '%',
+            'return',
+            'roe',
+            'roa',
+            'roic',
+            'turnover',
+            'days',
+        )
+
+        # Build key -> {year: value}
+        keys = sorted({k for y in layer1_by_year.keys() for k in (layer1_by_year.get(y) or {}).keys() if isinstance(k, str)})
+        diagnostics = {}
+        out = {int(y): dict(row or {}) for y, row in (layer1_by_year or {}).items() if str(y).isdigit()}
+
+        def _sf(x):
+            return self._safe_float(x)
+
+        for k in keys:
+            lk = k.lower()
+            if any(tok in lk for tok in skip_tokens):
+                continue
+            series = []
+            for y, row in out.items():
+                v = _sf((row or {}).get(k))
+                if v is None or v == 0:
+                    continue
+                series.append((y, float(v)))
+            if len(series) < 3:
+                continue
+            abs_vals = [abs(v) for _, v in series]
+            large = [v for v in abs_vals if v >= 100_000.0]
+            small = [v for v in abs_vals if v <= 10_000.0]
+            if not large or not small:
+                continue
+            # Reference: median of large cluster (USD_million scale).
+            large_sorted = sorted(large)
+            large_med = large_sorted[len(large_sorted) // 2]
+            if large_med <= 0:
+                continue
+
+            # Scale small years up by 1000 (billion -> million).
+            changed_years = {}
+            for y, v in series:
+                if abs(v) <= 10_000.0:
+                    new_v = v * 1000.0
+                    # Accept scaling only when the scaled value is within a wide but bounded window
+                    # of the large-cluster median (allows growth, but avoids arbitrary scaling).
+                    if not (large_med / 5.0 <= abs(new_v) <= large_med * 5.0):
+                        continue
+                    out[y][k] = new_v
+                    changed_years[str(y)] = {
+                        "from": v,
+                        "to": new_v,
+                        "rule": "x1000_series_scale",
+                        "reference_large_median": large_med,
+                    }
+            if changed_years:
+                diagnostics[k] = changed_years
+
+        return out, diagnostics
 
     def _normalize_shares_to_million(self, value):
         """
@@ -3960,6 +4636,84 @@ class SECDataFetcher:
                 # Explicit zero-payout issuers should show 0% yield, not N/A.
                 r['dividend_yield'] = 0.0
 
+            # Canonical valuation alignment (annual-consistent):
+            # - Prefer SEC EPS facts when available (prevents bad NI/shares-derived EPS when NI tag is wrong).
+            # - Compute PE/PB from the same price anchor implied by (market_cap / shares) in system units.
+            # - Preserve market snapshot ratios in separate fields for transparency.
+            try:
+                if market_pe not in (None, 0):
+                    r.setdefault('pe_ratio_market', market_pe)
+                if market_pb not in (None, 0):
+                    r.setdefault('pb_ratio_market', market_pb)
+
+                eps_sec_basic = _num(row.get('EarningsPerShareBasic'))
+                eps_sec_dil = _num(row.get('EarningsPerShareDiluted'))
+                if eps_sec_dil not in (None, 0):
+                    r['eps_diluted'] = eps_sec_dil
+                    r['eps_source'] = 'SEC_EPS_DILUTED_FACT'
+                if eps_sec_basic not in (None, 0):
+                    r['eps_basic'] = eps_sec_basic
+                    if not r.get('eps_source'):
+                        r['eps_source'] = 'SEC_EPS_BASIC_FACT'
+
+                # Shares (million shares canonical in this codebase).
+                shares_end_raw = _num(row.get('EntityCommonStockSharesOutstanding')) or _num(row.get('CommonStockSharesOutstanding'))
+                shares_end_m = self._normalize_shares_to_million(shares_end_raw) if shares_end_raw not in (None, 0) else None
+                if shares_end_m not in (None, 0):
+                    r['shares_outstanding_end'] = shares_end_m
+
+                # Prefer end shares for price/market-cap identity; fall back to previously normalized shares_outstanding.
+                shares_for_price = shares_end_m or _num(r.get('shares_outstanding'))
+                if shares_for_price not in (None, 0):
+                    r['shares_outstanding'] = shares_for_price
+
+                # Price anchor: implied annual price from market_cap (usd_million) / shares (shares_million).
+                price_anchor = None
+                if market_cap not in (None, 0) and shares_for_price not in (None, 0):
+                    price_anchor = float(market_cap) / float(shares_for_price)
+                elif price not in (None, 0):
+                    price_anchor = float(price)
+
+                # Book value per share from equity / end shares (preferred).
+                if equity not in (None, 0) and shares_for_price not in (None, 0):
+                    bvps_canon = float(equity) / float(shares_for_price)
+                    if bvps_canon not in (None, 0):
+                        existing_bvps = _num(r.get('book_value_per_share'))
+                        if existing_bvps in (None, 0):
+                            r['book_value_per_share'] = bvps_canon
+                        else:
+                            # If existing BVPS is wildly off, replace with canonical.
+                            try:
+                                gap = max(abs(existing_bvps), abs(bvps_canon)) / max(min(abs(existing_bvps), abs(bvps_canon)), 1e-12)
+                            except Exception:
+                                gap = None
+                            if gap is not None and gap >= 10.0:
+                                r['book_value_per_share'] = bvps_canon
+
+                # Canonical PB from market_cap/equity when available (most stable).
+                if market_cap not in (None, 0) and equity not in (None, 0):
+                    pb_canon = float(market_cap) / float(equity)
+                    if pb_canon > 0:
+                        r['pb_ratio'] = pb_canon
+                        r['pb_ratio_source'] = 'CANONICAL_MARKET_CAP_OVER_EQUITY'
+                elif price_anchor not in (None, 0) and _num(r.get('book_value_per_share')) not in (None, 0):
+                    pb_canon = float(price_anchor) / float(_num(r.get('book_value_per_share')))
+                    if pb_canon > 0:
+                        r['pb_ratio'] = pb_canon
+                        r['pb_ratio_source'] = 'CANONICAL_PRICE_OVER_BVPS'
+
+                # Canonical PE from price / EPS (prefer diluted EPS when present).
+                eps_for_pe = _num(r.get('eps_diluted')) or _num(r.get('eps_basic'))
+                if price_anchor not in (None, 0) and eps_for_pe not in (None, 0):
+                    pe_canon = float(price_anchor) / float(eps_for_pe)
+                    r['pe_ratio'] = pe_canon
+                    r['pe_ratio_source'] = 'CANONICAL_PRICE_OVER_EPS'
+                    # Ensure audit identity uses the canonical value (some paths prefer pe_ratio_used).
+                    r['pe_ratio_used'] = pe_canon
+                    r['pe_ratio_used_source'] = 'CANONICAL_PRICE_OVER_EPS'
+            except Exception:
+                pass
+
             # Debt ratio correction fallback from market/yahoo is disabled by default.
             # SEC strict debt definition should remain the source of truth.
             if not allow_market_debt_override:
@@ -5077,6 +5831,38 @@ class SECDataFetcher:
                     **{f'layer_extra_{k.lower()}': k for k in extra_maps.keys()},
                 },
             }
+            # Harmonize shares units in market/yahoo layers (shares_million canonical).
+            try:
+                l2_fixed, l2_diag = self._harmonize_layer_shares_units_to_million(
+                    data_layers.get('layer2_by_year') or {},
+                    layer_name="LAYER2_MARKET",
+                )
+                data_layers['layer2_by_year'] = l2_fixed
+                if l2_diag:
+                    data_layers.setdefault('layer2_diagnostics', {})['shares_unit_harmonization'] = l2_diag
+            except Exception:
+                pass
+            try:
+                l4_fixed, l4_diag = self._harmonize_layer_shares_units_to_million(
+                    data_layers.get('layer4_by_year') or {},
+                    layer_name="LAYER4_YAHOO",
+                )
+                data_layers['layer4_by_year'] = l4_fixed
+                if l4_diag:
+                    data_layers.setdefault('layer4_diagnostics', {})['shares_unit_harmonization'] = l4_diag
+            except Exception:
+                pass
+            # Reconcile extreme Polygon/Yahoo divergences (price/market_cap) BEFORE ratios/strategic are computed.
+            try:
+                l2_rec, rec_diag = self._reconcile_market_layer_against_yahoo(
+                    data_layers.get('layer2_by_year') or {},
+                    data_layers.get('layer4_by_year') or {},
+                )
+                data_layers['layer2_by_year'] = l2_rec
+                if rec_diag:
+                    data_layers.setdefault('layer2_diagnostics', {})['market_vs_yahoo_reconciliation'] = rec_diag
+            except Exception:
+                pass
             # Backfill missing ratio-critical tags from SEC companyfacts payload.
             sec_payload = (source_layers.get('payloads', {}) or {}).get('SEC', {})
             data_layers['layer1_by_year'] = self._backfill_layer1_from_sec_payload(
@@ -5144,6 +5930,38 @@ class SECDataFetcher:
                 data_layers['layer1_by_year'] = dict(layer1_for_calc)
                 data_layers['missing_filing_years'] = list(missing_filing_years)
                 data_layers['available_filing_years'] = sorted(list(available_filing_years))
+
+            # Phase 3 prerequisite: harmonize statement money units to USD_million when a clear mismatch exists.
+            try:
+                layer1_for_calc, money_unit_diagnostics = self._harmonize_layer1_money_units_to_million(layer1_for_calc or {})
+                if data_layers is not None and isinstance(data_layers.get('layer_definitions'), dict):
+                    data_layers.setdefault('unit_harmonization', {})
+                    data_layers['unit_harmonization']['money_usd_million'] = money_unit_diagnostics or {}
+                # Keep exported Layer1 view consistent with the calculation layer (avoid mixed-unit display).
+                if data_layers is not None:
+                    data_layers['layer1_by_year'] = dict(layer1_for_calc or {})
+            except Exception:
+                pass
+            # Phase 3b prerequisite: reconcile extreme balance-sheet total mismatches (non-silent; diagnostics logged).
+            try:
+                layer1_for_calc, bs_diag = self._reconcile_balance_sheet_totals(layer1_for_calc or {})
+                if data_layers is not None and isinstance(data_layers.get('layer_definitions'), dict):
+                    data_layers.setdefault('unit_harmonization', {})
+                    data_layers['unit_harmonization']['balance_sheet_totals'] = bs_diag or {}
+                if data_layers is not None:
+                    data_layers['layer1_by_year'] = dict(layer1_for_calc or {})
+            except Exception:
+                pass
+            # Phase 3c prerequisite: harmonize within-concept mixed scales across years (e.g., deposits in bn vs mm).
+            try:
+                layer1_for_calc, series_diag = self._harmonize_layer1_series_scale_to_million(layer1_for_calc or {})
+                if data_layers is not None and isinstance(data_layers.get('layer_definitions'), dict):
+                    data_layers.setdefault('unit_harmonization', {})
+                    data_layers['unit_harmonization']['series_scale_to_million'] = series_diag or {}
+                if data_layers is not None:
+                    data_layers['layer1_by_year'] = dict(layer1_for_calc or {})
+            except Exception:
+                pass
             data_quality_warnings = self._collect_data_quality_warnings(ticker=ticker, data_by_year=layer1_for_calc)
             self._active_cik_padded = str(cik).zfill(10)
             self._active_ticker = str(ticker or '').upper()
@@ -5226,6 +6044,35 @@ class SECDataFetcher:
                 sector_profile,
                 sic_description=sic_description,
             )
+            # Canonical classification SSOT: no legacy labels, no dangerous fallbacks.
+            canonical_cls = build_canonical_classification(
+                ticker=ticker,
+                company_name=name,
+                sic=sic,
+                naics='',
+                sic_description=sic_description,
+                sector_profile_hint=sector_profile,
+                sub_sector_profile_hint=sub_sector_profile,
+                institutional_primary_profile='',
+                institutional_diag={},
+            ).to_dict()
+            canonical_sg = canonical_sector_gating_from_classification(canonical_cls)
+            sector_profile = canonical_sg.get('profile') or 'unknown'
+            sub_sector_profile = canonical_sg.get('sub_profile') or sector_profile
+            canonical_debug_path = write_classification_debug(
+                canonical_classification=canonical_cls,
+                outputs_dir="outputs",
+                ticker=ticker,
+            )
+            try:
+                update(
+                    f"Canonical classification: "
+                    f"{canonical_cls.get('sector_family')} / {canonical_cls.get('operating_sub_sector')} "
+                    f"(peer_group={canonical_cls.get('peer_group')}, conf={canonical_cls.get('classification_confidence')}, src={canonical_cls.get('classification_source')})"
+                )
+            except Exception:
+                pass
+
             # Stamp sector profile into each yearly row so downstream ratio resolver can
             # apply sector-aware canonical mapping deterministically.
             for _y, _row in (layer1_for_calc or {}).items():
@@ -5246,7 +6093,26 @@ class SECDataFetcher:
                 ticker=ticker,
                 data_by_year=layer1_for_calc,
                 financial_ratios=financial_ratios,
+                canonical_classification=canonical_cls,
             )
+
+            audit_pack = None
+            audit_pack_path = None
+            try:
+                # Phase 1: diagnostics only (no UI/Excel presentation changes).
+                audit_pack = build_institutional_audit_pack(
+                    ticker=ticker,
+                    period=f"{start_year}-{end_year}",
+                    data_by_year=layer1_for_calc or {},
+                    financial_ratios=financial_ratios or {},
+                    canonical_money_unit="usd_million",
+                    canonical_shares_unit="shares_million",
+                )
+                audit_pack_path = write_audit_pack_to_outputs(audit_pack=audit_pack, outputs_dir="outputs")
+                update(f"Audit pack written: {audit_pack_path}")
+            except Exception:
+                audit_pack = None
+                audit_pack_path = None
 
             result = {
                 'success': True,
@@ -5276,7 +6142,11 @@ class SECDataFetcher:
                 'core_ratio_results': core_ratio_results,
                 'core_strategy_results': core_strategy_results,
                 'sector_gating': sector_gating,
+                'canonical_classification': canonical_cls,
+                'canonical_classification_debug_path': canonical_debug_path,
                 'financial_analysis_system': financial_analysis_system,
+                'audit_pack': audit_pack,
+                'audit_pack_path': audit_pack_path,
                 'institutional_outputs': {'direct_extraction': direct_meta},
                 'institutional_saved_files': {'sec_official_statement': direct_meta.get('output_csv')},
             }
@@ -8926,6 +9796,10 @@ class SECDataFetcher:
                         get_val('SalesRevenueNet'),
                         get_val('RevenueFromContractWithCustomerExcludingAssessedTax'),
                     ]
+                    # Banks often report income statement lines differently; interest income is a
+                    # useful fallback anchor when total revenue concepts are missing/misaligned.
+                    if interest_income is not None:
+                        bank_revenue_candidates.append(interest_income)
                     if net_interest_income is not None:
                         bank_revenue_candidates.append(net_interest_income)
                     if net_interest_income is not None and noninterest_income is not None:
@@ -8934,9 +9808,11 @@ class SECDataFetcher:
                         bank_total_revenue = pick_best_scaled_denominator(
                             numerator=net,
                             raw_candidates=bank_revenue_candidates,
-                            target_ratio=0.22,
-                            min_ratio=0.01,
-                            max_ratio=0.60,
+                            # Bank net income margins are often higher than operating companies
+                            # when "Revenues" is actually net revenue; target a realistic band.
+                            target_ratio=0.35,
+                            min_ratio=0.05,
+                            max_ratio=0.80,
                         )
                     if bank_total_revenue is not None:
                         ratios['bank_total_revenue'] = bank_total_revenue
@@ -8971,32 +9847,59 @@ class SECDataFetcher:
                                 if retry_nim is not None:
                                     nim_val = retry_nim
                         ratios['net_interest_margin'] = nim_val
-                    if noninterest_expense is not None and bank_total_revenue not in (None, 0):
-                        ratios['bank_efficiency_ratio'] = scaled_ratio(
-                            abs(noninterest_expense),
-                            abs(bank_total_revenue),
-                            target=0.60,
-                            min_abs=0.05,
-                            max_abs=2.0,
-                        )
-                    elif net is not None and bank_total_revenue not in (None, 0):
-                        # Conservative proxy when noninterest expense is missing in SEC rows.
-                        # Efficiency proxy ~= (total revenue - net income) / total revenue.
-                        try:
-                            exp_proxy = abs(float(bank_total_revenue) - float(net))
-                        except Exception:
-                            exp_proxy = None
-                        if exp_proxy is not None:
-                            eff_proxy = scaled_ratio(
-                                exp_proxy,
-                                abs(bank_total_revenue),
-                                target=0.60,
-                                min_abs=0.05,
-                                max_abs=2.0,
-                            )
-                            if eff_proxy is not None:
-                                ratios['bank_efficiency_ratio'] = eff_proxy
-                                ratios['bank_efficiency_ratio_source'] = 'ONE_MINUS_NET_MARGIN_PROXY'
+                    # Bank efficiency ratio must be economically plausible.
+                    # Strategy:
+                    # 1) Prefer SEC noninterest expense / total revenue when plausible.
+                    # 2) If missing OR outlier (tag drift / unit mismatch), fall back to a conservative proxy:
+                    #    (total revenue - net income) / total revenue.
+                    if bank_total_revenue not in (None, 0):
+                        eff_val = None
+                        eff_source = None
+                        if noninterest_expense is not None:
+                            try:
+                                eff_raw = abs(float(noninterest_expense)) / max(abs(float(bank_total_revenue)), 1e-12)
+                            except Exception:
+                                eff_raw = None
+                            # Typical large-bank efficiency ratios are ~0.4–0.8; values <0.3 or >0.9
+                            # are almost always a mapping/unit problem in SEC facts.
+                            if eff_raw is not None and (0.30 <= eff_raw <= 0.90):
+                                eff_val = scaled_ratio(
+                                    abs(noninterest_expense),
+                                    abs(bank_total_revenue),
+                                    target=0.60,
+                                    min_abs=0.05,
+                                    max_abs=2.0,
+                                )
+                                eff_source = 'NONINTEREST_EXPENSE_OVER_TOTAL_REVENUE'
+                            else:
+                                eff_source = 'EFF_PROXY_OUTLIER_NONINTEREST_EXPENSE'
+
+                        if eff_val is None and net is not None:
+                            # Conservative proxy when noninterest expense is missing/outlier.
+                            # Efficiency proxy ~= (total revenue - net income) / total revenue.
+                            try:
+                                exp_proxy = abs(float(bank_total_revenue) - float(net))
+                            except Exception:
+                                exp_proxy = None
+                            if exp_proxy is not None:
+                                eff_proxy = scaled_ratio(
+                                    exp_proxy,
+                                    abs(bank_total_revenue),
+                                    target=0.60,
+                                    min_abs=0.05,
+                                    max_abs=2.0,
+                                )
+                                if eff_proxy is not None:
+                                    eff_val = eff_proxy
+                                    # Preserve outlier marker if we detected it; otherwise mark as proxy.
+                                    eff_source = eff_source or 'ONE_MINUS_NET_MARGIN_PROXY'
+
+                        if eff_val is not None:
+                            ratios['bank_efficiency_ratio'] = eff_val
+                            ratios['bank_efficiency_ratio_source'] = eff_source or 'BANK_EFFICIENCY_RATIO'
+                        elif eff_source:
+                            ratios['bank_efficiency_ratio'] = None
+                            ratios['bank_efficiency_ratio_source'] = eff_source
                     if loans is not None and deposits not in (None, 0):
                         ratios['loan_to_deposit_ratio'] = safe_div(loans, deposits)
                     elif deposits not in (None, 0) and total_debt not in (None, 0):
@@ -9975,4 +10878,3 @@ class SECDataFetcher:
         analysis['liquidity'] = liq
         analysis['leverage'] = lev
         return analysis
-

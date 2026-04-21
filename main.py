@@ -6583,7 +6583,7 @@ class SECFinancialSystem:
             return years[-max_years:]
         return years
 
-    def _apply_ui_proxy_fill(self, years, ratios_by_year, strategic_by_year=None, sector_profile: str = 'industrial'):
+    def _apply_ui_proxy_fill(self, years, ratios_by_year, strategic_by_year=None, sector_profile: str = 'unknown'):
         """
         UI proxy fill is intentionally disabled.
         Accuracy > completeness: the UI must not fabricate, interpolate,
@@ -6669,27 +6669,20 @@ class SECFinancialSystem:
         for key, data in source.items():
             company = data.get('company_info', {}) or {}
             ticker = company.get('ticker') or key
-            inst = data.get('institutional_outputs') or {}
-            classification = inst.get('classification', {}) or {}
-            classifier_diag = inst.get('classifier_diagnostics', {}) or classification.get('classifier_diagnostics', {}) or {}
             filing_diag = data.get('filing_diagnostics', {}) or {}
-            sector = (
-                classifier_diag.get('sector')
-                or classification.get('primary_profile')
-                or company.get('sector_profile')
-                or company.get('sector')
-                or ((data.get('sector_gating', {}) or {}).get('sub_profile'))
-                or ((data.get('sector_gating', {}) or {}).get('profile'))
-                or classification.get('sector_profile')
+            # Canonical classification SSOT only (no legacy/presentation fallbacks).
+            cc = data.get('canonical_classification', {}) or {}
+            if not isinstance(cc, dict):
+                cc = {}
+            sector_key = (
+                cc.get('operating_sub_sector')
+                or cc.get('peer_group')
+                or cc.get('sector_family')
+                or cc.get('sector_template')
                 or 'unknown'
             )
-            sector = self._canonical_sector_profile(sector)
-            raw_confidence = (
-                classifier_diag.get('confidence_score')
-                or classification.get('confidence')
-                or company.get('sector_confidence')
-                or ((data.get('sector_gating', {}) or {}).get('confidence'))
-            )
+            sector = self._canonical_sector_profile(sector_key)
+            raw_confidence = cc.get('classification_confidence')
             has_comparison_history = bool((data.get('financial_ratios') or {}) or (data.get('data_by_year') or {}) or (((data.get('data_layers', {}) or {}).get('layer1_by_year')) or {}))
             filing_grade = filing_diag.get('filing_grade') or ('IN_RANGE_ANNUAL' if has_comparison_history else '—')
             out_of_range = filing_diag.get('out_of_range', False)
@@ -6745,7 +6738,7 @@ class SECFinancialSystem:
         rejected_reason_counts = Counter()
         flag_counts = Counter()
         metric_contracts = []
-        metric_defs = list(self._comparison_metric_catalog() or [])
+        metric_defs = list(self._comparison_metric_catalog_for_sector(sector or 'unknown') or [])
         total_metrics = len(metric_defs)
         history_gate = 5 if len(years) >= 8 else 4 if len(years) >= 6 else 3
 
@@ -6905,6 +6898,22 @@ class SECFinancialSystem:
             {'metric_key': 'pb_ratio', 'label': self._translate_financial_item('P/B Ratio'), 'category': 'Valuation', 'source': 'ratio', 'keys': ['pb_ratio_used', 'pb_ratio'], 'higher_better': False},
             {'metric_key': 'fcf_yield', 'label': self._translate_financial_item('FCF Yield'), 'category': 'Valuation', 'source': 'ratio', 'keys': ['fcf_yield'], 'higher_better': True},
         ]
+
+    def _comparison_metric_catalog_for_sector(self, sector_profile: str):
+        sector_norm = self._normalize_sector_for_packs(sector_profile)
+        if sector_norm == 'bank':
+            return [
+                {'metric_key': 'net_interest_margin', 'label': self._translate_financial_item('Net Interest Margin (NIM)'), 'category': 'Banking', 'source': 'ratio', 'keys': ['net_interest_margin'], 'higher_better': True},
+                {'metric_key': 'bank_efficiency_ratio', 'label': self._translate_financial_item('Efficiency Ratio'), 'category': 'Banking', 'source': 'ratio', 'keys': ['bank_efficiency_ratio'], 'higher_better': False},
+                {'metric_key': 'loan_to_deposit_ratio', 'label': self._translate_financial_item('Loan-to-Deposit Ratio (LDR)'), 'category': 'Banking', 'source': 'ratio', 'keys': ['loan_to_deposit_ratio'], 'higher_better': False},
+                {'metric_key': 'capital_ratio_proxy', 'label': self._translate_financial_item('Capital Ratio Proxy'), 'category': 'Banking', 'source': 'ratio', 'keys': ['capital_ratio_proxy'], 'higher_better': True},
+                {'metric_key': 'roa', 'label': self._translate_financial_item('ROA (Return on Assets)'), 'category': 'Profitability', 'source': 'ratio', 'keys': ['roa'], 'higher_better': True},
+                {'metric_key': 'roe', 'label': self._translate_financial_item('ROE (Return on Equity)'), 'category': 'Profitability', 'source': 'ratio', 'keys': ['roe'], 'higher_better': True},
+                {'metric_key': 'pe_ratio', 'label': self._translate_financial_item('P/E Ratio'), 'category': 'Valuation', 'source': 'ratio', 'keys': ['pe_ratio_used', 'pe_ratio'], 'higher_better': False},
+                {'metric_key': 'pb_ratio', 'label': self._translate_financial_item('P/B Ratio'), 'category': 'Valuation', 'source': 'ratio', 'keys': ['pb_ratio_used', 'pb_ratio'], 'higher_better': False},
+                {'metric_key': 'dividend_yield', 'label': self._translate_financial_item('Dividend Yield'), 'category': 'Valuation', 'source': 'ratio', 'keys': ['dividend_yield'], 'higher_better': True},
+            ]
+        return list(self._comparison_metric_catalog() or [])
 
     def _comparison_expert_meta(self, metric_key):
         meta = {
@@ -7120,8 +7129,20 @@ class SECFinancialSystem:
         if not years:
             return {}
 
+        cc = data.get('canonical_classification', {}) or {}
+        sector_hint = (
+            cc.get('operating_sub_sector')
+            or cc.get('peer_group')
+            or cc.get('sector_template')
+            or cc.get('sector_family')
+            or 'unknown'
+        )
+        sector_norm = self._normalize_sector_for_packs(sector_hint)
+        metric_defs = list(self._comparison_metric_catalog_for_sector(sector_hint) or [])
+        metric_def_map = {str(m.get('metric_key') or ''): m for m in metric_defs if isinstance(m, dict)}
+
         def _series(metric_key):
-            metric_def = next((m for m in self._comparison_metric_catalog() if m.get('metric_key') == metric_key), None)
+            metric_def = metric_def_map.get(metric_key)
             if not metric_def:
                 return []
             out = []
@@ -7133,16 +7154,16 @@ class SECFinancialSystem:
 
         rev_s = self._summarize_comparison_series(_series('revenue'), higher_better=True)
         ni_s = self._summarize_comparison_series(_series('net_income'), higher_better=True)
-        fcf_s = self._summarize_comparison_series(_series('free_cash_flow'), higher_better=True)
-        roic_s = self._summarize_comparison_series(_series('roic'), higher_better=True)
-        gross_s = self._summarize_comparison_series(_series('gross_margin'), higher_better=True)
+        fcf_s = self._summarize_comparison_series(_series('free_cash_flow'), higher_better=True) if sector_norm != 'bank' else {}
+        roic_s = self._summarize_comparison_series(_series('roic'), higher_better=True) if sector_norm != 'bank' else {}
+        gross_s = self._summarize_comparison_series(_series('gross_margin'), higher_better=True) if sector_norm != 'bank' else {}
 
         latest_year = years[-1]
-        current_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'current_ratio'))
-        quick_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'quick_ratio'))
-        pe_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'pe_ratio'))
-        pb_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'pb_ratio'))
-        fcf_yield = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, next(m for m in self._comparison_metric_catalog() if m['metric_key'] == 'fcf_yield'))
+        current_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, metric_def_map.get('current_ratio')) if metric_def_map.get('current_ratio') else None
+        quick_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, metric_def_map.get('quick_ratio')) if metric_def_map.get('quick_ratio') else None
+        pe_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, metric_def_map.get('pe_ratio')) if metric_def_map.get('pe_ratio') else None
+        pb_ratio = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, metric_def_map.get('pb_ratio')) if metric_def_map.get('pb_ratio') else None
+        fcf_yield = self._extract_comparison_metric_value(data_by_year, ratios_by_year, latest_year, metric_def_map.get('fcf_yield')) if metric_def_map.get('fcf_yield') else None
 
         if isinstance(current_ratio, (int, float)) and isinstance(quick_ratio, (int, float)):
             if current_ratio >= 1.2 and quick_ratio >= 0.8:
@@ -7152,9 +7173,16 @@ class SECFinancialSystem:
             else:
                 liquidity_view = 'TIGHT'
         else:
-            liquidity_view = 'UNKNOWN'
+            liquidity_view = 'N/A' if sector_norm == 'bank' else 'UNKNOWN'
 
-        if isinstance(pe_ratio, (int, float)) and isinstance(pb_ratio, (int, float)) and isinstance(fcf_yield, (int, float)):
+        if sector_norm == 'bank' and isinstance(pe_ratio, (int, float)) and isinstance(pb_ratio, (int, float)):
+            if pe_ratio > 20 or pb_ratio > 2.5:
+                valuation_view = 'RICH'
+            elif pe_ratio > 14 or pb_ratio > 1.7:
+                valuation_view = 'FULL'
+            else:
+                valuation_view = 'REASONABLE'
+        elif isinstance(pe_ratio, (int, float)) and isinstance(pb_ratio, (int, float)) and isinstance(fcf_yield, (int, float)):
             if pe_ratio > 35 or pb_ratio > 25 or fcf_yield < 0.03:
                 valuation_view = 'RICH'
             elif pe_ratio > 20 or pb_ratio > 10 or fcf_yield < 0.05:
@@ -7180,7 +7208,8 @@ class SECFinancialSystem:
             import pandas as pd
             rows = []
             year_list = sorted(int(y) for y in (years or []) if str(y).isdigit())
-            for metric_def in self._comparison_metric_catalog():
+            sector_profile = self._get_sector_profile()
+            for metric_def in self._comparison_metric_catalog_for_sector(sector_profile):
                 series = []
                 for y in year_list:
                     val = self._extract_comparison_metric_value(data_by_year, ratios_by_year, y, metric_def)
@@ -7245,16 +7274,25 @@ class SECFinancialSystem:
                     current_payload = data
                     break
             if current_payload:
-                sg = (current_payload.get('sector_gating', {}) or {})
-                current_sub_sector = sg.get('sub_profile') or sg.get('profile')
+                cc = (current_payload.get('canonical_classification', {}) or {})
+                if isinstance(cc, dict) and cc:
+                    current_sub_sector = cc.get('peer_group') or cc.get('operating_sub_sector') or cc.get('sector_family') or cc.get('sector_template')
+                else:
+                    sg = (current_payload.get('sector_gating', {}) or {})
+                    current_sub_sector = sg.get('sub_profile') or sg.get('profile')
             peers_meta = self._get_peers(
                 ticker=str(current_ticker or '').upper(),
                 sub_sector=current_sub_sector or self._get_sector_profile(),
                 available_tickers=available_tickers,
             )
+            sector_profile = str(current_sub_sector or self._get_sector_profile() or '')
+            sector_norm = self._normalize_sector_for_packs(sector_profile)
             metric_defs = [
-                m for m in self._comparison_metric_catalog()
-                if m.get('metric_key') in {'gross_margin', 'operating_margin', 'roic', 'current_ratio', 'debt_to_equity', 'net_debt_ebitda', 'interest_coverage', 'pe_ratio', 'pb_ratio', 'fcf_yield'}
+                m for m in self._comparison_metric_catalog_for_sector(sector_profile)
+                if (
+                    (sector_norm == 'bank')
+                    or (m.get('metric_key') in {'gross_margin', 'operating_margin', 'roic', 'current_ratio', 'debt_to_equity', 'net_debt_ebitda', 'interest_coverage', 'pe_ratio', 'pb_ratio', 'fcf_yield'})
+                )
             ]
             rows = []
             for metric_def in metric_defs:
@@ -7603,7 +7641,20 @@ class SECFinancialSystem:
                 elif band == 'LOWER_TIER':
                     laggards.append(metric_label_txt)
 
-        sector_text = self._sector_profile_to_display(details.get('company', {}).get('sector') or details.get('classification', {}).get('primary_profile'))
+        # Canonical sector identity SSOT: prefer canonical_classification (never legacy industrial fallback).
+        source_snapshot = self.multi_company_data or {}
+        payload = source_snapshot.get(ticker)
+        if payload is None and self.current_data and (self.current_data.get('company_info', {}) or {}).get('ticker') == ticker:
+            payload = self.current_data
+        sector_key = None
+        if isinstance(payload, dict) and payload:
+            cc = payload.get('canonical_classification', {}) or {}
+            if isinstance(cc, dict) and cc:
+                sector_key = cc.get('operating_sub_sector') or cc.get('peer_group') or cc.get('sector_family') or cc.get('sector_template')
+            else:
+                sg = payload.get('sector_gating', {}) or {}
+                sector_key = sg.get('sub_profile') or sg.get('profile')
+        sector_text = self._sector_profile_to_display(sector_key or 'unknown')
         summary_lines = []
         if self.current_lang == 'ar':
             summary_lines.append(f"مقارنة أقران احترافية للشركة {ticker}.")
@@ -7831,6 +7882,14 @@ class SECFinancialSystem:
             if not strategic_by_year:
                 strategic_by_year = self._compute_per_year_metrics(layer1_by_year, ratios_by_year)
 
+            sector_gating_inputs = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
+            sector_profile_inputs_raw = (
+                sector_gating_inputs.get('sub_profile')
+                or sector_gating_inputs.get('profile')
+                or 'unknown'
+            )
+            sector_profile_inputs = self._normalize_sector_for_packs(sector_profile_inputs_raw)
+
             cols = [
                 self._t('raw_col_category'),
                 self._t('raw_col_normalized'),
@@ -8001,10 +8060,13 @@ class SECFinancialSystem:
                     ("الأسهم المصدرة", [
                         ('MARKET', 'market:shares_outstanding'),
                         ('YAHOO', 'yahoo:shares_outstanding'),
-                        ('SEC', 'WeightedAverageNumberOfSharesOutstandingBasic'),
-                        ('SEC', 'WeightedAverageNumberOfDilutedSharesOutstanding'),
+                        # Prefer end-of-period shares when available for valuation identity and BVPS.
                         ('SEC', 'CommonStockSharesOutstanding'),
-                    ], "EPS, BVPS, market_cap, FCF_per_share"),
+                        # Weighted-average shares are appropriate for EPS derivations, but should not drive
+                        # market-cap/BVPS identities when split basis differs across sources.
+                        ('SEC', 'WeightedAverageNumberOfDilutedSharesOutstanding'),
+                        ('SEC', 'WeightedAverageNumberOfSharesOutstandingBasic'),
+                    ], "BVPS, market_cap, FCF_per_share"),
                     ("القيمة السوقية", [('MARKET', 'market:market_cap'), ('YAHOO', 'yahoo:market_cap'), ('RATIO', 'market_cap')], "FCF_yield, valuation"),
                     ("قيمة المنشأة", [('MARKET', 'market:enterprise_value'), ('YAHOO', 'yahoo:enterprise_value'), ('RATIO', 'enterprise_value'), ('DERIVED', 'enterprise_value')], "EV/EBITDA"),
                     ("بيتا", [('MARKET', 'market:beta'), ('YAHOO', 'yahoo:beta'), ('STRATEGIC', 'Beta')], "cost_of_equity, WACC"),
@@ -8016,6 +8078,32 @@ class SECFinancialSystem:
                     ("WACC", [('RATIO', 'wacc'), ('STRATEGIC', 'WACC')], "economic_spread, valuation"),
                 ]),
             ]
+
+            # Banks: remove industrial-only metrics from Inputs_View to prevent
+            # mixed-sector presentation and accidental use as decision drivers.
+            if sector_profile_inputs == 'bank':
+                banned_child_labels = {
+                    "EBITDA",
+                    "التدفق النقدي الحر",
+                    "قيمة المنشأة",
+                    "المخزون",
+                    "الذمم المدينة",
+                    "الذمم الدائنة",
+                }
+                filtered_spec = []
+                for parent_label, children in input_spec:
+                    new_children = []
+                    for child in children:
+                        child_label = str(child[0]).strip()
+                        used_in = str(child[2] or "")
+                        if child_label in banned_child_labels:
+                            continue
+                        if any(tok in used_in.lower() for tok in ("ev/ebitda", "ccc", "dso", "dpo", "inventory", "fcf_yield", "fcf per share", "net_debt_ebitda", "gross_margin")):
+                            continue
+                        new_children.append(child)
+                    if new_children:
+                        filtered_spec.append((parent_label, new_children))
+                input_spec = filtered_spec
 
             for parent_label, children in input_spec:
                 parent_row = [self._translate_financial_item("البند الرئيسي"), self._translate_financial_item(parent_label), ''] + ['' for _ in years] + ['']
@@ -8032,6 +8120,10 @@ class SECFinancialSystem:
                             source_counts[src] = source_counts.get(src, 0) + 1
                             vals.append(_fmt(v))
                         else:
+                            # Shares series must not be silently estimated across years (splits/basis).
+                            if str(child_label).strip() in {"الأسهم المصدرة", "Shares Outstanding"}:
+                                vals.append('')
+                                continue
                             est, est_used = _estimate_numeric(series_map, y)
                             if isinstance(est, (int, float)):
                                 vals.append("˜" + _fmt(est))
@@ -8403,6 +8495,33 @@ class SECFinancialSystem:
                         raw_label,
                     )
                     unit_val = r.get('_unit') or _infer_unit_from_label(raw_label)
+
+                    def _normalize_official_cell(val, unit_hint, label_hint):
+                        try:
+                            if val is None:
+                                return ''
+                            s = str(val).strip()
+                            if s == '' or s.lower() in {'nan', 'none', 'null'}:
+                                return ''
+                            # Keep non-numeric cells intact.
+                            sv = s.replace(',', '')
+                            if sv.startswith('(') and sv.endswith(')'):
+                                sv = '-' + sv[1:-1]
+                            fv = float(sv)
+                            if math.isnan(fv) or math.isinf(fv):
+                                return ''
+                            # Normalize only monetary rows that are displayed as million USD.
+                            uh = str(unit_hint or '').lower()
+                            lh = str(label_hint or '').lower()
+                            if any(tok in lh for tok in ('share', 'shares', 'per share', 'eps', 'ratio', 'margin', 'yield', '%', 'day', 'days')):
+                                return fv
+                            if ('million' in uh) or ('ملايين' in uh) or ('usd (millions)' in uh):
+                                if abs(fv) >= 10_000_000.0:
+                                    return fv / 1_000_000.0
+                            return fv
+                        except Exception:
+                            return val
+
                     if self.current_lang == 'ar':
                         unit_text = str(unit_val or '')
                         unit_val = {
@@ -8412,7 +8531,10 @@ class SECFinancialSystem:
                             'days': 'أيام',
                             'USD (millions)': 'ملايين دولار أمريكي',
                         }.get(unit_text, unit_text)
-                    vals = [display_label] + [r.get(c, '') for c in date_cols] + [unit_val]
+                    normalized_year_vals = []
+                    for c in date_cols:
+                        normalized_year_vals.append(_normalize_official_cell(r.get(c, ''), unit_val, raw_label))
+                    vals = [display_label] + normalized_year_vals + [unit_val]
                     used_estimate = False
                     series_map = {int(c): r.get(c) for c in date_cols if str(c).isdigit()}
                     for idx, c in enumerate(date_cols, start=1):
@@ -8584,7 +8706,7 @@ class SECFinancialSystem:
         requested_start = int(self.start_year_var.get())
         requested_end = int(self.end_year_var.get())
         ci = self.current_data.get('company_info', {}) or {}
-        sector_display = self._sector_profile_to_display(ci.get('sector') or ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('sub_profile') or ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('profile'))
+        sector_display = self._sector_profile_to_display(self._get_sector_profile())
         if self.current_lang == 'ar':
             info_msg = f"الشركة: {ci.get('name', '')} ({ci.get('ticker', '')})\nالفترة المطلوبة: {requested_start} - {requested_end}"
             if sector_display and sector_display != 'غير معروف':
@@ -8620,7 +8742,10 @@ class SECFinancialSystem:
             concepts.update(active_by_year.get(y, {}).keys())
 
         # Sector-aware concept filtering for raw statement display.
-        sector_profile = ((self.current_data or {}).get('sector_gating', {}) or {}).get('sub_profile') or ((self.current_data or {}).get('sector_gating', {}) or {}).get('profile', 'industrial')
+        sector_profile = (
+            ((self.current_data or {}).get('sector_gating', {}) or {}).get('profile')
+            or 'unknown'
+        )
         if selected_key == 'layer1_by_year':
             bank_only_markers = (
                 'LoansReceivable', 'Deposits', 'NetInterestIncome',
@@ -8823,8 +8948,19 @@ class SECFinancialSystem:
         _reset_raw_scroll()
 
     def _get_sector_profile(self):
-        sg = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
-        return (sg.get('sub_profile') or sg.get('profile') or 'industrial')
+        if not self.current_data:
+            return 'unknown'
+        cc = (self.current_data.get('canonical_classification', {}) or {}) if isinstance(self.current_data, dict) else {}
+        if isinstance(cc, dict) and cc:
+            return (
+                cc.get('peer_group')
+                or cc.get('operating_sub_sector')
+                or cc.get('sector_template')
+                or cc.get('sector_family')
+                or 'unknown'
+            )
+        sg = (self.current_data.get('sector_gating', {}) or {}) if isinstance(self.current_data, dict) else {}
+        return (sg.get('sub_profile') or sg.get('profile') or 'unknown')
 
     @staticmethod
     def _canonical_sector_profile(sector_profile: str) -> str:
@@ -9130,7 +9266,10 @@ class SECFinancialSystem:
 
     @staticmethod
     def _normalize_sector_for_packs(sector_profile: str) -> str:
-        s = str(sector_profile or 'industrial').strip().lower()
+        s = str(sector_profile or 'unknown').strip().lower()
+        # Normalize common plural/synonym forms first (prevents bank flows from falling back to corporate packs).
+        if s in ('banks', 'banking', 'bank'):
+            return 'bank'
         if s in ('technology', 'tech', 'software_saas', 'hardware_platform', 'semiconductor_fabless',
                  'integrated_oil', 'consumer_staples', 'ev_automaker'):
             return 'industrial'
@@ -9292,7 +9431,7 @@ class SECFinancialSystem:
                 'roa', 'roe', 'net_margin',
                 'debt_to_equity', 'debt_to_assets',
                 'pe_ratio', 'pb_ratio', 'pb_ratio_raw', 'dividend_yield', 'eps_basic', 'book_value_per_share',
-                'fcf_yield', 'market_cap', 'total_debt', 'interest_expense_used', 'interest_coverage_source',
+                'market_cap', 'total_debt', 'interest_expense_used',
             ],
             'investment_bank': [
                 'capital_ratio_proxy', 'net_income_to_assets', 'equity_ratio', 'bank_efficiency_ratio',
@@ -9341,8 +9480,8 @@ class SECFinancialSystem:
                 'roa',
                 'roe',
                 'net_margin',
-                'interest_coverage',
-                'fcf_yield',
+                'pe_ratio',
+                'pb_ratio',
             ]
         if sector == 'investment_bank':
             return [
@@ -10084,7 +10223,8 @@ class SECFinancialSystem:
         ratio_source = UnifiedRatioSource()
         ratio_source.load(ticker, data_by_year, ratios_by_year)
         sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
-        sector_profile = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'industrial')
+        sector_profile_raw = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
+        sector_profile = self._normalize_sector_for_packs(sector_profile_raw)
         blocked_ratios = set(sector_gating.get('blocked_ratios', []) or [])
         years = self._get_display_years_range()
         self._ratio_years = list(years)
@@ -10454,7 +10594,7 @@ class SECFinancialSystem:
                     cod = abs(float(interest)) / abs(float(total_debt))
                     if 0 < cod <= 0.5:
                         return cod
-                sector_profile = ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('sub_profile') or ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('profile', 'industrial')
+                sector_profile = ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('sub_profile') or ((self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}).get('profile') or 'unknown'
                 defaults = {
                     'bank': 0.035,
                     'insurance': 0.045,
@@ -10619,7 +10759,8 @@ class SECFinancialSystem:
             for display_name, ratio_key, explanation in visible_entries:
                 insert_ratio(display_name, ratio_key, explanation)
 
-        sector_profile = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'industrial')
+        sector_profile_raw = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
+        sector_profile = self._normalize_sector_for_packs(sector_profile_raw)
         if sector_profile == 'bank':
             insert_ratio_group("Banking Core Ratios", [
                 ("Net Interest Margin (NIM)", 'net_interest_margin', 'Ù‡Ø§Ù…Ø´ ØµØ§ÙÙŠ Ø¯Ø®Ù„ Ø§Ù„ÙÙˆØ§Ø¦Ø¯'),
@@ -10633,7 +10774,6 @@ class SECFinancialSystem:
                 ("ROA (Return on Assets)", 'roa', 'Ø§Ù„Ø¹Ø§Ø¦Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ø£ØµÙˆÙ„'),
                 ("ROE (Return on Equity)", 'roe', 'Ø§Ù„Ø¹Ø§Ø¦Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ù…Ù„ÙƒÙŠØ©'),
                 ("Net Profit Margin", 'net_margin', 'Ø§Ù„Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ù†Ù‡Ø§Ø¦ÙŠØ©'),
-                ("Interest Coverage Ratio", 'interest_coverage', 'Ù‚Ø¯Ø±Ø© ØªØºØ·ÙŠØ© Ù…ØµØ±ÙˆÙ Ø§Ù„ÙØ§Ø¦Ø¯Ø©'),
                 ("Debt-to-Equity", 'debt_to_equity', 'Ø§Ù„Ø§Ø¹ØªÙ…Ø§Ø¯ Ø¹Ù„Ù‰ Ø§Ù„Ø§Ù‚ØªØ±Ø§Ø¶'),
                 ("Debt-to-Assets", 'debt_to_assets', 'Ù†Ø³Ø¨Ø© Ø§Ù„Ø£ØµÙˆÙ„ Ø§Ù„Ù…Ù…ÙˆÙ‘Ù„Ø© Ø¨Ø§Ù„Ø¯ÙŠÙˆÙ†'),
             ])
@@ -10641,7 +10781,6 @@ class SECFinancialSystem:
                 ("P/E Ratio", 'pe_ratio', 'Ù…ÙƒØ±Ø± Ø§Ù„Ø±Ø¨Ø­ÙŠØ©'),
                 ("P/B Ratio", 'pb_ratio', 'Ø§Ù„Ø³ÙˆÙ‚ÙŠØ© Ù„Ù„Ø¯ÙØªØ±ÙŠØ©'),
                 ("Dividend Yield", 'dividend_yield', 'Ø¹Ø§Ø¦Ø¯ ØªÙˆØ²ÙŠØ¹Ø§Øª Ø§Ù„Ø£Ø±Ø¨Ø§Ø­'),
-                ("FCF Yield", 'fcf_yield', 'Ø¹Ø§Ø¦Ø¯ Ø§Ù„ØªØ¯ÙÙ‚ Ø§Ù„Ù†Ù‚Ø¯ÙŠ Ø§Ù„Ø­Ø±'),
                 ("EPS (Earnings Per Share)", 'eps_basic', 'Ø±Ø¨Ø­ÙŠØ© Ø§Ù„Ø³Ù‡Ù…'),
                 ("Book Value Per Share", 'book_value_per_share', 'Ø§Ù„Ù‚ÙŠÙ…Ø© Ø§Ù„Ø¯ÙØªØ±ÙŠØ© Ù„Ù„Ø³Ù‡Ù…'),
             ])
@@ -12288,9 +12427,12 @@ class SECFinancialSystem:
             # metrics stay synchronized with ratios (including fallback-computed values).
             per_year = self._compute_per_year_metrics(data_by_year, ratios_by_year)
         # Ensure strategic display has proxy-filled values (no visible N/A).
-        sector_profile = ((self.current_data.get('sector_gating', {}) or {}).get('sub_profile')
-                          or (self.current_data.get('sector_gating', {}) or {}).get('profile')
-                          or 'industrial')
+        sector_profile_raw = (
+            (self.current_data.get('sector_gating', {}) or {}).get('sub_profile')
+            or (self.current_data.get('sector_gating', {}) or {}).get('profile')
+            or 'unknown'
+        )
+        sector_profile = self._normalize_sector_for_packs(sector_profile_raw)
         self._apply_ui_proxy_fill(years, ratios_by_year, per_year, sector_profile=sector_profile)
 
         # Hard synchronization: if a strategic metric is missing but its ratio counterpart
@@ -12319,16 +12461,24 @@ class SECFinancialSystem:
             'Dividend_Yield': 'dividend_yield',
             'Book_Value_Per_Share': 'book_value_per_share',
         }
+        forbidden_bank_sync = {
+            'FCF_Yield', 'Net_Debt_EBITDA', 'ROIC', 'EV_EBITDA',
+            'Inventory_Days', 'AR_Days', 'AP_Days', 'CCC_Days',
+            'Accruals_Ratio',
+        }
         for y in years:
             py = per_year.setdefault(y, {})
             ry = (ratios_by_year.get(y, {}) or {})
             for s_key, r_key in strategic_from_ratio.items():
+                if sector_profile == 'bank' and s_key in forbidden_bank_sync:
+                    continue
                 cur = py.get(s_key)
                 rv = ry.get(r_key)
                 if (cur is None or (isinstance(cur, str) and str(cur).strip().upper().startswith('N/A'))) and isinstance(rv, (int, float)):
                     py[s_key] = float(rv)
         sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
-        sector_profile = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'industrial')
+        sector_profile_raw = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
+        sector_profile = self._normalize_sector_for_packs(sector_profile_raw)
         # Apply UI proxy fill so strategic never renders N/A in display.
         self._apply_ui_proxy_fill(years, ratios_by_year, per_year, sector_profile=sector_profile)
         blocked_strategic_metrics = set(sector_gating.get('blocked_strategic_metrics', []) or [])
@@ -12608,6 +12758,7 @@ class SECFinancialSystem:
         Pre-export unit/consistency guardrail.
         Heals known scale issues for EPS/PE/PB/FCF_Yield before writing Excel.
         """
+        import math
         issues = []
         data_by_year = data_by_year if isinstance(data_by_year, dict) else {}
         ratios_by_year = ratios_by_year if isinstance(ratios_by_year, dict) else {}
@@ -12630,7 +12781,10 @@ class SECFinancialSystem:
             try:
                 if v is None:
                     return None
-                return float(v)
+                fv = float(v)
+                if fv != fv or math.isinf(fv):
+                    return None
+                return fv
             except Exception:
                 return None
 
@@ -12702,7 +12856,10 @@ class SECFinancialSystem:
             fv = _num(v)
             if fv is None:
                 return None
-            if abs(fv) >= 1_000_000.0:
+            # Treat extremely large values as absolute USD and convert to "million USD".
+            # Note: market cap in million USD can exceed 1,000,000 for mega-caps (> $1T),
+            # so the threshold must be much higher than 1e6.
+            if abs(fv) >= 100_000_000.0:
                 return fv / 1_000_000.0
             return fv
 
@@ -12869,7 +13026,9 @@ class SECFinancialSystem:
                 mcap = _as_million(row2.get('market:market_cap'))
                 price = _num(row2.get('market:price'))
                 if mcap is not None and price not in (None, 0):
-                    derived = (mcap * 1_000_000.0) / price
+                    # Canonical storage in Layer2 is "million shares" so this stays unit-consistent with
+                    # market_cap which is also stored in "million USD".
+                    derived = (mcap / price)
                     if derived > 0 and _num(row2.get('market:shares_outstanding')) != derived:
                         row2['market:shares_outstanding'] = derived
                         changed += 1
@@ -13021,8 +13180,9 @@ class SECFinancialSystem:
                         )
 
         # 5) Bank debt unit harmonization (prevents mixed-unit jumps across years).
-        sector_profile_qg = ((self.current_data or {}).get('sector_gating', {}) or {}).get('sub_profile') or ((self.current_data or {}).get('sector_gating', {}) or {}).get('profile', 'industrial')
-        if allow_aggressive and str(sector_profile_qg).lower() == 'bank':
+        sector_profile_qg = ((self.current_data or {}).get('sector_gating', {}) or {}).get('sub_profile') or ((self.current_data or {}).get('sector_gating', {}) or {}).get('profile') or 'unknown'
+        sector_profile_qg_norm = self._normalize_sector_for_packs(sector_profile_qg)
+        if allow_aggressive and str(sector_profile_qg_norm).lower() == 'bank':
             debt_liab_ratios = []
             for y in years:
                 rr = ratios_by_year.get(y, {}) or {}
@@ -13106,70 +13266,73 @@ class SECFinancialSystem:
 
             # Rebuild core working-capital ratios from raw statement inputs when imported Excel
             # lacks ratio rows or contains implausible historical outputs.
-            revenue_raw = _pick_num_ci(row, ['Revenues', 'Revenue', 'SalesRevenueNet', 'TotalRevenue', 'TotalRevenues'])
-            cogs_raw = _pick_num_ci(row, ['CostOfRevenue', 'CostOfGoodsSold', 'CostOfSales', 'CostOfGoodsAndServicesSold'])
-            ar_raw = _pick_num_ci(row, ['AccountsReceivableNetCurrent', 'AccountsReceivable', 'Accounts Receivable'])
-            inventory_raw = _pick_num_ci(row, ['InventoryNet', 'Inventory', 'Inventories'])
-            ap_raw = _pick_num_ci(row, ['AccountsPayableCurrent_Hierarchy', 'AccountsPayableCurrent', 'AccountsPayable', 'Accounts Payable'])
-            prev_row_wc = data_by_year.get(prev_y, {}) or {} if prev_y is not None else {}
-            prev_ar_raw = _pick_num_ci(prev_row_wc, ['AccountsReceivableNetCurrent', 'AccountsReceivable', 'Accounts Receivable'])
-            prev_inventory_raw = _pick_num_ci(prev_row_wc, ['InventoryNet', 'Inventory', 'Inventories'])
-            prev_ap_raw = _pick_num_ci(prev_row_wc, ['AccountsPayableCurrent_Hierarchy', 'AccountsPayableCurrent', 'AccountsPayable', 'Accounts Payable'])
+            # Banks: skip completely (industrial working-capital metrics are not decision drivers and
+            # must not appear in final bank outputs).
+            if str(sector_profile_qg_norm).lower() != 'bank':
+                revenue_raw = _pick_num_ci(row, ['Revenues', 'Revenue', 'SalesRevenueNet', 'TotalRevenue', 'TotalRevenues'])
+                cogs_raw = _pick_num_ci(row, ['CostOfRevenue', 'CostOfGoodsSold', 'CostOfSales', 'CostOfGoodsAndServicesSold'])
+                ar_raw = _pick_num_ci(row, ['AccountsReceivableNetCurrent', 'AccountsReceivable', 'Accounts Receivable'])
+                inventory_raw = _pick_num_ci(row, ['InventoryNet', 'Inventory', 'Inventories'])
+                ap_raw = _pick_num_ci(row, ['AccountsPayableCurrent_Hierarchy', 'AccountsPayableCurrent', 'AccountsPayable', 'Accounts Payable'])
+                prev_row_wc = data_by_year.get(prev_y, {}) or {} if prev_y is not None else {}
+                prev_ar_raw = _pick_num_ci(prev_row_wc, ['AccountsReceivableNetCurrent', 'AccountsReceivable', 'Accounts Receivable'])
+                prev_inventory_raw = _pick_num_ci(prev_row_wc, ['InventoryNet', 'Inventory', 'Inventories'])
+                prev_ap_raw = _pick_num_ci(prev_row_wc, ['AccountsPayableCurrent_Hierarchy', 'AccountsPayableCurrent', 'AccountsPayable', 'Accounts Payable'])
 
-            if revenue_raw not in (None, 0):
-                ar_avg = abs(float(ar_raw)) if ar_raw not in (None, 0) else None
-                if ar_avg is not None and prev_ar_raw not in (None, 0):
-                    ar_avg = (ar_avg + abs(float(prev_ar_raw))) / 2.0
-                if ar_avg not in (None, 0):
-                    dso_rebuilt = (ar_avg / abs(float(revenue_raw))) * 365.0
-                    if 0.0 <= dso_rebuilt <= 365.0:
-                        if _num(r.get('days_sales_outstanding')) is None or abs(float(_num(r.get('days_sales_outstanding')) or 0.0)) > 365.0:
-                            r['days_sales_outstanding'] = dso_rebuilt
-                            r['days_sales_outstanding_source'] = 'QUALITY_GATE_RAW_REBUILD'
-                            issues.append(f"{y}: DSO rebuilt from raw receivables/revenue ({dso_rebuilt})")
+                if revenue_raw not in (None, 0):
+                    ar_avg = abs(float(ar_raw)) if ar_raw not in (None, 0) else None
+                    if ar_avg is not None and prev_ar_raw not in (None, 0):
+                        ar_avg = (ar_avg + abs(float(prev_ar_raw))) / 2.0
+                    if ar_avg not in (None, 0):
+                        dso_rebuilt = (ar_avg / abs(float(revenue_raw))) * 365.0
+                        if 0.0 <= dso_rebuilt <= 365.0:
+                            if _num(r.get('days_sales_outstanding')) is None or abs(float(_num(r.get('days_sales_outstanding')) or 0.0)) > 365.0:
+                                r['days_sales_outstanding'] = dso_rebuilt
+                                r['days_sales_outstanding_source'] = 'QUALITY_GATE_RAW_REBUILD'
+                                issues.append(f"{y}: DSO rebuilt from raw receivables/revenue ({dso_rebuilt})")
 
-            if cogs_raw not in (None, 0):
-                inv_avg = abs(float(inventory_raw)) if inventory_raw not in (None, 0) else None
-                if inv_avg is not None and prev_inventory_raw not in (None, 0):
-                    inv_avg = (inv_avg + abs(float(prev_inventory_raw))) / 2.0
-                if inv_avg not in (None, 0):
-                    dih_rebuilt = (inv_avg / abs(float(cogs_raw))) * 365.0
-                    if 0.0 <= dih_rebuilt <= 1825.0:
-                        if _num(r.get('inventory_days')) is None or abs(float(_num(r.get('inventory_days')) or 0.0)) > 1825.0:
-                            r['inventory_days'] = dih_rebuilt
-                            r['inventory_days_source'] = 'QUALITY_GATE_RAW_REBUILD'
-                            issues.append(f"{y}: inventory_days rebuilt from raw inventory/cogs ({dih_rebuilt})")
+                if cogs_raw not in (None, 0):
+                    inv_avg = abs(float(inventory_raw)) if inventory_raw not in (None, 0) else None
+                    if inv_avg is not None and prev_inventory_raw not in (None, 0):
+                        inv_avg = (inv_avg + abs(float(prev_inventory_raw))) / 2.0
+                    if inv_avg not in (None, 0):
+                        dih_rebuilt = (inv_avg / abs(float(cogs_raw))) * 365.0
+                        if 0.0 <= dih_rebuilt <= 1825.0:
+                            if _num(r.get('inventory_days')) is None or abs(float(_num(r.get('inventory_days')) or 0.0)) > 1825.0:
+                                r['inventory_days'] = dih_rebuilt
+                                r['inventory_days_source'] = 'QUALITY_GATE_RAW_REBUILD'
+                                issues.append(f"{y}: inventory_days rebuilt from raw inventory/cogs ({dih_rebuilt})")
 
-                ap_avg = abs(float(ap_raw)) if ap_raw not in (None, 0) else None
-                if ap_avg is not None and prev_ap_raw not in (None, 0):
-                    ap_avg = (ap_avg + abs(float(prev_ap_raw))) / 2.0
-                if ap_avg not in (None, 0):
-                    dpo_rebuilt = (ap_avg / abs(float(cogs_raw))) * 365.0
-                    dpo_cap = 365.0 if str(sector_profile_qg).lower() == 'bank' else 200.0
-                    if 0.0 <= dpo_rebuilt <= dpo_cap:
-                        if _num(r.get('ap_days')) is None or abs(float(_num(r.get('ap_days')) or 0.0)) > 365.0:
-                            r['ap_days'] = dpo_rebuilt
-                            r['ap_days_source'] = 'QUALITY_GATE_RAW_REBUILD'
-                            issues.append(f"{y}: DPO rebuilt from raw payables/cogs ({dpo_rebuilt})")
+                    ap_avg = abs(float(ap_raw)) if ap_raw not in (None, 0) else None
+                    if ap_avg is not None and prev_ap_raw not in (None, 0):
+                        ap_avg = (ap_avg + abs(float(prev_ap_raw))) / 2.0
+                    if ap_avg not in (None, 0):
+                        dpo_rebuilt = (ap_avg / abs(float(cogs_raw))) * 365.0
+                        dpo_cap = 200.0
+                        if 0.0 <= dpo_rebuilt <= dpo_cap:
+                            if _num(r.get('ap_days')) is None or abs(float(_num(r.get('ap_days')) or 0.0)) > 365.0:
+                                r['ap_days'] = dpo_rebuilt
+                                r['ap_days_source'] = 'QUALITY_GATE_RAW_REBUILD'
+                                issues.append(f"{y}: DPO rebuilt from raw payables/cogs ({dpo_rebuilt})")
 
-            dso_now = _num(r.get('days_sales_outstanding'))
-            dih_now = _num(r.get('inventory_days'))
-            dpo_now = _num(r.get('ap_days'))
-            if str(sector_profile_qg).lower() != 'bank' and dpo_now is not None and abs(float(dpo_now)) > 200.0:
-                issues.append(f"{y}: DPO rejected as implausible for non-bank issuer ({dpo_now})")
-                r['ap_days'] = None
-                r['ap_days_reason'] = 'IMPLAUSIBLE_PAYABLES_CONCEPT'
-                dpo_now = None
-            if dso_now is not None and dih_now is not None and dpo_now is not None:
-                ccc_rebuilt = float(dso_now) + float(dih_now) - float(dpo_now)
-                if -365.0 <= ccc_rebuilt <= 1825.0:
-                    if _num(r.get('ccc_days')) is None or abs(float(_num(r.get('ccc_days')) or 0.0)) > 3650.0:
-                        r['ccc_days'] = ccc_rebuilt
-                        r['ccc_days_source'] = 'QUALITY_GATE_RAW_REBUILD'
-                        issues.append(f"{y}: CCC rebuilt from DSO/DIH/DPO ({ccc_rebuilt})")
-            elif _num(r.get('ccc_days')) is not None and dpo_now is None:
-                r['ccc_days'] = None
-                r['ccc_days_reason'] = 'IMPLAUSIBLE_PAYABLES_CONCEPT'
+                dso_now = _num(r.get('days_sales_outstanding'))
+                dih_now = _num(r.get('inventory_days'))
+                dpo_now = _num(r.get('ap_days'))
+                if dpo_now is not None and abs(float(dpo_now)) > 200.0:
+                    issues.append(f"{y}: DPO rejected as implausible for non-bank issuer ({dpo_now})")
+                    r['ap_days'] = None
+                    r['ap_days_reason'] = 'IMPLAUSIBLE_PAYABLES_CONCEPT'
+                    dpo_now = None
+                if dso_now is not None and dih_now is not None and dpo_now is not None:
+                    ccc_rebuilt = float(dso_now) + float(dih_now) - float(dpo_now)
+                    if -365.0 <= ccc_rebuilt <= 1825.0:
+                        if _num(r.get('ccc_days')) is None or abs(float(_num(r.get('ccc_days')) or 0.0)) > 3650.0:
+                            r['ccc_days'] = ccc_rebuilt
+                            r['ccc_days_source'] = 'QUALITY_GATE_RAW_REBUILD'
+                            issues.append(f"{y}: CCC rebuilt from DSO/DIH/DPO ({ccc_rebuilt})")
+                elif _num(r.get('ccc_days')) is not None and dpo_now is None:
+                    r['ccc_days'] = None
+                    r['ccc_days_reason'] = 'IMPLAUSIBLE_PAYABLES_CONCEPT'
 
             # Market price / market-cap hard sanity:
             # fix obvious scale slips (e.g., 0.003 instead of 177).
@@ -14135,15 +14298,114 @@ class SECFinancialSystem:
             bvps_y = _num(r.get('book_value_per_share'))
             fcf_y = _num(r.get('free_cash_flow'))
             sh_layer_raw = _num(m.get('market:shares_outstanding') or m.get('yahoo:shares_outstanding'))
+            # Shares basis enforcement (million shares canonical for ratios/per-share):
+            # - Layer2/Layer4 should always store shares_outstanding in "million shares".
+            # - SEC share facts can be pre-split (or mixed units) and break per-share analytics.
+            row4 = (layer4_by_year or {}).get(y, {}) or {}
+            if sh_layer_raw is None:
+                sh_layer_raw = _num(row4.get('market:shares_outstanding') or row4.get('yahoo:shares_outstanding'))
+            sh_million = _normalize_shares_to_millions(sh_layer_raw)
 
             if mcap_y not in (None, 0):
                 r['market_cap'] = mcap_y
 
             if price_y not in (None, 0) and mcap_y not in (None, 0):
-                sh_abs = (mcap_y * 1_000_000.0) / price_y
-                if sh_abs > 0 and (sh_layer_raw is None or abs(sh_layer_raw - sh_abs) / max(abs(sh_abs), 1e-9) > 0.25):
-                    m['market:shares_outstanding'] = sh_abs
-                    issues.append(f"{y}: shares_outstanding aligned to corrected market_cap/price")
+                # Derive million shares directly from the canonical anchors:
+                # market_cap (million USD) / price (USD) -> shares (million).
+                sh_from_mcap_m = abs(float(mcap_y) / float(price_y))
+                if sh_from_mcap_m > 0 and (sh_million in (None, 0) or abs(float(sh_million) - sh_from_mcap_m) / max(abs(sh_from_mcap_m), 1e-9) > 0.25):
+                    m['market:shares_outstanding'] = sh_from_mcap_m
+                    sh_million = sh_from_mcap_m
+                    issues.append(f"{y}: shares_outstanding investor-lock derived from market_cap/price (million shares)")
+
+            # Investor-lock: ensure per-share analytics use split-consistent market shares (million).
+            try:
+                if sh_million not in (None, 0):
+                    prev_sh = _num(r.get('shares_outstanding'))
+                    ratio_gap = None
+                    if prev_sh not in (None, 0):
+                        ratio_gap = max(abs(float(prev_sh)), abs(float(sh_million))) / max(min(abs(float(prev_sh)), abs(float(sh_million))), 1e-12)
+                    # Override when missing OR when a clear split-basis mismatch exists (>=3x).
+                    if prev_sh in (None, 0) or (ratio_gap is not None and ratio_gap >= 3.0):
+                        r['shares_outstanding'] = float(sh_million)
+                        r['shares_outstanding_source'] = 'INVESTOR_LOCK_MARKET_SHARES_MILLION'
+                        issues.append(f"{y}: shares_outstanding investor-lock normalized to market shares (million)")
+
+                    # Normalize Free Cash Flow into "million USD" when SEC/yearly units are mixed.
+                    # This prevents absurd fcf_per_share and fcf_yield outputs in later years.
+                    fcf_m = None
+                    if fcf_y is not None:
+                        fcf_cands = [
+                            float(fcf_y),
+                            float(fcf_y) / 1_000.0,
+                            float(fcf_y) / 1_000_000.0,
+                            float(fcf_y) / 1_000_000_000.0,
+                            float(fcf_y) * 1_000.0,
+                            float(fcf_y) * 1_000_000.0,
+                        ]
+                        # Use existing yield as a target when it is already plausible; otherwise use 4%.
+                        try:
+                            cur_yield = _num(r.get('fcf_yield'))
+                        except Exception:
+                            cur_yield = None
+                        target_yield = abs(float(cur_yield)) if cur_yield is not None and -1.0 <= float(cur_yield) <= 1.0 else 0.04
+                        best = None
+                        for cand in fcf_cands:
+                            if cand is None or (isinstance(cand, float) and (math.isnan(cand) or math.isinf(cand))):
+                                continue
+                            if mcap_y not in (None, 0):
+                                yld = float(cand) / float(mcap_y)
+                                # plausible yield guardrail
+                                if yld < -1.0 or yld > 1.0:
+                                    continue
+                                # magnitude sanity: FCF shouldn't dwarf market cap by large multiples.
+                                if abs(float(cand)) > (2.5 * abs(float(mcap_y))):
+                                    continue
+                                score = abs(abs(yld) - float(target_yield))
+                            else:
+                                # fallback without market cap: prefer million-scale values
+                                score = abs(math.log10(max(abs(float(cand)), 1e-9)) - 4.0)
+                            if best is None or score < best[0]:
+                                best = (score, cand)
+                        if best is not None:
+                            fcf_m = float(best[1])
+                            # Update stored free_cash_flow only if the implied scale differs materially.
+                            if _num(r.get('free_cash_flow')) is None or abs(float(_num(r.get('free_cash_flow')) or 0.0) - fcf_m) / max(abs(fcf_m), 1e-9) > 0.20:
+                                r['free_cash_flow'] = fcf_m
+                                r['free_cash_flow_source'] = 'INVESTOR_LOCK_FCF_UNIT_NORMALIZED_MILLION_USD'
+                                issues.append(f"{y}: free_cash_flow investor-lock unit-normalized (million USD)")
+                    else:
+                        fcf_m = None
+
+                    # Recompute FCF per share using the same basis (prevents 10x/100x split artifacts).
+                    if (fcf_m is not None) or (fcf_y is not None):
+                        base_fcf_m = float(fcf_m) if fcf_m is not None else float(fcf_y)
+                        fcfps = float(base_fcf_m) / float(sh_million)
+                        if _num(r.get('fcf_per_share')) is None or abs(_num(r.get('fcf_per_share')) - fcfps) > 1e-9:
+                            r['fcf_per_share'] = fcfps
+                            r['fcf_per_share_source'] = 'INVESTOR_LOCK_FCF_OVER_MARKET_SHARES_MILLION'
+                            issues.append(f"{y}: fcf_per_share investor-lock normalized (split-consistent)")
+
+                    # Recompute BVPS from equity / market shares when equity is present.
+                    equity_y = _pick_num_ci(
+                        row,
+                        [
+                            'StockholdersEquity',
+                            'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
+                            'TotalEquity',
+                        ],
+                    )
+                    if equity_y not in (None, 0):
+                        bvps_canon = float(equity_y) / float(sh_million)
+                        if bvps_canon not in (None, 0):
+                            if _num(r.get('book_value_per_share')) is None or abs(_num(r.get('book_value_per_share')) - bvps_canon) > 1e-9:
+                                r['book_value_per_share'] = bvps_canon
+                                r['book_value_per_share_source'] = 'INVESTOR_LOCK_EQUITY_OVER_MARKET_SHARES'
+                                issues.append(f"{y}: book_value_per_share investor-lock normalized (split-consistent)")
+                            # Keep local bvps_y variable consistent for PB computation below.
+                            bvps_y = bvps_canon
+            except Exception:
+                pass
 
             if price_y not in (None, 0) and eps_y not in (None, 0):
                 pe_annual = price_y / eps_y
@@ -14178,6 +14440,9 @@ class SECFinancialSystem:
                     fcf_y / mcap_y,
                     (fcf_y * 1_000.0) / mcap_y,
                     (fcf_y * 1_000_000.0) / mcap_y,
+                    (fcf_y / 1_000.0) / mcap_y,
+                    (fcf_y / 1_000_000.0) / mcap_y,
+                    (fcf_y / 1_000_000_000.0) / mcap_y,
                 ]
                 fy_ok = [c for c in fy_cands if -1.0 <= c <= 1.0]
                 if fy_ok:
@@ -14222,7 +14487,9 @@ class SECFinancialSystem:
                 for rid in blocked_ratios:
                     if rid in r and r.get(rid) is not None:
                         r[rid] = None
-                        issues.append(f"{y}: {rid} force-blocked for sector policy")
+                        # Banks: do not log industrial metric keys into visible Quality_Gate issues.
+                        if str(sector_profile_qg_norm).lower() != 'bank':
+                            issues.append(f"{y}: {rid} force-blocked for sector policy")
                     reasons = r.get('_ratio_reasons')
                     if not isinstance(reasons, dict):
                         reasons = {}
@@ -14625,6 +14892,27 @@ class SECFinancialSystem:
             )
             effective_sub_profile = imported_meta.get('sub_sector_profile') or imported_meta.get('sector_profile') or 'unknown'
             effective_profile = self._parent_profile_from_sub_sector(effective_sub_profile)
+            # Canonical classification SSOT: derive sector routing from a single object (no "industrial" fallback).
+            try:
+                from modules.canonical_classification import build_canonical_classification, canonical_sector_gating_from_classification
+
+                canonical_cls_obj = build_canonical_classification(
+                    ticker=ticker_guess,
+                    company_name=ticker_guess,
+                    sic='',
+                    naics='',
+                    sic_description='',
+                    sector_profile_hint=effective_profile,
+                    sub_sector_profile_hint=effective_sub_profile,
+                    institutional_primary_profile='',
+                    institutional_diag={},
+                )
+                canonical_cls = canonical_cls_obj.to_dict()
+                canonical_sg = canonical_sector_gating_from_classification(canonical_cls)
+                effective_profile = canonical_sg.get('profile') or 'unknown'
+                effective_sub_profile = canonical_sg.get('sub_profile') or effective_profile
+            except Exception:
+                canonical_cls = None
 
             data_by_year = self._filter_imported_year_dict_by_sector(data_by_year, effective_sub_profile)
             layer1_by_year = self._filter_imported_year_dict_by_sector(layer1_by_year or data_by_year, effective_sub_profile)
@@ -14664,6 +14952,7 @@ class SECFinancialSystem:
                     'sub_profile': effective_sub_profile,
                     'confidence': imported_meta.get('confidence'),
                 },
+                'canonical_classification': canonical_cls or {},
                 'filing_diagnostics': {
                     'filing_grade': imported_meta.get('filing_grade') or 'IN_RANGE_ANNUAL',
                     'out_of_range': bool(imported_meta.get('out_of_range')),
@@ -15039,7 +15328,8 @@ class SECFinancialSystem:
 
             years = [int(y) for y in (years or []) if str(y).isdigit()]
             sector_norm = self._normalize_sector_for_packs(sector_profile or self._get_sector_profile())
-            sector_rules = self._verdict_context_rules(sector_profile or sector_norm)
+            # Drive verdict rules only from normalized sector pack.
+            sector_rules = self._verdict_context_rules(sector_norm)
             blocked = set(blocked_ratios or [])
             issue_map = {y: [] for y in years}
             global_issues = []
@@ -15146,6 +15436,17 @@ class SECFinancialSystem:
                 debt_to_equity = _num(rr.get('debt_to_equity'))
                 net_debt_ebitda = _num(rr.get('net_debt_ebitda'))
                 interest_coverage = _num(rr.get('interest_coverage'))
+
+                # Banks: never display/score industrial ratios in final verdict outputs.
+                if sector_norm == 'bank':
+                    fcfy = None
+                    gross_margin = None
+                    operating_margin = None
+                    roic = None
+                    current_ratio = None
+                    quick_ratio = None
+                    net_debt_ebitda = None
+                    interest_coverage = None
 
                 requires_fcf = sector_norm not in {'bank', 'investment_bank'}
                 if sector_rules.get('ignore_fcf_in_verdict'):
@@ -15451,6 +15752,7 @@ class SECFinancialSystem:
                 return pd.DataFrame([{'Metric': 'AI_Status', 'Value': 'MISSING_INPUTS'}])
             rows = []
             ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+            sector_norm = self._normalize_sector_for_packs(self._get_sector_profile())
             years = sorted(
                 int(y) for y in (((self.current_data.get('data_layers', {}) or {}).get('layer1_by_year') or self.current_data.get('data_by_year', {}) or {}).keys())
                 if str(y).isdigit()
@@ -15489,7 +15791,8 @@ class SECFinancialSystem:
                 _push('growth.sgr_internal', growth.get('sgr_internal'))
                 _push('growth.debt_warning', growth.get('debt_warning'))
                 _push('growth.assessment', growth.get('assessment'))
-            if wc:
+            # Banks: working-capital / CCC diagnostics are industrial constructs; suppress in bank exports.
+            if wc and sector_norm != 'bank':
                 _push('working_capital.latest_ccc', wc.get('latest_ccc'))
                 _push('working_capital.ccc_trend', wc.get('ccc_trend'))
                 _push('working_capital.liquidity_crisis_prob', wc.get('liquidity_crisis_prob'))
@@ -15500,7 +15803,10 @@ class SECFinancialSystem:
                 _push('investment_quality.verdict', quality.get('verdict'))
                 _push('investment_quality.action', quality.get('action'))
                 _push('investment_quality.percentile', quality.get('percentile'))
-            for comp_key in ('economic_spread', 'fcf_yield', 'investment_score', 'roic', 'z_score'):
+            comp_keys = ('economic_spread', 'fcf_yield', 'investment_score', 'roic', 'z_score')
+            if sector_norm == 'bank':
+                comp_keys = ('investment_score',)
+            for comp_key in comp_keys:
                 if comp_key in components:
                     _push(f'investment_quality.component.{comp_key}', components.get(comp_key))
 
@@ -15519,6 +15825,7 @@ class SECFinancialSystem:
         try:
             import pandas as pd
             fas = (self.current_data.get('financial_analysis_system', {}) if self.current_data else {}) or {}
+            sector_norm = self._normalize_sector_for_packs(self._get_sector_profile())
             if not isinstance(fas, dict) or not fas:
                 summary_df = pd.DataFrame([{'Metric': 'FAS_Status', 'Value': 'MISSING'}])
                 kpis_df = pd.DataFrame([{'Bucket': 'primary', 'KPI': None}])
@@ -15579,6 +15886,26 @@ class SECFinancialSystem:
             if not integrity_rows:
                 integrity_rows = [{'Metric': 'coverage_pct', 'Value': None}]
             integrity_df = pd.DataFrame(integrity_rows)
+
+            # Banks: strip industrial KPIs/score components from FAS sheets (keep sheets, sanitize content).
+            if sector_norm == 'bank':
+                banned = ('ebitda', 'gross', 'inventory', 'ccc', 'dso', 'dpo', 'fcf', 'ev/ebitda', 'roic', 'z_score')
+                try:
+                    if not kpis_df.empty and 'KPI' in kpis_df.columns:
+                        mask = ~kpis_df['KPI'].astype(str).str.lower().apply(lambda s: any(b in s for b in banned))
+                        kpis_df = kpis_df[mask].copy()
+                        if kpis_df.empty:
+                            kpis_df = pd.DataFrame([{'Bucket': 'primary', 'KPI': None}])
+                except Exception:
+                    pass
+                try:
+                    if not score_df.empty and 'Metric' in score_df.columns:
+                        mask = ~score_df['Metric'].astype(str).str.lower().apply(lambda s: any(b in s for b in banned))
+                        score_df = score_df[mask].copy()
+                        if score_df.empty:
+                            score_df = pd.DataFrame([{'Metric': 'details', 'Value': None, 'Metric_Score': None, 'Weight': None, 'Contribution': None}])
+                except Exception:
+                    pass
             return summary_df, kpis_df, score_df, integrity_df
         except Exception as e:
             import pandas as pd
@@ -15752,13 +16079,100 @@ class SECFinancialSystem:
         raw_df_locked_to_ui = False
         inputs_df = pd.DataFrame()
 
+        # Build Raw_by_Year from canonical Layer1 values (USD_million) to prevent mixed-unit
+        # artifacts from the official SEC CSV view.
+        try:
+            layer1_export = (data_layers.get('layer1_by_year', {}) or data_by_year or {})
+            item_col_export = self._t('raw_col_item')
+            unit_col_export = self._t('raw_col_unit')
+
+            def _infer_unit_export(label_text: str) -> str:
+                t = str(label_text or '').lower()
+                if self.current_lang == 'ar':
+                    if ('per share' in t) or ('eps' in t) or ('سهم' in t):
+                        return 'دولار/سهم'
+                    if ('shares' in t) or ('stock' in t) or ('أسهم' in t):
+                        return 'أسهم'
+                    if ('ratio' in t) or ('margin' in t) or ('yield' in t) or ('%' in t):
+                        return 'نسبة'
+                    if ('days' in t) or ('day' in t) or ('يوم' in t):
+                        return 'أيام'
+                    return 'ملايين دولار أمريكي'
+                if ('per share' in t) or ('eps' in t) or ('سهم' in t):
+                    return 'USD/share'
+                if ('shares' in t) or ('stock' in t) or ('أسهم' in t):
+                    return 'shares'
+                if ('ratio' in t) or ('margin' in t) or ('yield' in t) or ('%' in t):
+                    return 'ratio'
+                if ('days' in t) or ('day' in t) or ('يوم' in t):
+                    return 'days'
+                return 'USD (millions)'
+
+            def _is_money_unit(unit_text: str) -> bool:
+                u = str(unit_text or '').lower()
+                return ('million' in u) or ('ملايين' in u) or ('usd (millions)' in u) or ('دولار' in u)
+
+            export_concepts = sorted({k for y in years for k in (layer1_export.get(y, {}) or {}).keys()})
+            export_rows = []
+            for c in export_concepts:
+                # Skip internal helper concepts.
+                try:
+                    if self._is_internal_helper_label(str(c)):
+                        continue
+                except Exception:
+                    pass
+                raw_label = self._decode_mojibake_text(str(c))
+                display_label = self._sanitize_localized_text(
+                    self._translate_financial_item(raw_label),
+                    raw_label,
+                )
+                unit_val = _infer_unit_export(raw_label)
+                row_out = {item_col_export: display_label, "__concept__": raw_label}
+                for y in years:
+                    v = (layer1_export.get(y, {}) or {}).get(c)
+                    nv = self._safe_excel_number(v)
+                    if nv is not None and _is_money_unit(unit_val) and abs(float(nv)) >= 10_000_000.0:
+                        # Defensive: collapse raw USD to USD_million if a stray value slips through.
+                        nv = float(nv) / 1_000_000.0
+                    row_out[str(y)] = nv if nv is not None else v
+                row_out[unit_col_export] = unit_val
+                export_rows.append(row_out)
+
+            if export_rows:
+                raw_df = pd.DataFrame(export_rows)
+                # Resolve label collisions (same Arabic label for multiple SEC concepts) without changing sheet structure.
+                try:
+                    from core.raw_export_dedupe import dedupe_labeled_timeseries_df
+                    raw_df = dedupe_labeled_timeseries_df(
+                        raw_df,
+                        label_col=item_col_export,
+                        year_cols=[str(y) for y in years],
+                        unit_col=unit_col_export,
+                        concept_col="__concept__",
+                    )
+                except Exception:
+                    # Fallback: drop exact duplicates only
+                    try:
+                        raw_df = raw_df.drop(columns=["__concept__"])
+                    except Exception:
+                        pass
+                    try:
+                        raw_df = raw_df.drop_duplicates(subset=[item_col_export] + [str(y) for y in years] + [unit_col_export], keep="first")
+                    except Exception:
+                        pass
+                raw_df = raw_df[[c for c in ([item_col_export] + [str(y) for y in years] + [unit_col_export]) if c in raw_df.columns]].copy()
+                raw_df_locked_to_ui = True
+        except Exception:
+            pass
+
         # Keep exported sheets aligned with what the user sees in the UI.
         try:
             selected_key, _selected_source = self._resolve_selected_raw_layer_key()
             sec_view_mode = getattr(self, '_sec_view_mode_var', tk.StringVar(value='official')).get() or 'official'
             if selected_key != 'layer1_by_year':
                 sec_view_mode = 'official'
-            if selected_key == 'layer1_by_year' and sec_view_mode == 'official':
+            # Raw_by_Year is always canonicalized above to avoid mixed-unit official CSV artifacts.
+            if (not raw_df_locked_to_ui) and selected_key == 'layer1_by_year' and sec_view_mode == 'official':
                 self.display_raw_data()
                 ui_raw_df = self._snapshot_raw_tree_df()
                 if ui_raw_df is not None and not ui_raw_df.empty:
@@ -15782,11 +16196,30 @@ class SECFinancialSystem:
                 self._sec_view_mode_var.set(saved_mode)
                 self.display_raw_data()
                 ui_raw_df_current = self._snapshot_raw_tree_df()
-                if ui_raw_df_current is not None and not ui_raw_df_current.empty:
+                if (not raw_df_locked_to_ui) and ui_raw_df_current is not None and not ui_raw_df_current.empty:
                     raw_df = ui_raw_df_current.copy()
                     raw_df_locked_to_ui = True
             except Exception:
                 pass
+
+        # Ensure Inputs_View numeric cells are real numbers in Excel (not locale-formatted strings),
+        # otherwise Excel may treat dot-decimals as text under comma-decimal locales.
+        try:
+            from core.excel_coercion import coerce_df_year_columns
+            year_cols = [str(y) for y in years]
+            if inputs_df is not None and not inputs_df.empty:
+                inputs_df = coerce_df_year_columns(inputs_df, year_cols=year_cols)
+        except Exception:
+            pass
+
+        # Also coerce key numeric statement sheets to protect against any UI-originated strings.
+        try:
+            from core.excel_coercion import coerce_df_year_columns
+            year_cols = [str(y) for y in years]
+            if raw_df is not None and not raw_df.empty:
+                raw_df = coerce_df_year_columns(raw_df, year_cols=year_cols)
+        except Exception:
+            pass
 
         # Prevent misleading legacy labels in exported raw sheet.
         try:
@@ -16045,7 +16478,7 @@ class SECFinancialSystem:
         layer2_by_year = data_layers.get('layer2_by_year', {}) or {}
         layer3_by_year = data_layers.get('layer3_by_year', {}) or {}
         layer4_by_year = data_layers.get('layer4_by_year', {}) or {}
-        sector_profile = (sector_gating or {}).get('sub_profile') or (sector_gating or {}).get('profile', 'industrial')
+        sector_profile = (sector_gating or {}).get('sub_profile') or (sector_gating or {}).get('profile') or 'unknown'
 
         layer1_rows = []
         l1_keys = sorted({k for y in years for k in layer1_by_year.get(y, {}).keys()})
@@ -16122,13 +16555,30 @@ class SECFinancialSystem:
             row['Aliases_Merged'] = ', '.join(aliases) if aliases else row.get('Raw Label')
             layer1_rows.append(row)
         layer1_df = pd.DataFrame(layer1_rows)
+        try:
+            from core.excel_coercion import coerce_df_year_columns
+            year_cols = [str(y) for y in years]
+            if not layer1_df.empty:
+                layer1_df = coerce_df_year_columns(layer1_df, year_cols=year_cols)
+        except Exception:
+            pass
 
         layer2_rows = []
         l2_keys = sorted({k for y in years for k in layer2_by_year.get(y, {}).keys()})
         for k in l2_keys:
             row = {'Normalized Label': k}
             for y in years:
-                row[str(y)] = layer2_by_year.get(y, {}).get(k)
+                v = layer2_by_year.get(y, {}).get(k)
+                # Defensive export normalization: shares series must be in shares_million for Excel readability.
+                # Some market providers deliver split-adjusted shares in raw units (e.g., 2.43e10) for older years.
+                try:
+                    if str(k).strip().lower() in {'market:shares_outstanding', 'yahoo:shares_outstanding'}:
+                        nv = self._safe_excel_number(v)
+                        if nv is not None and abs(float(nv)) >= 50_000_000.0:
+                            v = float(nv) / 1_000_000.0
+                except Exception:
+                    pass
+                row[str(y)] = v
             layer2_rows.append(row)
         layer2_df = pd.DataFrame(layer2_rows)
 
@@ -16150,7 +16600,15 @@ class SECFinancialSystem:
         for k in l4_keys:
             row = {'Normalized Label': k}
             for y in years:
-                row[str(y)] = layer4_by_year.get(y, {}).get(k)
+                v = layer4_by_year.get(y, {}).get(k)
+                try:
+                    if str(k).strip().lower() in {'market:shares_outstanding', 'yahoo:shares_outstanding'}:
+                        nv = self._safe_excel_number(v)
+                        if nv is not None and abs(float(nv)) >= 50_000_000.0:
+                            v = float(nv) / 1_000_000.0
+                except Exception:
+                    pass
+                row[str(y)] = v
             layer4_rows.append(row)
         layer4_df = pd.DataFrame(layer4_rows)
 
@@ -16167,13 +16625,15 @@ class SECFinancialSystem:
             {'Topic': 'Units', 'Rule': 'Statement rows in million USD', 'Details': 'Market cap exported in million USD; percentage ratios as decimals (e.g., 0.031 = 3.1%).'},
             {'Topic': 'P/B (Raw)', 'Rule': 'Primary ratio line', 'Details': 'May come from annual price/BVPS or market layer depending on availability.'},
             {'Topic': 'P/B (Used)', 'Rule': 'Quality-gated reference', 'Details': 'Stabilized value used for strategic mapping when raw value has unit anomaly.'},
-            {'Topic': 'FCF Yield', 'Rule': 'FCF / Market Cap', 'Details': 'Scale-guarded to prevent 1000x unit slips.'},
-            {'Topic': 'Interest Coverage', 'Rule': 'Uses SEC interest expense resolver', 'Details': 'Falls back to explicit tagged proxies with reliability tracing.'},
-            {'Topic': 'Quick Ratio', 'Rule': 'Quick assets over current liabilities', 'Details': 'Prefers cash + receivables + near-cash investments; falls back to current assets minus inventory only when quick assets are unavailable.'},
             {'Topic': 'Credit Rating', 'Rule': 'External if available, proxy otherwise', 'Details': 'A/BBB/etc. may be model-derived when no external rating is present.'},
             {'Topic': 'Fair Value', 'Rule': 'DCF first, ratio fallback second', 'Details': 'If DCF anchors are weak, uses PE*EPS and PB*BVPS fallback with warning flag.'},
             {'Topic': 'Traceability', 'Rule': 'Audit sheets included', 'Details': 'See Quality_Gate, Ratio_Audit, Balance_Check, Final_Acceptance.'},
         ]
+        # Sector-specific methodology notes: avoid industrial-only constructs for banks.
+        if self._normalize_sector_for_packs(sector_profile_export) != 'bank':
+            methodology_rows.insert(6, {'Topic': 'FCF Yield', 'Rule': 'FCF / Market Cap', 'Details': 'Scale-guarded to prevent 1000x unit slips.'})
+            methodology_rows.insert(7, {'Topic': 'Interest Coverage', 'Rule': 'Uses SEC interest expense resolver', 'Details': 'Falls back to explicit tagged proxies with reliability tracing.'})
+            methodology_rows.insert(8, {'Topic': 'Quick Ratio', 'Rule': 'Quick assets over current liabilities', 'Details': 'Prefers cash + receivables + near-cash investments; falls back to current assets minus inventory only when quick assets are unavailable.'})
         methodology_df = pd.DataFrame(methodology_rows)
         forecasts_df = self._build_forecast_export_df()
         investor_verdict_df = self._build_investor_verdict_df(
@@ -16229,6 +16689,73 @@ class SECFinancialSystem:
             except Exception:
                 return
         try:
+            # Bank export hygiene: keep workbook structure unchanged, but remove industrial-only
+            # terms/metrics from visible sheets to enforce bank-only reporting.
+            sector_norm_export = self._normalize_sector_for_packs(sector_profile_export)
+            if sector_norm_export == 'bank':
+                try:
+                    import pandas as pd
+                    banned_tokens = (
+                        'ebitda',
+                        'ev/ebitda',
+                        'fcf',
+                        'fcf_yield',
+                        'gross_margin',
+                        'gross margin',
+                        'ccc',
+                        'dso',
+                        'dpo',
+                        'inventory',
+                        'inventory_days',
+                        'dih',
+                    )
+
+                    def _sanitize_bank_df(df):
+                        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+                            return df
+                        # Drop banned columns (headers) first; headers are visible output too.
+                        try:
+                            drop_cols = []
+                            for c in list(df.columns):
+                                cl = str(c or "").lower()
+                                if any(tok in cl for tok in banned_tokens):
+                                    drop_cols.append(c)
+                            if drop_cols:
+                                df = df.drop(columns=drop_cols, errors='ignore')
+                        except Exception:
+                            pass
+                        obj_cols = [c for c in df.columns if df[c].dtype == object]
+                        if not obj_cols:
+                            return df
+                        def _row_has_banned(row):
+                            for c in obj_cols:
+                                s = str(row.get(c) or '').lower()
+                                if any(tok in s for tok in banned_tokens):
+                                    return True
+                            return False
+                        mask = ~df.apply(_row_has_banned, axis=1)
+                        cleaned = df[mask].copy()
+                        return cleaned if not cleaned.empty else df.iloc[:0].copy()
+
+                    inputs_df = _sanitize_bank_df(inputs_df)
+                    gate_df = _sanitize_bank_df(gate_df)
+                    ratio_audit_df = _sanitize_bank_df(ratio_audit_df)
+                    critical_df = _sanitize_bank_df(critical_df)
+                    acceptance_df = _sanitize_bank_df(acceptance_df)
+                    investor_verdict_df = _sanitize_bank_df(investor_verdict_df)
+                    ratio_written_df = _sanitize_bank_df(ratio_written_df)
+                    comparison_df = _sanitize_bank_df(comparison_df)
+                    comparison_timeseries_df = _sanitize_bank_df(comparison_timeseries_df)
+                    peer_benchmark_df = _sanitize_bank_df(peer_benchmark_df)
+                    expert_comparison_df = _sanitize_bank_df(expert_comparison_df)
+                    ai_df = _sanitize_bank_df(ai_df)
+                    fas_summary_df = _sanitize_bank_df(fas_summary_df)
+                    fas_kpis_df = _sanitize_bank_df(fas_kpis_df)
+                    fas_score_df = _sanitize_bank_df(fas_score_df)
+                    fas_integrity_df = _sanitize_bank_df(fas_integrity_df)
+                    methodology_df = _sanitize_bank_df(methodology_df)
+                except Exception:
+                    pass
             with pd.ExcelWriter(fn, engine='openpyxl') as writer:
                 raw_df.to_excel(writer, sheet_name='Raw_by_Year', index=False)
                 if not inputs_df.empty:
@@ -17400,10 +17927,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
-
-
-
-

@@ -9,6 +9,8 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+pytest-cache-files-*/
+pytest_tmp/
 
 # Virtual environments
 .venv/
@@ -64,3 +66,5 @@ ml_training_data/
 sec_learned_mappings.json
 unmatched_concepts.txt
 
+# Local workaround: alternate git dir (when .git is write-protected by OneDrive/AV)
+.git_alt/

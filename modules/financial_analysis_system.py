@@ -161,7 +161,12 @@ class FinancialAnalysisSystem:
                         reason = "VALIDATED_OK_SUSPECTED_BACKFILL"
                     repository.set_clean(key, clean_value, reason=reason)
 
-    def analyze(self, ticker: str, raw_metrics_by_year: Dict[str, Dict[int, Any]]) -> Dict[str, Any]:
+    def analyze(
+        self,
+        ticker: str,
+        raw_metrics_by_year: Dict[str, Dict[int, Any]],
+        forced_model: Optional[str] = None,
+    ) -> Dict[str, Any]:
         pipeline_trace: List[str] = []
 
         # 1) UnitNormalizationEngine (normalize to millions BEFORE validation/calculations)
@@ -208,6 +213,15 @@ class FinancialAnalysisSystem:
             "rd_to_revenue": self._latest_clean_value(repository, "rd_to_revenue", years),
         }
         model_result = self.business_model_engine.classify(**model_inputs)
+        if forced_model:
+            fm = str(forced_model).strip().lower()
+            # Fail-closed: only allow forcing to known model names.
+            if fm in self.business_model_engine.MODEL_RULES:
+                model_result = {
+                    "model": fm,
+                    "confidence": 0.99,
+                    "alternatives": [],
+                }
         pipeline_trace.append("BusinessModelEngine")
 
         # 7) KPIEngine

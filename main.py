@@ -17501,6 +17501,7 @@ class SECFinancialSystem:
                 or sector_gating.get('profile')
                 or ''
             )
+            sector_profile = self._normalize_sector_for_packs(sub_sector or 'unknown')
             sub_sector_l = str(sub_sector).strip().lower()
             is_bank_like = sub_sector_l in {'bank', 'commercial_bank', 'investment_bank', 'universal_bank'} or sub_sector_l.endswith('_bank')
             ratio_source = UnifiedRatioSource()

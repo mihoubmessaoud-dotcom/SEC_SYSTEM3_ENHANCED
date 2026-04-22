@@ -10247,6 +10247,21 @@ class SECFinancialSystem:
         
         def fmt_ratio_contract(m, contract):
             """Format ratio cell using structured contract output + confidence."""
+            # Strict realism gating (display-level) to prevent showing nonsense numbers.
+            # This does NOT change sheet structure; it only blocks out-of-range bank core metrics
+            # when underlying anchors are missing / inconsistent.
+            strict_bounds = {}
+            if sector_profile == 'bank':
+                strict_bounds = {
+                    # Banks: LDR must stay within a plausible economic band.
+                    'loan_to_deposit_ratio': (0.20, 2.50),
+                    # Capital proxy (equity/assets or CET1/assets) should not exceed realistic bands.
+                    'capital_ratio_proxy': (0.03, 0.25),
+                    # NIM is typically a few percent.
+                    'net_interest_margin': (-0.03, 0.08),
+                    # Efficiency ratio should stay within a plausible band.
+                    'bank_efficiency_ratio': (0.30, 0.90),
+                }
             c = contract if isinstance(contract, dict) else {}
             v = c.get('value')
             status = (c.get('status') or '').strip()
@@ -10281,6 +10296,15 @@ class SECFinancialSystem:
                 if reason_short:
                     return f"— ({reason_short}) ??{conf_text}"
                 return f"— ??{conf_text}"
+            # Hard block: don't display outlier bank core metrics as if they were valid.
+            if m in strict_bounds:
+                lo, hi = strict_bounds[m]
+                try:
+                    fv = float(v)
+                except Exception:
+                    fv = None
+                if fv is not None and (fv < lo or fv > hi):
+                    return f"— (خارج الحدود/غير موثوق) ?? · 0%"
             dbg = format_ratio_value(m, v)
             disp = dbg.get('display_text', '—')
             if status and status not in ('COMPUTED',):

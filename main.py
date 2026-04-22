@@ -6023,7 +6023,7 @@ class SECFinancialSystem:
                 ratios_by_year[ky] = row or {}
             ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
             ratio_source = UnifiedRatioSource()
-            ratio_source.load(ticker, data_by_year, ratios_by_year)
+            ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile)
 
             if not data_by_year or not ratios_by_year:
                 self.fraud_prob_label.config(text=self._t('ai_fraud_prob').replace('--', '-- (غير متاح)'))
@@ -7046,7 +7046,24 @@ class SECFinancialSystem:
         for key in metric_def.get('keys', []):
             val = self._safe_excel_number(row.get(key))
             if val is not None:
-                return float(val)
+                fv = float(val)
+                # Bank realism gate: block out-of-range core bank metrics from comparison outputs.
+                try:
+                    sector = self._normalize_sector_for_packs(self._get_sector_profile())
+                except Exception:
+                    sector = ''
+                if sector == 'bank':
+                    strict = {
+                        'loan_to_deposit_ratio': (0.20, 2.50),
+                        'capital_ratio_proxy': (0.03, 0.25),
+                        'net_interest_margin': (-0.03, 0.08),
+                        'bank_efficiency_ratio': (0.30, 0.90),
+                    }
+                    if key in strict:
+                        lo, hi = strict[key]
+                        if fv < lo or fv > hi:
+                            return None
+                return fv
         return None
 
     def _summarize_comparison_series(self, series, higher_better=True):
@@ -10221,7 +10238,7 @@ class SECFinancialSystem:
             strategic_by_year = self._compute_per_year_metrics(data_by_year, ratios_by_year)
         ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
         ratio_source = UnifiedRatioSource()
-        ratio_source.load(ticker, data_by_year, ratios_by_year)
+        ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile)
         sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
         sector_profile_raw = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
         sector_profile = self._normalize_sector_for_packs(sector_profile_raw)
@@ -11386,8 +11403,18 @@ class SECFinancialSystem:
         ticker = (self.current_data or {}).get('company_info', {}).get('ticker', 'CURRENT')
         sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
         blocked_ratios = set(sector_gating.get('blocked_ratios', []) or [])
+        try:
+            normalize_sector = getattr(self, "_normalize_sector_for_packs", None)
+            if callable(normalize_sector):
+                sector_profile_local = normalize_sector(
+                    str(sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
+                )
+            else:
+                sector_profile_local = str(sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
+        except Exception:
+            sector_profile_local = str(sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
         ratio_source = UnifiedRatioSource()
-        ratio_source.load(ticker, data_by_year or {}, ratios_by_year)
+        ratio_source.load(ticker, data_by_year or {}, ratios_by_year, sector_profile=(sector_gating.get('sub_profile') or sector_gating.get('profile') or None))
         data_layers_ctx = (self.current_data.get('data_layers', {}) if self.current_data else {}) or {}
         layer2_by_year = data_layers_ctx.get('layer2_by_year', {}) or {}
         layer4_by_year = data_layers_ctx.get('layer4_by_year', {}) or {}
@@ -11581,6 +11608,21 @@ class SECFinancialSystem:
                     'fcf_per_share',
                     'shares_outstanding',
                 }
+                bank_sensitive = set()
+                if sector_profile_local == 'bank':
+                    bank_sensitive = {
+                        'net_interest_margin',
+                        'loan_to_deposit_ratio',
+                        'capital_ratio_proxy',
+                        'bank_efficiency_ratio',
+                        'bank_total_revenue',
+                        'net_income_to_assets',
+                        'equity_ratio',
+                    }
+                # Bank core metrics must always come from contracts to enforce bounds gating.
+                if key in bank_sensitive:
+                    cval = get_contract(key).get('value')
+                    return float(cval) if isinstance(cval, (int, float)) else None
                 if key in sensitive:
                     cval = get_contract(key).get('value')
                     if isinstance(cval, (int, float)):
@@ -16392,7 +16434,7 @@ class SECFinancialSystem:
 
         ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
         ratio_source = UnifiedRatioSource()
-        ratio_source.load(ticker, data_by_year, ratios_by_year)
+        ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile_export)
 
         ratio_rows = []
         sector_profile_export = self._get_sector_profile()
@@ -17011,7 +17053,7 @@ class SECFinancialSystem:
         ai_insights_for_export = self._build_ai_insights_snapshot()
         ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
         ratio_source = UnifiedRatioSource()
-        ratio_source.load(ticker, data_by_year, ratios_by_year)
+        ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile_export)
         sector_profile = self._get_sector_profile()
         blocked_ratios = set(((self.current_data.get('sector_gating', {}) or {}).get('blocked_ratios', []) or []))
         ratio_export_keys = self._get_sector_ratio_export_keys(sector_profile)
@@ -17429,7 +17471,7 @@ class SECFinancialSystem:
             sub_sector_l = str(sub_sector).strip().lower()
             is_bank_like = sub_sector_l in {'bank', 'commercial_bank', 'investment_bank', 'universal_bank'} or sub_sector_l.endswith('_bank')
             ratio_source = UnifiedRatioSource()
-            ratio_source.load(ticker, data_by_year, ratios_by_year)
+            ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile)
             investment_score = ratio_source.get_ratio_contract(ticker, latest_year, 'investment_score').get('value')
             if investment_score is None:
                 investment_score = 50

@@ -76,15 +76,17 @@ class UnifiedRatioSource:
         self._contracts_by_year: Dict[int, Dict[str, Dict]] = {}
         self._raw_ratios_by_year: Dict[int, Dict] = {}
         self._ticker: Optional[str] = None
+        self._sector_profile: Optional[str] = None
 
     @staticmethod
     def normalize_ratio_id(ratio_id: str) -> str:
         rid = str(ratio_id or '').strip().lower()
         return ALIAS_TO_CANONICAL.get(rid, rid)
 
-    def load(self, ticker: str, data_by_year: Dict, ratios_by_year: Dict) -> None:
+    def load(self, ticker: str, data_by_year: Dict, ratios_by_year: Dict, sector_profile: Optional[str] = None) -> None:
         self._ticker = ticker
         self._raw_ratios_by_year = ratios_by_year or {}
+        self._sector_profile = str(sector_profile or '').strip().lower() or None
         built = self._engine.build(data_by_year or {}, ratios_by_year or {})
         self._contracts_by_year = built.get('ratios', {}) or {}
 
@@ -149,6 +151,57 @@ class UnifiedRatioSource:
         contract.setdefault('formula', contract.get('formula_used'))
         contract.setdefault('sources', self._build_sources(contract))
         contract['provenance_complete'] = self._is_provenance_complete(contract)
+        contract = self._apply_sector_sanity_bounds(contract)
+        return contract
+
+    def _apply_sector_sanity_bounds(self, contract: Dict) -> Dict:
+        """
+        Fail-closed on economically impossible values for sector-critical ratios.
+        This prevents outlier raw values from leaking into UI/export/comparison/smart analysis.
+        """
+        sector = str(self._sector_profile or '').strip().lower()
+        if not sector:
+            return contract
+        ratio_id = str(contract.get('ratio_id') or contract.get('metric_id') or '').strip().lower()
+        value = contract.get('value')
+        if not isinstance(value, (int, float)):
+            return contract
+
+        strict_bounds = {}
+        if sector == 'bank':
+            strict_bounds = {
+                'loan_to_deposit_ratio': (0.20, 2.50),
+                'capital_ratio_proxy': (0.03, 0.25),
+                'net_interest_margin': (-0.03, 0.08),
+                'bank_efficiency_ratio': (0.30, 0.90),
+            }
+        if ratio_id not in strict_bounds:
+            return contract
+
+        lo, hi = strict_bounds[ratio_id]
+        try:
+            fv = float(value)
+        except Exception:
+            fv = None
+        if fv is None:
+            return contract
+        if fv < lo or fv > hi:
+            # Convert to NOT_COMPUTABLE to force all visible layers to suppress the value.
+            new = dict(contract)
+            new['value'] = None
+            new['status'] = 'NOT_COMPUTABLE'
+            new['reason'] = 'OUT_OF_RANGE_UNTRUSTED'
+            new['reason_code'] = new['reason']
+            new['missing_inputs'] = list(new.get('missing_inputs') or [])
+            new['reliability'] = 0
+            new['confidence_score'] = 0.0
+            new['confidence'] = 0.0
+            br = dict(new.get('bounds_result') or {})
+            br['status'] = 'blocked'
+            br['ratio_id'] = ratio_id
+            br['details'] = f"value={fv:.6g} outside [{lo}, {hi}] for sector={sector}"
+            new['bounds_result'] = br
+            return new
         return contract
 
     @staticmethod

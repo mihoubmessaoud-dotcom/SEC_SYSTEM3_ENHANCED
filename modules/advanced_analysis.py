@@ -30,7 +30,18 @@ class AdvancedFinancialAnalysis:
 
     def load_ratio_context(self, data_by_year: Dict, ratios_by_year: Dict, build_diagnostics_data: bool = True) -> None:
         guarded = maybe_guard_ratios_by_year(ratios_by_year or {})
-        self.ratio_source.load('CURRENT', data_by_year or {}, guarded)
+        # Advanced analysis is intentionally decoupled from UI state; infer sector lightly from ratio keys.
+        sector_profile = None
+        try:
+            for _, row in (guarded or {}).items():
+                if not isinstance(row, dict):
+                    continue
+                if any(k in row for k in ("net_interest_margin", "loan_to_deposit_ratio", "capital_ratio_proxy")):
+                    sector_profile = "bank"
+                    break
+        except Exception:
+            sector_profile = None
+        self.ratio_source.load("CURRENT", data_by_year or {}, guarded, sector_profile=sector_profile)
         if build_diagnostics_data:
             ratio_engine_output = self.ratio_engine.build(data_by_year or {}, guarded)
             self.base_ratios_by_year = ratio_engine_output.get('ratios', {}) or {}

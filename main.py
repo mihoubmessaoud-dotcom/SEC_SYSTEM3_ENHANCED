@@ -16697,6 +16697,11 @@ class SECFinancialSystem:
         comparison_universe_tickers = sorted(str(k).upper() for k in (comparison_source_snapshot or {}).keys())
         comparison_universe_count = len(comparison_universe_tickers)
         comparison_universe_txt = ', '.join(comparison_universe_tickers) if comparison_universe_tickers else 'NONE'
+        # Ensure sector_profile is always defined for methodology text (avoid UnboundLocalError).
+        try:
+            sector_profile = self._normalize_sector_for_packs(sector_profile_export)
+        except Exception:
+            sector_profile = str(sector_profile_export or 'unknown')
         methodology_rows = [
             {'Topic': 'Version', 'Rule': 'Final actual export (non-breaking)', 'Details': 'Documentation-only; numeric results are unchanged.'},
             {'Topic': 'Sector Profile', 'Rule': 'Detected from SEC/SIC + structural facts', 'Details': f"Applied profile: {sector_profile_export} | Broad profile: {sector_profile}"},

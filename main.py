@@ -6022,6 +6022,9 @@ class SECFinancialSystem:
                     continue
                 ratios_by_year[ky] = row or {}
             ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
+            sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
+            sector_profile_raw = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
+            sector_profile = self._normalize_sector_for_packs(sector_profile_raw)
             ratio_source = UnifiedRatioSource()
             ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile)
 
@@ -6042,12 +6045,7 @@ class SECFinancialSystem:
                 tuple(years),
                 tuple(sorted((self.current_data.get('sector_gating', {}) or {}).items())),
             )
-            sector_gating = (self.current_data.get('sector_gating', {}) or {})
-            sub_sector = (
-                sector_gating.get('sub_profile')
-                or sector_gating.get('profile')
-                or ''
-            )
+            sub_sector = sector_profile_raw or ''
             sub_sector_l = str(sub_sector).strip().lower()
             bank_like_profiles = {
                 'bank',
@@ -16892,8 +16890,16 @@ class SECFinancialSystem:
                 self._style_export_workbook(writer)
             self._cleanup_pending_excel_images()
             audit_summary = self._audit_export_value_objects(fn, normalize=True)
-            # Hard sync: reload the same exported file so UI and Excel are guaranteed identical.
-            reload_ok = self.load_results_from_excel(file_path=fn, show_success_message=False)
+            # Keep UI stable after export: do not reload (Excel import uses display labels and would
+            # lock the UI into an "MISSING_FROM_EXCEL" state). Keep only the source path for
+            # downstream Word/report alignment.
+            try:
+                if isinstance(self.current_data, dict):
+                    self.current_data['_loaded_from_excel_path'] = str(fn)
+                    self.current_data['_source_excel_path'] = str(fn)
+            except Exception:
+                pass
+            reload_ok = True
             try:
                 score_row = acceptance_df[acceptance_df['Metric'] == 'Final_Professional_Score']
                 verdict_row = acceptance_df[acceptance_df['Metric'] == 'Verdict']

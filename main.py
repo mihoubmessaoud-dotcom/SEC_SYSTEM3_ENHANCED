@@ -6674,6 +6674,15 @@ class SECFinancialSystem:
             cc = data.get('canonical_classification', {}) or {}
             if not isinstance(cc, dict):
                 cc = {}
+            classification = cc
+            classifier_diag = (
+                cc.get('diagnostics')
+                or data.get('classifier_diagnostics')
+                or data.get('classification_diagnostics')
+                or {}
+            )
+            if not isinstance(classifier_diag, dict):
+                classifier_diag = {}
             sector_key = (
                 cc.get('operating_sub_sector')
                 or cc.get('peer_group')
@@ -10237,11 +10246,11 @@ class SECFinancialSystem:
         if not strategic_by_year:
             strategic_by_year = self._compute_per_year_metrics(data_by_year, ratios_by_year)
         ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
-        ratio_source = UnifiedRatioSource()
-        ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile)
         sector_gating = (self.current_data.get('sector_gating', {}) if self.current_data else {}) or {}
         sector_profile_raw = (sector_gating.get('sub_profile') or sector_gating.get('profile') or 'unknown')
         sector_profile = self._normalize_sector_for_packs(sector_profile_raw)
+        ratio_source = UnifiedRatioSource()
+        ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile)
         blocked_ratios = set(sector_gating.get('blocked_ratios', []) or [])
         years = self._get_display_years_range()
         self._ratio_years = list(years)

@@ -16438,6 +16438,7 @@ class SECFinancialSystem:
 
         ratio_rows = []
         sector_profile_export = self._get_sector_profile()
+        sector_norm_export = self._normalize_sector_for_packs(sector_profile_export)
         ratio_export_keys = self._get_sector_ratio_export_keys(sector_profile_export)
         mandatory_ratio_keys = set(self._get_sector_mandatory_ratio_keys(sector_profile_export))
         ratio_metrics = []
@@ -16465,6 +16466,18 @@ class SECFinancialSystem:
                 contract = ratio_source.get_ratio_contract(ticker, y, m) or {}
                 raw_v = contract.get('value')
                 direct_v = (ratios_by_year.get(y, {}) or {}).get(m)
+                # For banks, prevent raw ratio fallbacks from leaking outlier values into exports.
+                # Bank core ratios must always be sourced from the gated contract.
+                if sector_norm_export == 'bank' and m in {
+                    'loan_to_deposit_ratio',
+                    'capital_ratio_proxy',
+                    'net_interest_margin',
+                    'bank_efficiency_ratio',
+                    'bank_total_revenue',
+                    'net_income_to_assets',
+                    'equity_ratio',
+                }:
+                    direct_v = None
                 if m == 'pb_ratio_raw' and not self._is_present_metric_value(direct_v):
                     direct_v = (
                         (per_year.get(y, {}) or {}).get('PB_Ratio')

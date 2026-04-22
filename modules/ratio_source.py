@@ -79,6 +79,21 @@ class UnifiedRatioSource:
         self._sector_profile: Optional[str] = None
 
     @staticmethod
+    def _canonical_sector_profile(profile: Optional[str]) -> Optional[str]:
+        p = str(profile or "").strip().lower()
+        if not p:
+            return None
+        if p == "bank" or p.endswith("_bank") or p in {"commercial_bank", "investment_bank", "universal_bank"}:
+            return "bank"
+        if p == "insurance" or p.startswith("insurance_"):
+            return "insurance"
+        if p in {"broker_dealer", "broker-dealer", "broker"}:
+            return "broker_dealer"
+        if p in {"industrial", "technology", "unknown"}:
+            return p
+        return p
+
+    @staticmethod
     def normalize_ratio_id(ratio_id: str) -> str:
         rid = str(ratio_id or '').strip().lower()
         return ALIAS_TO_CANONICAL.get(rid, rid)
@@ -86,7 +101,7 @@ class UnifiedRatioSource:
     def load(self, ticker: str, data_by_year: Dict, ratios_by_year: Dict, sector_profile: Optional[str] = None) -> None:
         self._ticker = ticker
         self._raw_ratios_by_year = ratios_by_year or {}
-        self._sector_profile = str(sector_profile or '').strip().lower() or None
+        self._sector_profile = self._canonical_sector_profile(sector_profile)
         built = self._engine.build(data_by_year or {}, ratios_by_year or {})
         self._contracts_by_year = built.get('ratios', {}) or {}
 

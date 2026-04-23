@@ -8071,7 +8071,10 @@ class SECFinancialSystem:
                     ("إجمالي الربح", [('SEC', 'GrossProfit')], "gross_margin"),
                     ("الدخل التشغيلي", [('SEC', 'OperatingIncomeLoss'), ('SEC', 'OperatingIncome'), ('SEC', 'IncomeLossFromOperations')], "operating_margin, interest_coverage"),
                     ("صافي الدخل", [('SEC', 'NetIncomeLoss'), ('SEC', 'ProfitLoss')], "net_margin, ROA, ROE, EPS, NI_Growth"),
-                    ("مصروف الفوائد", [('SEC', 'InterestExpense'), ('SEC', 'InterestAndDebtExpense'), ('SEC', 'InterestExpenseNonOperating'), ('SEC', 'InterestExpenseDebt')], "interest_coverage, cost_of_debt"),
+                    # Prefer the resolved interest expense actually used by the ratio engine.
+                    # This prevents Inputs_View from showing a small subset tag (e.g., InterestExpenseDebt)
+                    # while NIM/coverage used the total interest expense from companyconcept selection.
+                    ("مصروف الفوائد", [('RATIO', 'interest_expense_used'), ('SEC', 'InterestExpense'), ('SEC', 'InterestAndDebtExpense'), ('SEC', 'InterestExpenseNonOperating'), ('SEC', 'InterestExpenseDebt')], "interest_coverage, cost_of_debt"),
                     ("الاستهلاك والإطفاء", [('SEC', 'DepreciationDepletionAndAmortization'), ('SEC', 'DepreciationAmortization')], "EBITDA, EV/EBITDA"),
                     ("EBITDA", [('SEC', 'EBITDA'), ('SEC', 'Ebitda'), ('STRATEGIC', 'EBITDA')], "EBITDA_margin, EV/EBITDA, net_debt_ebitda"),
                 ]),

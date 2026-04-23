@@ -9278,7 +9278,13 @@ class SECDataFetcher:
                     ebitda = op
             assets, assets_label, assets_source_kind = self._pick_canonical_label_value(data, 'Assets')
             if assets is None:
-                assets = pick('Assets', 'TotalAssets', 'assets')
+                # Strict: only accept true total-assets anchors, never partial buckets like OtherAssets.
+                assets = (
+                    get_val('Assets')
+                    or get_val('TotalAssets')
+                    or get_val('Total Assets')
+                    or pick('Assets', 'TotalAssets', 'Total Assets')
+                )
                 if assets is not None:
                     assets_label = 'dynamic_pick'
                     assets_source_kind = 'fallback'
@@ -9463,6 +9469,16 @@ class SECDataFetcher:
             provisional_insurance_signal = any(v is not None for v in (premiums_earned, policy_claims))
             bank_context = provisional_bank_signal or (prev_deposits is not None)
             insurance_context = provisional_insurance_signal or (prev_premiums_earned is not None)
+            # Bank hard rule: do not compute bank ratios that depend on Assets when
+            # a total-assets anchor is missing. This prevents accidental use of partial
+            # buckets (e.g., OtherAssets) and keeps Balance_Check consistent with ratio math.
+            if bank_context:
+                assets_anchor_present = any(
+                    self._safe_float((data or {}).get(k)) not in (None, 0)
+                    for k in ('Assets', 'TotalAssets', 'Total Assets')
+                )
+                if not assets_anchor_present:
+                    assets = None
             # For incomplete latest-year filings, anchor carry-forward is disabled by default.
             # It can be explicitly enabled if needed.
             allow_anchor_proxy = str(os.environ.get('ALLOW_ANCHOR_PROXY_CARRY_FORWARD', '0')).strip().lower() in ('1', 'true', 'yes')

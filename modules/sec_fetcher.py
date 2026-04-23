@@ -3723,12 +3723,13 @@ class SECDataFetcher:
                 ],
             },
             'net_interest_income': {
-                'aliases': ['NetInterestIncome', 'InterestIncomeNet', 'InterestIncomeOperating', 'InterestAndDividendIncomeOperating'],
+                # Net interest income must be NET (interest income - interest expense).
+                # Do NOT include gross interest income tags here; those belong to `interest_income`.
+                'aliases': ['NetInterestIncome', 'InterestIncomeNet', 'InterestIncomeExpenseNet', 'InterestIncomeExpenseNetOfProvisionForCreditLoss'],
                 'candidates': [
                     ('us-gaap', 'NetInterestIncome'),
-                    ('us-gaap', 'InterestIncomeOperating'),
-                    ('us-gaap', 'InterestAndDividendIncomeOperating'),
-                    ('us-gaap', 'InterestAndFeeIncomeLoansAndLeases'),
+                    ('us-gaap', 'InterestIncomeExpenseNet'),
+                    ('us-gaap', 'InterestIncomeExpenseNetOfProvisionForCreditLoss'),
                     ('us-gaap', 'InterestIncomeExpenseAfterProvisionForLoanLoss'),
                 ],
             },
@@ -5183,18 +5184,26 @@ class SECDataFetcher:
                 if price not in (None, 0) and shares not in (None, 0):
                     market_cap = (price * shares) / 1_000_000.0
             cod_val = _num(r.get('cost_of_debt'))
+            # Banks: WACC should not collapse to a cheap funding-rate proxy. Use CAPM-like cost of equity.
+            bank_like_local = any(_num(r.get(k)) is not None for k in ('net_interest_margin', 'loan_to_deposit_ratio', 'capital_ratio_proxy', 'bank_efficiency_ratio'))
+            if bank_like_local and cost_of_equity not in (None, 0):
+                # For banks we export "WACC" as a cost-of-equity proxy even when
+                # debt composition is unavailable/incomplete in SEC facts.
+                r['wacc'] = float(cost_of_equity)
+                r['wacc_source'] = 'BANK_COST_OF_EQUITY_CAPM_PROXY'
             if (
                 market_cap not in (None, 0)
                 and debt_now not in (None, 0)
                 and cod_val not in (None, 0)
                 and cost_of_equity not in (None, 0)
             ):
-                V = market_cap + debt_now
-                if V > 0:
-                    tax_rate = 0.21
-                    wacc = (market_cap / V) * cost_of_equity + (debt_now / V) * cod_val * (1.0 - tax_rate)
-                    if 0.01 <= wacc <= 0.40:
-                        r['wacc'] = wacc
+                if not bank_like_local:
+                    V = market_cap + debt_now
+                    if V > 0:
+                        tax_rate = 0.21
+                        wacc = (market_cap / V) * cost_of_equity + (debt_now / V) * cod_val * (1.0 - tax_rate)
+                        if 0.01 <= wacc <= 0.40:
+                            r['wacc'] = wacc
 
             # In strict mode we do not silently copy prior-year ratio values when
             # current-year anchors are missing. Keep provenance explicit.
@@ -8544,7 +8553,6 @@ class SECDataFetcher:
             alt['net_interest_income'].extend([
                 'NetInterestIncome',
                 'InterestIncomeNet',
-                'InterestAndDividendIncomeOperating',
                 'InterestIncomeExpenseAfterProvisionForLoanLoss',
                 'Net interest income',
             ])
@@ -9342,25 +9350,17 @@ class SECDataFetcher:
                 pass
             # Detect bank profile from native anchors only (before synthetic proxies).
             native_bank_signal = any(v is not None for v in (net_interest_income, loans, deposits, cet1))
-            # Bank proxy hardening: if explicit deposit/loan tags are absent,
-            # derive conservative proxies to avoid structural N/A for banking ratios.
-            if (native_bank_signal or prev_deposits is not None) and deposits is None and total_liab not in (None, 0):
-                try:
-                    deposits = abs(float(total_liab)) * 0.80
-                    ratios['deposits_proxy_used'] = 'TOTAL_LIABILITIES_X_0_80'
-                except Exception:
-                    deposits = None
-            if (native_bank_signal or prev_deposits is not None) and loans is None and assets not in (None, 0):
-                try:
-                    cash_floor = abs(float(cash)) if cash is not None else 0.0
-                    loans = max(abs(float(assets)) - cash_floor, 0.0)
-                    ratios['loans_proxy_used'] = 'ASSETS_MINUS_CASH_PROXY'
-                except Exception:
-                    loans = None
+            # Strict bank policy: do not fabricate Loans/Deposits from broad balance proxies.
+            # If direct anchors are missing, downstream ratios must be blocked rather than guessed.
+            # (Prior behavior used Assets-minus-Cash and Liabilities*0.8 proxies, which can be wildly wrong.)
+            if deposits is None and total_liab not in (None, 0):
+                ratios['deposits_proxy_candidate'] = 'TOTAL_LIABILITIES_AVAILABLE_BUT_DEPOSITS_MISSING'
+            if loans is None and assets not in (None, 0):
+                ratios['loans_proxy_candidate'] = 'ASSETS_AVAILABLE_BUT_LOANS_MISSING'
             if net_interest_income is None:
                 net_interest_income, _ = pick_semantic_one(
-                    ['net interest income', 'interest income net'],
-                    ['noninterest', 'expense']
+                    ['net interest income', 'interest income net', 'interest income expense net'],
+                    ['noninterest', 'expense', 'operating']
                 )
             if noninterest_income is None:
                 noninterest_income, _ = pick_semantic_one(
@@ -9370,7 +9370,9 @@ class SECDataFetcher:
             if noninterest_expense is None:
                 noninterest_expense, _ = pick_semantic_one(
                     ['noninterest expense', 'operating expense', 'total noninterest expense'],
-                    ['interest income', 'tax benefit', 'comprehensive']
+                    # Exclude *any* interest line items to avoid confusing interest expense
+                    # with noninterest expense in bank efficiency ratio calculations.
+                    ['interest', 'tax benefit', 'comprehensive']
                 )
 
             # Bank signal must be driven by bank-specific anchors only.
@@ -9562,8 +9564,13 @@ class SECDataFetcher:
                 interest_exp_source = 'SEC_HISTORY_CARRY_FORWARD_PROXY'
                 interest_exp_reliability = 60
                 interest_exp_reason = None
-            if net_interest_income is None and interest_income is not None and interest_exp:
-                net_interest_income = float(interest_income) - float(interest_exp)
+            # If net interest income concept is unavailable, compute it explicitly from
+            # gross interest income and interest expense when both exist.
+            if net_interest_income is None and interest_income is not None and interest_exp not in (None, 0):
+                try:
+                    net_interest_income = float(interest_income) - float(abs(interest_exp))
+                except Exception:
+                    net_interest_income = None
             pre_tax_income = pick(
                 'IncomeBeforeTax',
                 'IncomeBeforeTaxContinuingOperations',
@@ -9954,14 +9961,14 @@ class SECDataFetcher:
                         get_val('SalesRevenueNet'),
                         get_val('RevenueFromContractWithCustomerExcludingAssessedTax'),
                     ]
-                    # Banks often report income statement lines differently; interest income is a
-                    # useful fallback anchor when total revenue concepts are missing/misaligned.
-                    if interest_income is not None:
-                        bank_revenue_candidates.append(interest_income)
-                    if net_interest_income is not None:
-                        bank_revenue_candidates.append(net_interest_income)
+                    # Banks: prefer NET revenue (NII + noninterest) over gross interest income.
                     if net_interest_income is not None and noninterest_income is not None:
                         bank_revenue_candidates.append(float(net_interest_income) + float(noninterest_income))
+                    if net_interest_income is not None:
+                        bank_revenue_candidates.append(net_interest_income)
+                    # Gross interest income is last-resort fallback only (low quality).
+                    if interest_income is not None:
+                        bank_revenue_candidates.append(interest_income)
                     if net is not None:
                         bank_total_revenue = pick_best_scaled_denominator(
                             numerator=net,
@@ -9973,6 +9980,12 @@ class SECDataFetcher:
                             max_ratio=0.80,
                         )
                     if bank_total_revenue is not None:
+                        # Revenue should be positive for display and downstream denominators.
+                        try:
+                            if float(bank_total_revenue) < 0:
+                                bank_total_revenue = abs(float(bank_total_revenue))
+                        except Exception:
+                            pass
                         ratios['bank_total_revenue'] = bank_total_revenue
                         ratios['net_margin'] = scaled_ratio(
                             net,
@@ -9983,28 +9996,20 @@ class SECDataFetcher:
                         )
 
                     if net_interest_income is not None and avg_assets not in (None, 0):
+                        # NIM = NetInterestIncome / avg(Assets). NetInterestIncome must already be net of interest expense.
                         nim_val = scaled_ratio(
                             net_interest_income,
                             avg_assets,
-                            target=0.03,
+                            target=0.028,
                             min_abs=0.0,
-                            max_abs=0.5,
+                            max_abs=0.20,
                         )
-                        # If NIM is implausibly tiny, retry from alternative interest tags.
-                        if nim_val is not None and abs(nim_val) < 0.001:
-                            alt_interest_income = pick('InterestAndFeeIncomeLoansAndLeases') or interest_income
-                            alt_interest_exp = pick('InterestExpenseDeposits') or interest_exp
-                            if alt_interest_income is not None and alt_interest_exp is not None:
-                                retry_nim = scaled_ratio(
-                                    float(alt_interest_income) - float(abs(alt_interest_exp)),
-                                    avg_assets,
-                                    target=0.03,
-                                    min_abs=0.0,
-                                    max_abs=0.5,
-                                )
-                                if retry_nim is not None:
-                                    nim_val = retry_nim
                         ratios['net_interest_margin'] = nim_val
+                        ratios['net_interest_margin_source'] = (
+                            'NET_INTEREST_INCOME_OVER_AVG_ASSETS'
+                            if pick('NetInterestIncome') is not None or pick('InterestIncomeExpenseNet') is not None
+                            else 'DERIVED_INTEREST_INCOME_MINUS_EXPENSE_OVER_AVG_ASSETS'
+                        )
                     # Bank efficiency ratio must be economically plausible.
                     # Strategy:
                     # 1) Prefer SEC noninterest expense / total revenue when plausible.
@@ -10058,32 +10063,18 @@ class SECDataFetcher:
                         elif eff_source:
                             ratios['bank_efficiency_ratio'] = None
                             ratios['bank_efficiency_ratio_source'] = eff_source
+                    # Strict LDR: require BOTH loans and deposits anchors. Do not use debt/assets proxies.
                     if loans is not None and deposits not in (None, 0):
                         ratios['loan_to_deposit_ratio'] = safe_div(loans, deposits)
-                    elif deposits not in (None, 0) and total_debt not in (None, 0):
-                        ldr_proxy = scaled_ratio(
-                            total_debt,
-                            deposits,
-                            target=0.70,
-                            min_abs=0.0,
-                            max_abs=3.0,
-                        )
-                        if ldr_proxy is not None:
-                            ratios['loan_to_deposit_ratio'] = ldr_proxy
-                            ratios['loan_to_deposit_proxy_used'] = True
-                    elif deposits not in (None, 0) and assets not in (None, 0):
-                        cash_base = abs(cash) if cash is not None else 0.0
-                        loans_asset_proxy = max(abs(assets) - cash_base, 0.0)
-                        ldr_proxy_assets = scaled_ratio(
-                            loans_asset_proxy,
-                            deposits,
-                            target=0.85,
-                            min_abs=0.0,
-                            max_abs=3.0,
-                        )
-                        if ldr_proxy_assets is not None:
-                            ratios['loan_to_deposit_ratio'] = ldr_proxy_assets
-                            ratios['loan_to_deposit_proxy_used'] = 'ASSETS_MINUS_CASH_OVER_DEPOSITS_PROXY'
+                        ratios['loan_to_deposit_source'] = 'BANK_ANCHORS_LOANS_OVER_DEPOSITS'
+                    else:
+                        ratios['loan_to_deposit_ratio'] = None
+                        ratios['loan_to_deposit_source'] = 'MISSING_BANK_LOANS_OR_DEPOSITS'
+                        reasons_map = ratios.get('_ratio_reasons')
+                        if not isinstance(reasons_map, dict):
+                            reasons_map = {}
+                            ratios['_ratio_reasons'] = reasons_map
+                        reasons_map['loan_to_deposit_ratio'] = 'MISSING_BANK_LOANS_OR_DEPOSITS'
                     ldr_val = self._safe_float(ratios.get('loan_to_deposit_ratio'))
                     # Hard realism gate: block LDR when it is outside plausible economic range.
                     # This prevents proxies (or missing tags) from producing misleading risk signals.
@@ -10101,22 +10092,6 @@ class SECDataFetcher:
                                 ratios['_ratio_reasons'] = reasons_map
                             reasons_map['loan_to_deposit_ratio'] = 'BANK_ANCHOR_INCONSISTENT'
                             ldr_val = None
-                    raw_dep_missing = (
-                        data.get('Deposits') in (None, 0)
-                        and data.get('DepositLiabilities') in (None, 0)
-                    )
-                    if (
-                        ldr_val is not None
-                        and abs(float(ldr_val)) > 5.0
-                        and raw_dep_missing
-                        and prev_deposits not in (None, 0)
-                    ):
-                        if prev_loans not in (None, 0):
-                            ratios['loan_to_deposit_ratio'] = safe_div(float(prev_loans), float(prev_deposits))
-                            ratios['loan_to_deposit_source'] = 'SEC_HISTORY_CARRY_FORWARD_PROXY_BANK_ANOMALOUS_LDR'
-                        else:
-                            ratios['loan_to_deposit_ratio'] = None
-                            ratios['loan_to_deposit_source'] = 'ANOMALOUS_LDR_REJECTED_MISSING_DEPOSIT_ANCHOR'
                     if cet1 is not None:
                         # If CET1 is already a ratio (<=1), keep it.
                         if abs(cet1) <= 1.0:
@@ -10233,31 +10208,30 @@ class SECDataFetcher:
                     ratios['roe_source'] = 'FORCED_FALLBACK_NET_OVER_EQUITY'
 
                 if bank_like:
-                    if ratios.get('net_interest_margin') is None and net is not None and avg_assets_fallback not in (None, 0):
-                        ratios['net_interest_margin'] = safe_div(float(net), float(avg_assets_fallback))
-                        ratios['net_interest_margin_source'] = 'FORCED_FALLBACK_NET_OVER_AVG_ASSETS'
+                    # NIM must be based on Net Interest Income (not net income).
+                    if ratios.get('net_interest_margin') is None and avg_assets_fallback not in (None, 0):
+                        if net_interest_income is not None:
+                            ratios['net_interest_margin'] = safe_div(float(net_interest_income), float(avg_assets_fallback))
+                            ratios['net_interest_margin_source'] = 'FORCED_FALLBACK_NET_INTEREST_INCOME_OVER_AVG_ASSETS'
+                        else:
+                            ratios['net_interest_margin'] = None
+                            ratios['net_interest_margin_source'] = 'MISSING_NET_INTEREST_INCOME_OR_ASSETS'
+                            reasons_map = ratios.get('_ratio_reasons')
+                            if not isinstance(reasons_map, dict):
+                                reasons_map = {}
+                                ratios['_ratio_reasons'] = reasons_map
+                            reasons_map['net_interest_margin'] = 'MISSING_NET_INTEREST_INCOME_OR_ASSETS'
 
                     if ratios.get('loan_to_deposit_ratio') is None:
-                        dep = deposits
-                        loan_base = loans
-                        missing_bank_anchors = (
-                            deposits in (None, 0)
-                            and loans is None
-                            and assets is None
-                            and total_liab is None
-                        )
-                        if missing_bank_anchors and prev_deposits not in (None, 0) and prev_loans is not None:
-                            ratios['loan_to_deposit_ratio'] = safe_div(float(prev_loans), float(prev_deposits))
-                            ratios['loan_to_deposit_source'] = 'SEC_HISTORY_CARRY_FORWARD_PROXY_BANK_MISSING_ANCHORS'
-                        else:
-                            if dep in (None, 0) and total_liab not in (None, 0):
-                                dep = abs(float(total_liab)) * 0.80
-                            if loan_base is None and assets is not None:
-                                cash_base = abs(float(cash)) if cash is not None else 0.0
-                                loan_base = max(abs(float(assets)) - cash_base, 0.0)
-                            if loan_base is not None and dep not in (None, 0):
-                                ratios['loan_to_deposit_ratio'] = safe_div(float(loan_base), float(dep))
-                                ratios['loan_to_deposit_source'] = 'FORCED_FALLBACK_ASSET_PROXY'
+                        # Strict policy: never fabricate LDR from Assets/Liabilities proxies.
+                        # If direct Loans/Deposits anchors are missing, keep blocked with an explicit reason.
+                        ratios['loan_to_deposit_ratio'] = None
+                        ratios['loan_to_deposit_source'] = 'MISSING_BANK_LOANS_OR_DEPOSITS'
+                        reasons_map = ratios.get('_ratio_reasons')
+                        if not isinstance(reasons_map, dict):
+                            reasons_map = {}
+                            ratios['_ratio_reasons'] = reasons_map
+                        reasons_map['loan_to_deposit_ratio'] = 'MISSING_BANK_LOANS_OR_DEPOSITS'
 
                     if ratios.get('capital_ratio_proxy') is None:
                         cap_proxy = None

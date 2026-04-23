@@ -2424,6 +2424,12 @@ class SECDataFetcher:
         txt = str(frame or '').lower()
         if not txt:
             return False
+        # CompanyFacts commonly uses calendar-year frames like:
+        #   CY2025Q4I (instant balance sheet)
+        #   CY2025Q4  (duration income/cashflow)
+        # These are consolidated unless explicitly segmented (handled separately).
+        if txt.startswith('cy') and any(ch.isdigit() for ch in txt) and ('q' in txt):
+            return True
         preferred = ('consolidated', 'dei:entitycommonstocksharesoutstanding')
         return any(k in txt for k in preferred)
 

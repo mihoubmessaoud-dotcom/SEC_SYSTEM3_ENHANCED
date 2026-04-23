@@ -13863,6 +13863,39 @@ class SECFinancialSystem:
                 r['pe_ratio_used'] = m_pe
                 r['pe_ratio_used_source'] = 'MARKET_TTM_FALLBACK'
 
+            # Valuation coherence (PB/BVPS) when balance anchors are missing:
+            # If equity is missing for this year, prefer deriving BVPS from market PB and price
+            # to prevent contradictory PB values across Ratios / Investor_Verdict / audits.
+            equity_missing = equity in (None, 0)
+            if equity_missing and m_pb not in (None, 0) and price_y not in (None, 0):
+                try:
+                    bvps_implied = float(price_y) / float(m_pb)
+                except Exception:
+                    bvps_implied = None
+                if bvps_implied not in (None, 0):
+                    replace_bvps = False
+                    if bvps_now in (None, 0):
+                        replace_bvps = True
+                    else:
+                        try:
+                            pb_from_bvps = float(price_y) / float(bvps_now) if bvps_now not in (None, 0) else None
+                        except Exception:
+                            pb_from_bvps = None
+                        if pb_from_bvps not in (None, 0):
+                            gap = max(abs(pb_from_bvps), abs(float(m_pb))) / max(min(abs(pb_from_bvps), abs(float(m_pb))), 1e-12)
+                            if gap >= 1.35:
+                                replace_bvps = True
+                    if replace_bvps:
+                        r['book_value_per_share'] = bvps_implied
+                        r['book_value_per_share_source'] = 'MARKET_PB_IMPLIED_BVPS'
+                        bvps_now = bvps_implied
+                        issues.append(f"{y}: book_value_per_share aligned to market_pb (missing equity anchors)")
+                # Keep PB consistent with market PB under missing equity anchors.
+                r['pb_ratio'] = float(m_pb)
+                r['pb_ratio_source'] = 'MARKET_TTM_OVERRIDE_MISSING_EQUITY'
+                r['pb_ratio_used'] = float(m_pb)
+                r['pb_ratio_used_source'] = 'MARKET_TTM_OVERRIDE_MISSING_EQUITY'
+
             bvps_for_pb = bvps_now
             if price_y not in (None, 0) and bvps_now not in (None, 0):
                 pb_raw = price_y / bvps_now

@@ -149,6 +149,51 @@ class UnifiedRatioSource:
             contract.setdefault('reason', 'MISSING_SEC_CONCEPT')
             contract.setdefault('missing_inputs', list(contract.get('input_concepts') or []))
         contract.setdefault('bounds_result', {'status': 'unknown', 'ratio_id': canonical})
+        # Coherence fix: keep PB and BVPS internally consistent when market PB is available
+        # but equity anchors are missing / stale. Prefer aligning BVPS to PB (price / pb),
+        # rather than emitting contradictory PB/BVPS across sheets.
+        try:
+            import math
+
+            def _finite(v):
+                try:
+                    return isinstance(v, (int, float)) and math.isfinite(float(v))
+                except Exception:
+                    return False
+
+            if canonical == 'book_value_per_share' and self._sector_profile in {'bank', 'insurance', 'broker_dealer'}:
+                bvps_val = contract.get('value')
+                if _finite(bvps_val) and abs(float(bvps_val)) > 1e-12:
+                    pb_contract = (self._contracts_by_year.get(year, {}) or {}).get('pb_ratio') or {}
+                    pb_val = pb_contract.get('value') if isinstance(pb_contract, dict) else None
+                    pb_inputs = pb_contract.get('inputs') if isinstance(pb_contract, dict) else {}
+                    price = None
+                    try:
+                        if isinstance(pb_inputs, dict):
+                            price = pb_inputs.get('price')
+                    except Exception:
+                        price = None
+                    if _finite(price) and _finite(pb_val) and pb_val not in (0, None):
+                        implied_pb = float(price) / float(bvps_val)
+                        gap = max(abs(implied_pb), abs(float(pb_val))) / max(min(abs(implied_pb), abs(float(pb_val))), 1e-12)
+                        # Only realign when the mismatch is material (likely unit/basis mix).
+                        if gap >= 1.35 and abs(float(pb_val)) >= 0.10:
+                            new_bvps = float(price) / float(pb_val)
+                            # Guard against pathological results.
+                            if _finite(new_bvps) and 0.01 <= abs(new_bvps) <= 5_000.0:
+                                contract['value'] = new_bvps
+                                contract['status'] = 'COMPUTED'
+                                contract['reason'] = 'BVPS_REALIGNED_TO_PB'
+                                try:
+                                    contract['reliability'] = min(float(contract.get('reliability') or 80.0), 70.0)
+                                except Exception:
+                                    contract['reliability'] = 70.0
+                                contract['source'] = contract.get('source') or 'ratio_engine'
+                                inputs = dict(contract.get('inputs') or {})
+                                inputs.update({'price': float(price), 'pb_ratio': float(pb_val), 'bvps_original': float(bvps_val)})
+                                contract['inputs'] = inputs
+        except Exception:
+            pass
         # Institutional Data Contract v1 (backward-compatible enrichments)
         contract['data_contract_version'] = 'v1'
         contract['metric_id'] = canonical

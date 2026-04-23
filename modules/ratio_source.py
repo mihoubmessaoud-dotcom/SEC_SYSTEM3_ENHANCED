@@ -133,6 +133,21 @@ class UnifiedRatioSource:
                         contract = raw_fallback
         contract = dict(contract)
         contract['ratio_id'] = canonical
+        # Surface raw gating / contamination reasons (if any) even when a numeric value exists.
+        # This improves audit transparency without changing UI/export structure.
+        try:
+            raw_row = (self._raw_ratios_by_year.get(year, {}) or {})
+            row_reasons = dict(raw_row.get('_ratio_reasons') or {})
+            forced_reason = row_reasons.get(canonical)
+            if forced_reason and not contract.get('reason'):
+                contract['reason'] = forced_reason
+                # Reduce reliability to reflect that the value should not be treated as certified.
+                try:
+                    contract['reliability'] = min(int(contract.get('reliability') or 0), 30)
+                except Exception:
+                    contract['reliability'] = 30
+        except Exception:
+            pass
         contract.setdefault('source', 'ratio_engine')
         contract.setdefault('inputs', {})
         contract.setdefault('raw_values_used', contract.get('inputs', {}))

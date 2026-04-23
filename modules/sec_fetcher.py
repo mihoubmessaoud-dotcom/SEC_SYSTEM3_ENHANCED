@@ -3436,6 +3436,21 @@ class SECDataFetcher:
                 return None
             return float(nv)
 
+        def _norm_million_any(v):
+            fv = self._safe_float(v)
+            if fv is None:
+                return None
+            fv = float(fv)
+            # Normalize obvious raw-USD slips to USDm.
+            # Use a high threshold to avoid shrinking legitimate bank totals
+            # (e.g., Assets can be in the millions of USDm for large banks).
+            if abs(fv) >= 10_000_000.0:
+                fv = fv / 1_000_000.0
+            nv = self._normalize_million_value(fv)
+            if nv is None:
+                return None
+            return float(nv)
+
         candidates = []
         row_aliases = [
             'InterestExpense',
@@ -3554,6 +3569,72 @@ class SECDataFetcher:
                     sane_candidates.append(c)
                 if sane_candidates:
                     candidates = sane_candidates
+
+        # Bank-specific plausibility selection:
+        # Many bank filers expose both InterestExpenseDebt (subset) and InterestExpense (total).
+        # A naive priority order can mistakenly pick the smaller subset and inflate NIM.
+        if is_bank:
+            try:
+                interest_income = None
+                for k in (
+                    'InterestAndDividendIncomeOperating',
+                    'InterestIncomeOperating',
+                    'InterestIncome',
+                    'InterestIncomeNonoperating',
+                ):
+                    vv = _norm_million_any((row or {}).get(k))
+                    if vv not in (None, 0):
+                        interest_income = vv
+                        break
+
+                assets = None
+                for k in ('Assets', 'TotalAssets'):
+                    vv = _norm_million_any((row or {}).get(k))
+                    if vv not in (None, 0):
+                        assets = vv
+                        break
+
+                if interest_income not in (None, 0) and assets not in (None, 0) and len(candidates) >= 2:
+                    # Pick candidate that yields an economically plausible NIM band,
+                    # and is closest to a typical large-bank target (~2.8%).
+                    target_nim = 0.028
+                    scored = []
+                    for c in candidates:
+                        cv = self._safe_float(c.get('value'))
+                        if cv is None or cv <= 0:
+                            continue
+                        # Require expense to be a meaningful portion of interest income.
+                        # (Debt-only expense is often too small and breaks NIM.)
+                        if cv < (0.05 * abs(float(interest_income))) or cv > (0.95 * abs(float(interest_income))):
+                            continue
+                        nii = float(interest_income) - float(cv)
+                        nim = nii / float(assets) if assets not in (None, 0) else None
+                        if nim is None:
+                            continue
+                        if nim < 0.0 or nim > 0.20:
+                            continue
+                        tag = str(c.get('tag') or '').lower()
+                        debt_subset_penalty = 0.004 if 'debt' in tag and 'interestexpensedebt' in tag else 0.0
+                        score = abs(float(nim) - target_nim) + debt_subset_penalty
+                        scored.append((score, c))
+                    if scored:
+                        scored.sort(key=lambda x: x[0])
+                        best = scored[0][1]
+                        result.update({
+                            'status': 'COMPUTED',
+                            'reason': None,
+                            'value': float(best.get('value') or 0.0),
+                            'source': str(best.get('source') or ''),
+                            'reliability': int(best.get('reliability') or 0),
+                            'tag': best.get('tag'),
+                            'unit': best.get('unit'),
+                            'filed': best.get('filed'),
+                            'is_estimated': bool(best.get('is_estimated')),
+                            'missing_inputs': [],
+                        })
+                        return result
+            except Exception:
+                pass
 
         best = max(candidates, key=lambda c: float(c.get('score') or 0.0))
         result.update({
@@ -10018,6 +10099,23 @@ class SECDataFetcher:
                     if bank_total_revenue not in (None, 0):
                         eff_val = None
                         eff_source = None
+                        # Guard against a known contamination case where the picked
+                        # "noninterest expense" equals InterestExpense (often from tag/label drift).
+                        # When detected, force the proxy path rather than exporting a misleading ratio.
+                        try:
+                            if noninterest_expense is not None and interest_exp not in (None, 0):
+                                ne = abs(float(noninterest_expense))
+                                iee = abs(float(interest_exp))
+                                if iee > 0 and abs(ne - iee) / max(iee, 1e-12) < 0.02:
+                                    noninterest_expense = None
+                                    eff_source = 'NONINTEREST_EXPENSE_CONTAMINATED_INTEREST_EXPENSE'
+                                    reasons_map = ratios.get('_ratio_reasons')
+                                    if not isinstance(reasons_map, dict):
+                                        reasons_map = {}
+                                        ratios['_ratio_reasons'] = reasons_map
+                                    reasons_map['bank_efficiency_ratio'] = 'NONINTEREST_EXPENSE_CONTAMINATED_INTEREST_EXPENSE'
+                        except Exception:
+                            pass
                         if noninterest_expense is not None:
                             try:
                                 eff_raw = abs(float(noninterest_expense)) / max(abs(float(bank_total_revenue)), 1e-12)
@@ -10033,9 +10131,9 @@ class SECDataFetcher:
                                     min_abs=0.05,
                                     max_abs=2.0,
                                 )
-                                eff_source = 'NONINTEREST_EXPENSE_OVER_TOTAL_REVENUE'
+                                eff_source = eff_source or 'NONINTEREST_EXPENSE_OVER_TOTAL_REVENUE'
                             else:
-                                eff_source = 'EFF_PROXY_OUTLIER_NONINTEREST_EXPENSE'
+                                eff_source = eff_source or 'EFF_PROXY_OUTLIER_NONINTEREST_EXPENSE'
 
                         if eff_val is None and net is not None:
                             # Conservative proxy when noninterest expense is missing/outlier.

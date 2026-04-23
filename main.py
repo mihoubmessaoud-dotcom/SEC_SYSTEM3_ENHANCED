@@ -6229,27 +6229,40 @@ class SECFinancialSystem:
             # 4ï¸âƒ£ Ø¹Ø±Ø¶ AI Working Capital Analysis
             # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             wc = insights.get('working_capital_analysis', {})
-            wc_crisis = wc.get('liquidity_crisis_prob', 0) * 100
-            wc_ccc = wc.get('latest_ccc', 0)
-            wc_trend = wc.get('ccc_trend', 0)
+            wc_prob = wc.get('liquidity_crisis_prob')
+            wc_crisis = (float(wc_prob) * 100.0) if isinstance(wc_prob, (int, float)) else None
+            wc_ccc_v = wc.get('latest_ccc')
+            wc_ccc = float(wc_ccc_v) if isinstance(wc_ccc_v, (int, float)) else None
+            wc_trend_v = wc.get('ccc_trend')
+            wc_trend = float(wc_trend_v) if isinstance(wc_trend_v, (int, float)) else None
             wc_risk = wc.get('risk_level', '--')
             wc_rec = wc.get('recommendation', '--')
             wc_risk_norm = self._decode_mojibake_text(str(wc_risk or '')).strip().lower()
-            
-            self.wc_crisis_prob_label.config(text=self._t('ai_wc_crisis').replace('--', f"{wc_crisis:.1f}%"))
-            self.wc_ccc_label.config(text=self._t('ai_wc_ccc').replace('--', f"{wc_ccc:.1f}"))
-            
-            if wc_trend > 0:
-                self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text(f"الاتجاه يتدهور بمقدار {wc_trend:.1f} يوم/سنة")))
-            elif wc_trend < 0:
-                self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text(f"الاتجاه يتحسن بمقدار {abs(wc_trend):.1f} يوم/سنة")))
+
+            wc_reason = str(wc.get('reason') or '').strip().upper()
+            if wc_reason == 'BLOCKED_FOR_BANK_MODEL' or wc_risk_norm in {'غير مطبق', 'not applicable'}:
+                self.wc_crisis_prob_label.config(text=self._t('ai_wc_crisis').replace('--', self._translate_ui_text('غير مطبق على البنوك')))
+                self.wc_ccc_label.config(text=self._t('ai_wc_ccc').replace('--', self._translate_ui_text('غير مطبق')))
+                self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text('استخدم NIM وLDR بدل CCC')))
+                self.wc_recommendation_label.config(text=self._t('ai_recommendation').replace('--', str(wc_rec or '')))
+                self.wc_crisis_prob_label.config(fg=PALETTE.get('muted', '#888'))
             else:
-                self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text("الاتجاه مستقر")))
-            
-            self.wc_recommendation_label.config(text=self._t('ai_recommendation').replace('--', str(wc_rec)))
+                self.wc_crisis_prob_label.config(text=self._t('ai_wc_crisis').replace('--', ('--' if wc_crisis is None else f"{wc_crisis:.1f}%")))
+                self.wc_ccc_label.config(text=self._t('ai_wc_ccc').replace('--', ('--' if wc_ccc is None else f"{wc_ccc:.1f}")))
+
+                if wc_trend is not None and wc_trend > 0:
+                    self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text(f"الاتجاه يتدهور بمقدار {wc_trend:.1f} يوم/سنة")))
+                elif wc_trend is not None and wc_trend < 0:
+                    self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text(f"الاتجاه يتحسن بمقدار {abs(wc_trend):.1f} يوم/سنة")))
+                else:
+                    self.wc_trend_label.config(text=self._t('ai_wc_trend').replace('--', self._translate_ui_text("الاتجاه مستقر")))
+
+                self.wc_recommendation_label.config(text=self._t('ai_recommendation').replace('--', str(wc_rec)))
             
             # Ù„ÙˆÙ† Ø­Ø³Ø¨ Ø§Ù„Ù…Ø®Ø§Ø·Ø±
-            if wc_risk_norm in {'منخفض', 'low'}:
+            if wc_crisis is None:
+                pass
+            elif wc_risk_norm in {'منخفض', 'low'}:
                 self.wc_crisis_prob_label.config(fg='#28a745')
             elif wc_risk_norm in {'متوسط', 'medium'}:
                 self.wc_crisis_prob_label.config(fg='#ffc107')
@@ -15897,13 +15910,16 @@ class SECFinancialSystem:
                 _push('growth.sgr_internal', growth.get('sgr_internal'))
                 _push('growth.debt_warning', growth.get('debt_warning'))
                 _push('growth.assessment', growth.get('assessment'))
-            # Banks: working-capital / CCC diagnostics are industrial constructs; suppress in bank exports.
-            if wc and sector_norm != 'bank':
+            # Working-capital / CCC diagnostics are industrial constructs.
+            # For banks we still export the block reason + recommendation so the sheet looks complete
+            # and users see "not applicable" (not missing).
+            if wc:
                 _push('working_capital.latest_ccc', wc.get('latest_ccc'))
                 _push('working_capital.ccc_trend', wc.get('ccc_trend'))
                 _push('working_capital.liquidity_crisis_prob', wc.get('liquidity_crisis_prob'))
                 _push('working_capital.risk_level', wc.get('risk_level'))
                 _push('working_capital.recommendation', wc.get('recommendation'))
+                _push('working_capital.reason', wc.get('reason'))
             if quality:
                 _push('investment_quality.score', quality.get('quality_score'))
                 _push('investment_quality.verdict', quality.get('verdict'))

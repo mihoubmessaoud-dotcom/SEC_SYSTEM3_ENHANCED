@@ -1592,7 +1592,13 @@ class RatioEngine:
         if v is None:
             return None
         if isinstance(v, (int, float)):
-            return float(v)
+            fv = float(v)
+            # Treat NaN/Inf as missing. This prevents propagating NaN through
+            # equity/assets-based ratios and avoids false "zero_denominator"
+            # or computed NaN outputs.
+            if fv != fv or abs(fv) == float('inf'):
+                return None
+            return fv
         try:
             s = str(v).strip()
             if not s:
@@ -1609,6 +1615,8 @@ class RatioEngine:
                 val = float(s)
             if neg:
                 val = -val
+            if val != val or abs(val) == float('inf'):
+                return None
             return val
         except Exception:
             return None

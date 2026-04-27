@@ -37,6 +37,19 @@ class UnitNormalizationEngine:
         "tax_rate",
         "nim",
         "spread",
+        # Common ratios/metrics that do not include the word "ratio"/"margin" but must
+        # never be unit-normalized as money.
+        "roic",
+        "roe",
+        "roa",
+        "wacc",
+        "eps",
+        "bvps",
+        "pe",
+        "pb",
+        "ps",
+        "peg",
+        "coverage",
     )
 
     @staticmethod

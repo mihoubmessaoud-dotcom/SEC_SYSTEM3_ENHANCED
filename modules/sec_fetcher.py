@@ -1719,6 +1719,37 @@ class SECDataFetcher:
         sh = self._safe_float(shares)
 
         if k in self.MARKET_MILLION_KEYS:
+            # Enterprise Value is especially prone to accidental /1000 scaling when using
+            # a simplistic EV/Assets target ratio. Instead, anchor EV to market cap when possible.
+            if k == 'enterprise_value':
+                # Build a market-cap anchor in *million USD* if possible.
+                mcap_m = None
+                if px not in (None, 0) and sh not in (None, 0):
+                    try:
+                        if abs(sh) < 1_000_000:
+                            # shares expressed in million shares
+                            mcap_m = abs(px * sh)
+                        else:
+                            # shares expressed in absolute shares
+                            mcap_m = abs(px * sh) / 1_000_000.0
+                    except Exception:
+                        mcap_m = None
+
+                # Candidate scales: already-million, billions->million, USD->million, etc.
+                cands = [fv, fv / 1_000.0, fv / 1_000_000.0, fv / 1_000_000_000.0, fv * 1_000.0]
+                cands = [c for c in cands if c is not None and c > 0 and not math.isinf(c) and not math.isnan(c)]
+
+                if mcap_m not in (None, 0) and cands:
+                    plausible = [c for c in cands if 0.20 <= (c / max(mcap_m, 1e-9)) <= 5.0]
+                    pool = plausible if plausible else cands
+                    # Prefer EV close to market cap (typical range 0.6x–1.8x).
+                    return min(pool, key=lambda c: abs((c / max(mcap_m, 1e-9)) - 1.10))
+
+                # Fallback: deterministic million normalization by magnitude.
+                if abs(fv) > 1_000_000_000:
+                    return fv / 1_000_000.0
+                return fv
+
             # Strong anchor for market cap: compare against price*shares when available.
             if k == 'market_cap' and px not in (None, 0) and sh not in (None, 0):
                 # SEC rows often use shares in millions, while market layers use absolute shares.
@@ -3309,12 +3340,25 @@ class SECDataFetcher:
                     continue
                 try:
                     y = int(end_date[:4])
+                    m = int(end_date[5:7]) if len(end_date) >= 7 else None
                 except Exception:
                     continue
+                # Align companyconcept year keys with the app's analysis-year convention:
+                # for duration facts (have `start`) with fiscal year ending in Jan/Feb,
+                # map to prior calendar year (e.g. NVDA FY ended 2016-01-31 -> analysis year 2015).
+                try:
+                    start_date = str(e.get('start') or '')
+                    is_duration = bool(start_date and len(start_date) >= 10 and start_date != end_date)
+                    if is_duration and m in (1, 2):
+                        y = int(y) - 1
+                except Exception:
+                    pass
                 if y < int(start_year) or y > int(end_year):
                     continue
-                frame = str(e.get('frame') or '')
-                if frame and 'Q' in frame:
+                # For non-December filers, SEC `frame` often contains "Q" even for FY 10-K facts
+                # (it's a calendar frame, not a period-type filter). Filter by fp instead.
+                fp = str(e.get('fp') or '').upper()
+                if fp and fp != 'FY':
                     continue
 
                 val = self._safe_float(e.get('val'))
@@ -3373,12 +3417,23 @@ class SECDataFetcher:
                     continue
                 try:
                     y = int(end_date[:4])
+                    m = int(end_date[5:7]) if len(end_date) >= 7 else None
                 except Exception:
                     continue
+                # Align companyconcept year keys with the app's analysis-year convention (see above).
+                try:
+                    start_date = str(e.get('start') or '')
+                    is_duration = bool(start_date and len(start_date) >= 10 and start_date != end_date)
+                    if is_duration and m in (1, 2):
+                        y = int(y) - 1
+                except Exception:
+                    pass
                 if y < int(start_year) or y > int(end_year):
                     continue
-                frame = str(e.get('frame') or '')
-                if frame and 'Q' in frame:
+                # For non-December filers, SEC `frame` often contains "Q" even for FY 10-K facts.
+                # Use fp instead of `frame` to exclude quarterlies.
+                fp = str(e.get('fp') or '').upper()
+                if fp and fp != 'FY':
                     continue
                 val = self._safe_float(e.get('val'))
                 if val is None:
@@ -4597,7 +4652,13 @@ class SECDataFetcher:
                 eps = _num(row.get('EarningsPerShareBasic'))
             if eps is None:
                 ni = _num(row.get('NetIncomeLoss')) or _num(row.get('NetIncome'))
-                sh = _num(row.get('WeightedAverageNumberOfSharesOutstandingBasic')) or _num(r.get('shares_outstanding'))
+                # EPS must use SEC weighted-average shares (not market shares outstanding).
+                sh = (
+                    _num(row.get('WeightedAverageNumberOfSharesOutstandingBasic'))
+                    or _num(row.get('SharesBasic'))
+                    or _num(row.get('WeightedAverageNumberOfDilutedSharesOutstanding'))
+                    or _num(row.get('WeightedAverageNumberOfShareOutstandingBasicAndDiluted'))
+                )
                 if ni is not None and sh not in (None, 0):
                     eps = self._select_per_share_scaled_value(
                         numerator=ni,
@@ -4648,7 +4709,12 @@ class SECDataFetcher:
                     ratio_gap = max(abs(eps), abs(implied_eps)) / max(min(abs(eps), abs(implied_eps)), 1e-12)
                     if ratio_gap >= 5.0:
                         ni = _num(row.get('NetIncomeLoss')) or _num(row.get('NetIncome'))
-                        sh = _num(row.get('WeightedAverageNumberOfSharesOutstandingBasic')) or _num(r.get('shares_outstanding'))
+                        sh = (
+                            _num(row.get('WeightedAverageNumberOfSharesOutstandingBasic'))
+                            or _num(row.get('SharesBasic'))
+                            or _num(row.get('WeightedAverageNumberOfDilutedSharesOutstanding'))
+                            or _num(row.get('WeightedAverageNumberOfShareOutstandingBasicAndDiluted'))
+                        )
                         if ni is not None and sh not in (None, 0):
                             split_factors = [1.0]
                             if split_latest_ratio not in (None, 0):
@@ -5285,6 +5351,24 @@ class SECDataFetcher:
                         wacc = (market_cap / V) * cost_of_equity + (debt_now / V) * cod_val * (1.0 - tax_rate)
                         if 0.01 <= wacc <= 0.40:
                             r['wacc'] = wacc
+                            r['wacc_source'] = 'CAPM_WACC_WEIGHTED'
+
+            # Never output a constant multi-year WACC fallback.
+            # If capital-structure anchors are incomplete, export a CAPM cost-of-equity proxy instead
+            # (still varies with beta and risk-free rates).
+            if r.get('wacc') in (None, 0) and cost_of_equity not in (None, 0):
+                if 0.01 <= float(cost_of_equity) <= 0.60:
+                    r['wacc'] = float(cost_of_equity)
+                    r['wacc_source'] = 'CAPM_COST_OF_EQUITY_PROXY'
+
+            # Warning flag: suspiciously low WACC for high-beta equities.
+            try:
+                wacc_now = _num(r.get('wacc'))
+                if beta not in (None, 0) and wacc_now not in (None, 0):
+                    if float(wacc_now) < (abs(float(beta)) * 0.03):
+                        r['wacc_warning'] = 'WACC_SUSPICIOUSLY_LOW_VS_BETA'
+            except Exception:
+                pass
 
             # In strict mode we do not silently copy prior-year ratio values when
             # current-year anchors are missing. Keep provenance explicit.
@@ -9243,10 +9327,49 @@ class SECDataFetcher:
                     max_ratio=1.0,
                     min_abs_ratio=0.005,
                 )
-            net_interest_income = pick('net_interest_income') or None
-            interest_income = pick('interest_income') or None
-            noninterest_income = pick('noninterest_income') or None
-            noninterest_expense = pick('noninterest_expense') or None
+            # Bank concept allowlists (strict first, then dynamic/semantic fallbacks).
+            # This prevents random aliasing from contaminating bank-specific metrics.
+            net_interest_income = None
+            interest_income = None
+            noninterest_income = None
+            noninterest_expense = None
+            try:
+                net_interest_income, _ = pick_exact_candidates([
+                    'NetInterestIncome',
+                    'InterestIncomeExpenseNet',
+                    'InterestIncomeNet',
+                    'InterestIncomeExpenseAfterProvisionForLoanLoss',
+                ])
+                interest_income, _ = pick_exact_candidates([
+                    'InterestIncomeOperating',
+                    'InterestAndDividendIncomeOperating',
+                    'InterestAndFeeIncomeLoansAndLeases',
+                    'InterestIncome',
+                ])
+                noninterest_income, _ = pick_exact_candidates([
+                    'NoninterestIncome',
+                    'TotalNoninterestIncome',
+                    'FeeRevenue',
+                    'OtherRevenue',
+                ])
+                noninterest_expense, ne_tag = pick_exact_candidates([
+                    'NoninterestExpense',
+                    'TotalNoninterestExpense',
+                    'OperatingExpenses',
+                    'OperatingExpenses_Hierarchy',
+                ])
+                if ne_tag and 'interest' in str(ne_tag).lower():
+                    noninterest_expense = None
+            except Exception:
+                pass
+            if net_interest_income is None:
+                net_interest_income = pick('net_interest_income') or None
+            if interest_income is None:
+                interest_income = pick('interest_income') or None
+            if noninterest_income is None:
+                noninterest_income = pick('noninterest_income') or None
+            if noninterest_expense is None:
+                noninterest_expense = pick('noninterest_expense') or None
             ebitda_direct = pick('ebitda')
             dep = resolve_safe_depreciation(revenue, op_value=op, ebitda_direct=ebitda_direct)
             if revenue is not None and dep is not None:
@@ -9382,6 +9505,37 @@ class SECDataFetcher:
             loans = pick('loans')
             deposits = pick('deposits')
             cet1 = pick('cet1')
+            # Strict anchors for bank LDR: require direct loans & deposits facts (no semantic inference,
+            # no carry-forward, no proxy reconstruction). This prevents "ghost" LDR values when
+            # LoansReceivable disappears from SEC XBRL after certain years.
+            loans_direct, loans_direct_tag = pick_exact_candidates([
+                'LoansReceivableNet',
+                'LoansReceivable',
+                'LoansReceivableNetReportedAmount',
+                'LoansAndLeasesReceivableNetReportedAmount',
+                'LoansHeldForInvestmentNet',
+                'LoansHeldForInvestment',
+                'LoansAndLeasesReceivable',
+                'NetLoans',
+                'FinancingReceivable',
+                'FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss',
+                'FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss',
+            ])
+            deposits_direct, deposits_direct_tag = pick_exact_candidates([
+                'Deposits',
+                'DepositLiabilities',
+                'CustomerDeposits',
+                'DepositsInterestBearing',
+                'DepositsNoninterestBearing',
+                'InterestBearingDepositsInBanks',
+                'NoninterestBearingDeposits',
+            ])
+            if loans_direct is not None:
+                loans_direct = self._normalize_million_value(loans_direct)
+                ratios['loans_direct_tag'] = loans_direct_tag
+            if deposits_direct is not None:
+                deposits_direct = self._normalize_million_value(deposits_direct)
+                ratios['deposits_direct_tag'] = deposits_direct_tag
             premiums_earned = pick('premiums_earned')
             policy_claims = pick('policy_claims')
             if premiums_earned is None:
@@ -10008,6 +10162,20 @@ class SECDataFetcher:
                     )
                     avg_assets = (abs(prev_assets_aligned) + abs(assets)) / 2.0
 
+                # Bank NII hygiene: ensure net_interest_income is truly NET (not gross interest income).
+                try:
+                    if interest_income is not None and interest_exp not in (None, 0):
+                        nii_calc = float(interest_income) - float(abs(interest_exp))
+                        if net_interest_income is None:
+                            net_interest_income = nii_calc
+                        else:
+                            ii = abs(float(interest_income))
+                            if ii > 0 and abs(float(net_interest_income)) > (ii * 0.98):
+                                net_interest_income = nii_calc
+                                ratios['net_interest_income_source'] = 'OVERRIDE_GROSS_INTEREST_CONTAMINATION'
+                except Exception:
+                    pass
+
                 bank_signal = any(v is not None for v in (net_interest_income, noninterest_income, loans, deposits, cet1))
                 insurance_signal = any(
                     self._safe_float(data.get(k)) is not None
@@ -10091,22 +10259,86 @@ class SECDataFetcher:
                             min_abs=0.005,
                             max_abs=1.5,
                         )
+                        # Bank revenue concept is often corrupted/negative in generic "Revenues" tags.
+                        # For banking profiles, use (NII + NoninterestIncome) as the canonical revenue
+                        # for downstream displays when the generic revenue is implausible.
+                        try:
+                            rev_raw = self._safe_float(revenue)
+                            assets_raw = self._safe_float(assets)
+                            rev_bad = (rev_raw is None) or (rev_raw <= 0)
+                            if (not rev_bad) and assets_raw not in (None, 0):
+                                # Revenues for large banks should not be near zero relative to assets.
+                                if abs(rev_raw) / max(abs(assets_raw), 1e-9) < 0.005:
+                                    rev_bad = True
+                            if rev_bad and isinstance(data, dict):
+                                data['Revenues'] = bank_total_revenue
+                                ratios['bank_revenue_override'] = 'CANONICAL_BANK_REVENUE_NII_PLUS_NONINTEREST'
+                        except Exception:
+                            pass
 
-                    if net_interest_income is not None and avg_assets not in (None, 0):
-                        # NIM = NetInterestIncome / avg(Assets). NetInterestIncome must already be net of interest expense.
+                    # NIM (Net Interest Margin) must use NET interest income:
+                    # NII = InterestIncome - InterestExpense (preferred), not gross interest income.
+                    nii_used = net_interest_income
+                    nii_source = 'NET_INTEREST_INCOME_PICK'
+                    try:
+                        # Prefer explicit recomputation when both components exist.
+                        if interest_income is not None and interest_exp not in (None, 0):
+                            nii_calc = float(interest_income) - float(abs(interest_exp))
+                            if abs(nii_calc) > 0:
+                                # If picked NII looks like gross interest income, override.
+                                if nii_used is None:
+                                    nii_used = nii_calc
+                                    nii_source = 'INTEREST_INCOME_MINUS_EXPENSE'
+                                else:
+                                    # Gross-vs-net contamination: NII should be materially lower than interest income.
+                                    try:
+                                        ii = abs(float(interest_income))
+                                        if ii > 0 and abs(float(nii_used)) > (ii * 0.98):
+                                            nii_used = nii_calc
+                                            nii_source = 'OVERRIDE_GROSS_INTEREST_CONTAMINATION'
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+
+                    if nii_used is not None and avg_assets not in (None, 0):
+                        # Denominator: prefer earning assets when available, else average total assets (documented fallback).
+                        earning_assets_now = None
+                        try:
+                            earning_assets_now, _ea_tag = pick_exact_candidates([
+                                'InterestEarningAssets',
+                                'InterestEarningAssetsAverage',
+                                'AverageInterestEarningAssets',
+                                'AverageInterestEarningAssetsAmount',
+                                'InterestBearingAssets',
+                                'EarningAssets',
+                            ])
+                        except Exception:
+                            earning_assets_now = None
+                        earning_assets_now = self._normalize_million_value(earning_assets_now) if earning_assets_now is not None else None
+                        denom = earning_assets_now if earning_assets_now not in (None, 0) else avg_assets
+                        denom_source = 'AVG_EARNING_ASSETS_FALLBACK_TOTAL_ASSETS' if denom == avg_assets else 'AVG_EARNING_ASSETS'
+
                         nim_val = scaled_ratio(
-                            net_interest_income,
-                            avg_assets,
+                            nii_used,
+                            denom,
                             target=0.028,
                             min_abs=0.0,
-                            max_abs=0.20,
+                            # NIM should not exceed ~10% in normal bank economics; above that is almost always mapping/unit.
+                            max_abs=0.10,
                         )
-                        ratios['net_interest_margin'] = nim_val
-                        ratios['net_interest_margin_source'] = (
-                            'NET_INTEREST_INCOME_OVER_AVG_ASSETS'
-                            if pick('NetInterestIncome') is not None or pick('InterestIncomeExpenseNet') is not None
-                            else 'DERIVED_INTEREST_INCOME_MINUS_EXPENSE_OVER_AVG_ASSETS'
-                        )
+                        # Cross-validation bounds: reported NIM typically 0.5%–5%.
+                        if nim_val is not None and not (0.005 <= abs(float(nim_val)) <= 0.05):
+                            nim_val = None
+                            reasons_map = ratios.get('_ratio_reasons')
+                            if not isinstance(reasons_map, dict):
+                                reasons_map = {}
+                                ratios['_ratio_reasons'] = reasons_map
+                            reasons_map['net_interest_margin'] = 'NIM_OUT_OF_RANGE_UNTRUSTED'
+                            ratios['net_interest_margin_source'] = f'{nii_source}_OVER_{denom_source}'
+                        else:
+                            ratios['net_interest_margin'] = nim_val
+                            ratios['net_interest_margin_source'] = f'{nii_source}_OVER_{denom_source}'
                     # Bank efficiency ratio must be economically plausible.
                     # Strategy:
                     # 1) Prefer SEC noninterest expense / total revenue when plausible.
@@ -10177,18 +10409,24 @@ class SECDataFetcher:
                         elif eff_source:
                             ratios['bank_efficiency_ratio'] = None
                             ratios['bank_efficiency_ratio_source'] = eff_source
-                    # Strict LDR: require BOTH loans and deposits anchors. Do not use debt/assets proxies.
-                    if loans is not None and deposits not in (None, 0):
-                        ratios['loan_to_deposit_ratio'] = safe_div(loans, deposits)
-                        ratios['loan_to_deposit_source'] = 'BANK_ANCHORS_LOANS_OVER_DEPOSITS'
+                    # Strict LDR: require BOTH direct Loans + Deposits anchors.
+                    # Do NOT use semantic inference, carry-forward, or proxies.
+                    ldr_loans = loans_direct
+                    ldr_deposits = deposits_direct
+                    if ldr_loans not in (None, 0) and ldr_deposits not in (None, 0):
+                        ratios['loan_to_deposit_ratio'] = safe_div(ldr_loans, ldr_deposits)
+                        ratios['loan_to_deposit_source'] = 'BANK_DIRECT_ANCHORS_LOANS_OVER_DEPOSITS'
                     else:
                         ratios['loan_to_deposit_ratio'] = None
-                        ratios['loan_to_deposit_source'] = 'MISSING_BANK_LOANS_OR_DEPOSITS'
+                        ratios['loan_to_deposit_source'] = 'LOANS_OR_DEPOSITS_ANCHOR_MISSING'
                         reasons_map = ratios.get('_ratio_reasons')
                         if not isinstance(reasons_map, dict):
                             reasons_map = {}
                             ratios['_ratio_reasons'] = reasons_map
-                        reasons_map['loan_to_deposit_ratio'] = 'MISSING_BANK_LOANS_OR_DEPOSITS'
+                        if ldr_loans in (None, 0) and ldr_deposits not in (None, 0):
+                            reasons_map['loan_to_deposit_ratio'] = 'LOAN_DATA_UNAVAILABLE'
+                        else:
+                            reasons_map['loan_to_deposit_ratio'] = 'MISSING_BANK_LOANS_OR_DEPOSITS'
                     ldr_val = self._safe_float(ratios.get('loan_to_deposit_ratio'))
                     # Hard realism gate: block LDR when it is outside plausible economic range.
                     # This prevents proxies (or missing tags) from producing misleading risk signals.

@@ -955,7 +955,8 @@ class RatioEngine:
                 raw,
                 self.ASSETS_TAGS,
                 include=('assets',),
-                exclude=('tax',),
+                # Prevent selecting partial buckets like AssetsCurrent when resolving TOTAL assets.
+                exclude=('tax', 'current'),
             )
             if semantic:
                 candidates = [semantic]
@@ -967,6 +968,20 @@ class RatioEngine:
             allow_negative=True,
             sector_profile=sector_profile,
         )
+        # Hard guardrail: never allow current-assets concepts to masquerade as total assets
+        # when an explicit total-assets anchor exists in the row.
+        try:
+            tag_l = str(resolved.get('tag') or '').lower()
+        except Exception:
+            tag_l = ''
+        if tag_l and 'current' in tag_l:
+            for hard_tag in ('Assets', 'TotalAssets', 'LiabilitiesAndStockholdersEquity'):
+                hv = self._num((raw or {}).get(hard_tag))
+                if hv is not None:
+                    resolved['tag'] = hard_tag
+                    resolved['value'] = hv
+                    resolved['selection_reason'] = 'guardrail_total_assets_prefer_hard_anchor'
+                    break
         tag = resolved.get('tag')
         if tag and tag not in self.ASSETS_TAGS:
             if resolved.get('confidence', 100) >= 96:

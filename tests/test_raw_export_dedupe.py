@@ -1,32 +1,47 @@
-from __future__ import annotations
-
 import pandas as pd
 
-from core.raw_export_dedupe import dedupe_labeled_timeseries_df
 
+def test_dedupe_timeseries_by_canonical_tag_collapses_alias_rows():
+    from core.raw_export_dedupe import dedupe_timeseries_by_canonical_tag
 
-def test_dedupe_drops_identical_duplicates():
     df = pd.DataFrame(
         [
-            {"البند": "الذمم الدائنة", "2016": 296.0, "2017": 485.0, "الوحدة": "ملايين دولار أمريكي", "__concept__": "AccountsPayableCurrent"},
-            {"البند": "الذمم الدائنة", "2016": 296.0, "2017": 485.0, "الوحدة": "ملايين دولار أمريكي", "__concept__": "AccountsPayable"},
+            {
+                "البند": "إجمالي الأصول (Assets)",
+                "__concept__": "إجمالي الأصول (Assets)",
+                "2015": 7201.0,
+                "2016": 7370.0,
+                "الوحدة": "ملايين دولار أمريكي",
+            },
+            {
+                "البند": "إجمالي الأصول (TotalAssets)",
+                "__concept__": "إجمالي الأصول (TotalAssets)",
+                "2015": 7201.0,
+                "2016": 7370.0,
+                "الوحدة": "ملايين دولار أمريكي",
+            },
+            # A different tag should remain.
+            {
+                "البند": "الأصول المتداولة (AssetsCurrent)",
+                "__concept__": "الأصول المتداولة (AssetsCurrent)",
+                "2015": 5713.0,
+                "2016": 6053.0,
+                "الوحدة": "ملايين دولار أمريكي",
+            },
         ]
     )
-    out = dedupe_labeled_timeseries_df(df, label_col="البند", year_cols=["2016", "2017"], unit_col="الوحدة")
-    assert len(out) == 1
-    assert out.iloc[0]["البند"] == "الذمم الدائنة"
 
-
-def test_dedupe_disambiguates_conflicting_duplicates():
-    df = pd.DataFrame(
-        [
-            {"البند": "الأصول المتداولة", "2016": 6053.0, "2017": 8536.0, "الوحدة": "ملايين دولار أمريكي", "__concept__": "AssetsCurrent"},
-            {"البند": "الأصول المتداولة", "2016": 541.0, "2017": 599.0, "الوحدة": "ملايين دولار أمريكي", "__concept__": "CurrentAssets_Legacy"},
-        ]
+    out = dedupe_timeseries_by_canonical_tag(
+        df,
+        label_col="البند",
+        year_cols=["2015", "2016"],
+        unit_col="الوحدة",
+        concept_col="__concept__",
     )
-    out = dedupe_labeled_timeseries_df(df, label_col="البند", year_cols=["2016", "2017"], unit_col="الوحدة")
+
+    # Assets aliases collapse to one row; AssetsCurrent remains.
     assert len(out) == 2
-    labels = sorted(out["البند"].astype(str).tolist())
-    assert labels[0] != labels[1]
-    assert any("AssetsCurrent" in s or "CurrentAssets_Legacy" in s for s in labels)
+    labels = set(out["البند"].tolist())
+    assert any("الأصول المتداولة" in s for s in labels)
+    assert sum("إجمالي الأصول" in s for s in labels) == 1
 

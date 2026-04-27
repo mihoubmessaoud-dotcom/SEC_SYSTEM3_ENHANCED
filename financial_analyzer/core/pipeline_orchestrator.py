@@ -160,6 +160,21 @@ class PipelineOrchestrator:
             for k in ("total_assets", "total_liabilities", "total_equity"):
                 if yr_data.get(k) is None and anchor.get(k) is not None:
                     yr_data[k] = anchor[k]
+            # Backfill working-capital day metrics from the Ratios sheet when present.
+            # Exported Ratios often embed confidence in the cell text (e.g., "44.36 · 80%").
+            if not ratios_sheet.empty:
+                if yr_data.get("ar_days") is None:
+                    dso = self._get_ratio_backup(ratios_sheet, "days_sales_outstanding", year)
+                    if dso is not None:
+                        yr_data["ar_days"] = float(dso)
+                if yr_data.get("inventory_days") is None:
+                    dih = self._get_ratio_backup(ratios_sheet, "inventory_days", year)
+                    if dih is not None:
+                        yr_data["inventory_days"] = float(dih)
+                if yr_data.get("ap_days") is None:
+                    dpo = self._get_ratio_backup(ratios_sheet, "ap_days", year)
+                    if dpo is not None:
+                        yr_data["ap_days"] = float(dpo)
 
             rev = revenues[year].get("value")
             rev_inf = revenues[year].get("inferred", False)
@@ -546,13 +561,50 @@ class PipelineOrchestrator:
     def _get_ratio_backup(self, ratios_df, metric, year):
         if ratios_df.empty:
             return None
-        row = ratios_df[ratios_df.iloc[:, 0].astype(str).str.lower().str.strip() == metric.lower()]
+        first_col = ratios_df.iloc[:, 0].astype(str)
+        norm = first_col.str.lower().str.strip()
+        row = ratios_df[norm == metric.lower()]
         if row.empty:
-            return None
+            # Exported workbooks often store human labels (multi-language) instead of metric ids.
+            # Try resilient synonym/substring match for key ratios used by the orchestrator.
+            import re
+
+            def _nk(s: str) -> str:
+                return re.sub(r"[^a-z0-9]+", "", str(s or "").lower())
+
+            metric_key = str(metric or "").lower().strip()
+            synonyms = {
+                "days_sales_outstanding": ["dso", "days sales outstanding"],
+                "inventory_days": ["dih", "days inventory held", "days inventory"],
+                "ap_days": ["dpo", "days payable outstanding"],
+                "ccc_days": ["ccc", "cash conversion cycle"],
+                "gross_margin": ["gross margin", "gross profit margin"],
+                "operating_margin": ["operating margin", "operating profit margin"],
+                "net_margin": ["net margin", "net profit margin"],
+                "roe": ["roe", "return on equity"],
+                "roa": ["roa", "return on assets"],
+            }
+            patterns = list(synonyms.get(metric_key, []))
+            # Also match the metric id with underscores removed.
+            if metric_key:
+                patterns.append(metric_key.replace("_", " "))
+                patterns.append(metric_key.replace("_", ""))
+            keys = [_nk(p) for p in patterns if p]
+            keys = [k for k in keys if k]
+            if not keys:
+                return None
+            nk_col = first_col.map(_nk)
+            hit_mask = None
+            for k in keys:
+                m = nk_col.str.contains(k, na=False)
+                hit_mask = m if hit_mask is None else (hit_mask | m)
+            if hit_mask is None or not bool(hit_mask.any()):
+                return None
+            row = ratios_df[hit_mask].head(1)
         cols = ratios_df.columns.tolist()
         if str(year) in [str(c) for c in cols]:
             idx = [str(c) for c in cols].index(str(year))
-            return row.iloc[0, idx]
+            return self._coerce_numeric(row.iloc[0, idx])
         return None
 
     def _extract_raw(self, sheets):
@@ -688,11 +740,30 @@ class PipelineOrchestrator:
         text = str(value).strip()
         if not text or text.lower() in {"nan", "none", "n/a", "—", "-"}:
             return None
-        clean = text.replace(",", "").replace("%", "")
+        # Handle rich display strings like: "44.36 · 80%" or localized "485,00".
+        import re
+
+        # Extract the first numeric token.
+        m = re.search(r"[-+]?\d[\d\s.,]*", text)
+        token = m.group(0).strip() if m else ""
+        if not token:
+            return text if keep_text else None
+        token = token.replace("\u00a0", "").replace(" ", "")
+        # Normalize decimal/thousand separators.
+        if "," in token and "." in token:
+            # Assume comma as thousand separator when both exist.
+            token = token.replace(",", "")
+        elif "," in token and "." not in token:
+            # Assume comma is decimal separator.
+            token = token.replace(",", ".")
+        token = token.replace("\u066c", "").replace("\u066b", ".")  # Arabic thousands/decimal separators
         try:
-            num = float(clean)
-            if "%" in text:
-                return num / 100.0
-            return num
+            num = float(token)
         except ValueError:
             return text if keep_text else None
+        # Only treat as percent if the percent sign is attached to the numeric token
+        # (avoid mis-parsing confidence strings like "44.36 · 80%").
+        pct_i = text.find("%")
+        if pct_i != -1 and pct_i <= (m.end() + 1):
+            return num / 100.0
+        return num

@@ -20,6 +20,7 @@ import math
 import tempfile
 import io
 import contextlib
+import traceback
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -3014,6 +3015,11 @@ class SECFinancialSystem:
             '_abstract',
             '_lineitems',
             'legacy current',
+            # Internal aggregation buckets (not official SEC facts; used only for diagnostics)
+            'otherassets',
+            'otherliabilities',
+            'otherequity',
+            'otherincomestatement',
         ))
 
     def _refresh_sec_view_mode_display(self):
@@ -7842,6 +7848,168 @@ class SECFinancialSystem:
             return []
         return list(range(sel_start, sel_end + 1))
 
+    def _build_raw_by_year_df_for_ui(self, years, data_layers, data_by_year):
+        """
+        UI helper: build the same Raw_by_Year table structure used in Excel export,
+        without changing any underlying calculations.
+        """
+        try:
+            import pandas as pd
+        except Exception:
+            return None
+        try:
+            layer1_export = (data_layers.get('layer1_by_year', {}) or data_by_year or {})
+            item_col_export = self._t('raw_col_item')
+            unit_col_export = self._t('raw_col_unit')
+
+            def _infer_unit_export(label_text: str) -> str:
+                t = str(label_text or '').lower()
+                if self.current_lang == 'ar':
+                    if ('per share' in t) or ('eps' in t) or ('سهم' in t):
+                        return 'دولار/سهم'
+                    if ('shares' in t) or ('stock' in t) or ('أسهم' in t):
+                        return 'أسهم'
+                    if ('ratio' in t) or ('margin' in t) or ('yield' in t) or ('%' in t):
+                        return 'نسبة'
+                    if ('days' in t) or ('day' in t) or ('يوم' in t):
+                        return 'أيام'
+                    return 'ملايين دولار أمريكي'
+                if ('per share' in t) or ('eps' in t) or ('سهم' in t):
+                    return 'USD/share'
+                if ('shares' in t) or ('stock' in t) or ('أسهم' in t):
+                    return 'shares'
+                if ('ratio' in t) or ('margin' in t) or ('yield' in t) or ('%' in t):
+                    return 'ratio'
+                if ('days' in t) or ('day' in t) or ('يوم' in t):
+                    return 'days'
+                return 'USD (millions)'
+
+            def _is_money_unit(unit_text: str) -> bool:
+                u = str(unit_text or '').lower()
+                return ('million' in u) or ('ملايين' in u) or ('usd (millions)' in u) or ('دولار' in u)
+
+            export_concepts = sorted({k for y in (years or []) for k in (layer1_export.get(y, {}) or {}).keys()})
+            export_rows = []
+            for c in export_concepts:
+                try:
+                    if self._is_internal_helper_label(str(c)):
+                        continue
+                except Exception:
+                    pass
+                raw_label = self._decode_mojibake_text(str(c))
+                display_label = self._sanitize_localized_text(
+                    self._translate_financial_item(raw_label),
+                    raw_label,
+                )
+                unit_val = _infer_unit_export(raw_label)
+                row_out = {item_col_export: display_label, "__concept__": raw_label}
+                for y in (years or []):
+                    v = (layer1_export.get(y, {}) or {}).get(c)
+                    nv = self._safe_excel_number(v)
+                    if nv is not None and _is_money_unit(unit_val) and abs(float(nv)) >= 10_000_000.0:
+                        nv = float(nv) / 1_000_000.0
+                    row_out[str(y)] = nv if nv is not None else v
+                row_out[unit_col_export] = unit_val
+                export_rows.append(row_out)
+
+            if not export_rows:
+                return None
+            raw_df = pd.DataFrame(export_rows)
+            try:
+                from core.raw_export_dedupe import dedupe_labeled_timeseries_df
+                raw_df = dedupe_labeled_timeseries_df(
+                    raw_df,
+                    label_col=item_col_export,
+                    year_cols=[str(y) for y in (years or [])],
+                    unit_col=unit_col_export,
+                    concept_col="__concept__",
+                )
+            except Exception:
+                try:
+                    raw_df = raw_df.drop(columns=["__concept__"])
+                except Exception:
+                    pass
+                try:
+                    raw_df = raw_df.drop_duplicates(
+                        subset=[item_col_export] + [str(y) for y in (years or [])] + [unit_col_export],
+                        keep="first",
+                    )
+                except Exception:
+                    pass
+            raw_df = raw_df[[c for c in ([item_col_export] + [str(y) for y in (years or [])] + [unit_col_export]) if c in raw_df.columns]].copy()
+            return raw_df
+        except Exception:
+            return None
+
+    def _render_df_in_raw_tree(self, df, year_cols=None):
+        if df is None or getattr(df, 'empty', True):
+            return
+        try:
+            import pandas as pd  # noqa: F401
+        except Exception:
+            pass
+        def _raw_tags(base_tag: str):
+            idx = len(self.raw_tree.get_children(''))
+            zebra_tag = 'zebra_even' if (idx % 2 == 0) else 'zebra_odd'
+            return (base_tag, zebra_tag)
+        cols = [str(c) for c in list(df.columns)]
+        self.raw_tree.config(columns=cols)
+        self.raw_tree.tag_configure('parent_row', font=FONTS['label'])
+        self.raw_tree.tag_configure('child_row', font=FONTS['tree'])
+        self.raw_tree.tag_configure('zebra_even', background=PALETTE['surface_soft'], foreground=PALETTE['text'])
+        self.raw_tree.tag_configure('zebra_odd', background=PALETTE['surface'], foreground=PALETTE['text'])
+
+        year_cols = set(str(y) for y in (year_cols or []))
+
+        def _fmt_cell(v):
+            if v is None:
+                return ''
+            if isinstance(v, float) and math.isnan(v):
+                return ''
+            if isinstance(v, str) and v.strip().lower() in {'nan', 'none', 'null'}:
+                return ''
+            if isinstance(v, (int, float)):
+                fv = float(v)
+                if math.isnan(fv) or math.isinf(fv):
+                    return ''
+                if abs(fv - round(fv)) < 1e-9 and abs(fv) < 9e15:
+                    return f"{int(round(fv)):,}"
+                af = abs(fv)
+                if af >= 1.0:
+                    return f"{fv:,.2f}"
+                if af >= 0.01:
+                    return f"{fv:,.4f}"
+                return f"{fv:,.6f}"
+            return str(v)
+
+        # Column widths tuned for Raw_by_Year / Inputs_View shapes.
+        year_col_w = 80 if len(year_cols) > 12 else 120
+        for c in cols:
+            self.raw_tree.heading(c, text=c)
+            if c == self._t('raw_col_item'):
+                self.raw_tree.column(c, width=620, anchor='w', stretch=True, minwidth=320)
+            elif c == self._t('raw_col_unit'):
+                self.raw_tree.column(c, width=170, anchor='center', stretch=False, minwidth=130)
+            elif c in year_cols or re.fullmatch(r"\s*20\d{2}\s*", str(c)):
+                self.raw_tree.column(c, width=year_col_w, anchor='center', stretch=False, minwidth=70)
+            else:
+                self.raw_tree.column(c, width=220, anchor='w', stretch=True, minwidth=140)
+
+        for _, rr in df.iterrows():
+            row = [_fmt_cell(rr.get(c)) for c in cols]
+            # Heuristic: treat likely parent line-items as parent rows.
+            try:
+                tag = 'parent_row' if self._is_parent_line_item(str(row[0] if row else ''), row[1:]) else 'child_row'
+            except Exception:
+                tag = 'child_row'
+            self.raw_tree.insert('', 'end', values=row, tags=_raw_tags(tag))
+
+        try:
+            self.raw_tree.xview_moveto(0.0)
+            self.raw_tree.yview_moveto(0.0)
+        except Exception:
+            pass
+
     def display_raw_data(self):
         if not self.current_data:
             for i in self.raw_tree.get_children():
@@ -7901,7 +8069,23 @@ class SECFinancialSystem:
                 selected_source = 'SEC'
 
         sec_view_mode = getattr(self, '_sec_view_mode_var', tk.StringVar(value='official')).get() or 'official'
-        if selected_key != 'layer1_by_year' and sec_view_mode == 'canonical':
+
+        # Canonical analysis mode: always show the same final view (Raw_by_Year)
+        # regardless of the selected layer. Layer-specific browsing remains in "official".
+        if sec_view_mode == 'canonical':
+            years = self._get_display_years_range() or []
+            if not years:
+                return
+            layer1_by_year = (data_layers.get('layer1_by_year', {}) or self.current_data.get('data_by_year', {}) or {})
+            raw_df = self._build_raw_by_year_df_for_ui(years, data_layers=data_layers, data_by_year=layer1_by_year)
+            if raw_df is not None and not raw_df.empty:
+                self._render_df_in_raw_tree(raw_df, year_cols=[str(y) for y in years])
+                ci = self.current_data.get('company_info', {})
+                self.company_info_label.config(
+                    text=f"{self._t('summary_prefix')} {ci.get('name','')} ({ci.get('ticker','')}) | {self._t('sec_view_mode_canonical')}"
+                )
+                return
+            # If we fail to build canonical view for any reason, fall back to official path.
             sec_view_mode = 'official'
 
         # Comprehensive inputs mode: show all calculation inputs across layers + ratios + strategic.
@@ -7959,7 +8143,17 @@ class SECFinancialSystem:
                 if isinstance(v, str) and v.strip().lower() in {'nan', 'none', 'null'}:
                     return ''
                 if isinstance(v, (int, float)):
-                    return f"{v:,.12g}"
+                    fv = float(v)
+                    if math.isnan(fv) or math.isinf(fv):
+                        return ''
+                    if abs(fv - round(fv)) < 1e-9 and abs(fv) < 9e15:
+                        return f"{int(round(fv)):,}"
+                    af = abs(fv)
+                    if af >= 1.0:
+                        return f"{fv:,.2f}"
+                    if af >= 0.01:
+                        return f"{fv:,.4f}"
+                    return f"{fv:,.6f}"
                 return str(v)
 
             def _valid(v):
@@ -9357,7 +9551,53 @@ class SECFinancialSystem:
 
     def _extract_revenue_by_sector(self, row: dict, sector_profile: str):
         sector_norm = self._normalize_sector_for_packs(sector_profile)
-        if sector_norm in ("investment_bank", "bank"):
+        if sector_norm in ("investment_bank", "bank", "commercial_bank", "universal_bank"):
+            # Banks: do NOT trust generic "Revenues" concepts (can map to OCI / net change items).
+            # Canonical: Total Revenue ≈ Net Interest Income + Noninterest Income.
+            if isinstance(row, dict):
+                def _num(v):
+                    try:
+                        if v is None:
+                            return None
+                        fv = float(v)
+                        if fv != fv:
+                            return None
+                        return fv
+                    except Exception:
+                        return None
+
+                def _as_million_like(v):
+                    fv = _num(v)
+                    if fv is None:
+                        return None
+                    return (fv / 1_000_000.0) if abs(fv) >= 100_000_000.0 else fv
+
+                nii = (
+                    row.get('NetInterestIncome')
+                    or row.get('InterestIncomeExpenseNet')
+                    or row.get('InterestIncomeExpenseNetOfProvisionForCreditLoss')
+                )
+                if nii is None:
+                    ii = row.get('InterestIncomeOperating') or row.get('InterestAndDividendIncomeOperating')
+                    ie = row.get('InterestExpense') or row.get('InterestAndDebtExpense') or row.get('InterestExpenseDebt')
+                    ii = _as_million_like(ii)
+                    ie = _as_million_like(ie)
+                    if ii not in (None, 0) and ie not in (None, 0):
+                        nii = float(ii) - abs(float(ie))
+                nii = _as_million_like(nii)
+                nonint = (
+                    row.get('NoninterestIncome')
+                    or row.get('NonInterestIncome')
+                    or row.get('TotalNoninterestIncome')
+                    or row.get('TotalNonInterestIncome')
+                )
+                nonint = _as_million_like(nonint)
+                if nii not in (None, 0) or nonint not in (None, 0):
+                    total = float(nii or 0.0) + float(nonint or 0.0)
+                    if abs(total) > 0:
+                        return total
+
+            # Fallback to legacy investment-bank extractor if available.
             v = self._extract_revenue_investment_bank(row or {})
             if isinstance(v, (int, float)):
                 return float(v)
@@ -10880,6 +11120,7 @@ class SECFinancialSystem:
                 ("Days Sales Outstanding (DSO)", 'days_sales_outstanding', 'ÙØªØ±Ø© Ø§Ù„ØªØ­ØµÙŠÙ„'),
                 ("Payables Turnover", 'payables_turnover', 'Ù…Ø¹Ø¯Ù„ Ø¯ÙˆØ±Ø§Ù† Ø§Ù„Ù…ÙˆØ±Ø¯ÙŠÙ†'),
                 ("Days Payable Outstanding (DPO)", 'ap_days', 'ÙØªØ±Ø© Ø§Ù„Ø³Ø¯Ø§Ø¯'),
+                ("Cash Conversion Cycle (CCC)", 'ccc_days', 'Ø¯ÙˆØ±Ø© Ø§Ù„ØªØ­ÙˆÙŠÙ„ Ø§Ù„Ù†Ù‚Ø¯ÙŠ'),
                 ("Asset Turnover", 'asset_turnover', 'ÙƒÙØ§Ø¡Ø© Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø§Ù„Ø£ØµÙˆÙ„'),
             ])
             insert_ratio_group("Liquidity Ratios", [
@@ -13516,7 +13757,27 @@ class SECFinancialSystem:
                             m['market:market_cap'] = mcap_derived
                             issues.append(f"{y}: market:market_cap corrected ({mcap_raw} -> {mcap_derived})")
 
+            # Total Assets mapping guard:
+            # Some SEC filings / learned mappings can mistakenly place Current Assets into "Assets".
+            # Reconstruct Assets = Current + Noncurrent when that pattern is detected.
+            assets_cur_chk = _pick_num_ci(row, ['AssetsCurrent', 'AssetsCurrent_Hierarchy', 'CurrentAssets', 'assetscurrent'])
+            assets_non_chk = _pick_num_ci(row, ['AssetsNoncurrent', 'AssetsNoncurrent_Hierarchy', 'NoncurrentAssets', 'assetsnoncurrent'])
             assets_chk = _pick_num_ci(row, ['Assets', 'TotalAssets', 'Total Assets', 'assets'])
+            try:
+                if assets_chk in (None, 0) and assets_cur_chk not in (None, 0) and assets_non_chk not in (None, 0):
+                    assets_chk = float(assets_cur_chk) + float(assets_non_chk)
+                    row['Assets'] = assets_chk
+                    issues.append(f"{y}: Assets reconstructed from AssetsCurrent+AssetsNoncurrent")
+                elif assets_chk not in (None, 0) and assets_cur_chk not in (None, 0) and assets_non_chk not in (None, 0):
+                    # If Assets ~= AssetsCurrent and Noncurrent exists, treat Assets as mis-mapped current assets.
+                    if abs(float(assets_chk) - float(assets_cur_chk)) / max(abs(float(assets_cur_chk)), 1.0) <= 0.02:
+                        rebuilt = float(assets_cur_chk) + float(assets_non_chk)
+                        if rebuilt > 0 and abs(rebuilt - float(assets_chk)) / max(abs(rebuilt), 1.0) >= 0.10:
+                            row['Assets'] = rebuilt
+                            assets_chk = rebuilt
+                            issues.append(f"{y}: Assets corrected (was Current Assets; rebuilt total assets)")
+            except Exception:
+                pass
             liab_chk = _pick_num_ci(row, ['Liabilities', 'TotalLiabilities', 'Total Liabilities', 'liabilities'])
             eq_candidates = [
                 _pick_num_ci(row, ['StockholdersEquity', 'stockholdersequity']),
@@ -13614,6 +13875,24 @@ class SECFinancialSystem:
             net_income = _pick_num_ci(row, ['NetIncomeLoss', 'NetIncome', 'Net Income', 'netincomeloss'])
             revenue = self._extract_revenue_by_sector(row, sector_profile_qg)
             shares = _year_shares_million(y)
+            # EPS must use SEC weighted-average shares (basic/diluted) rather than market shares outstanding.
+            # We store everything in "million shares" and apply split adjustment for historical consistency.
+            split_factor_eps = _split_ratio_for_year(y)
+            shares_eps_raw = _pick_num_ci(
+                row,
+                [
+                    'WeightedAverageNumberOfSharesOutstandingBasic',
+                    'weightedaveragenumberofsharesoutstandingbasic',
+                    'WeightedAverageNumberOfDilutedSharesOutstanding',
+                    'weightedaveragenumberofdilutedsharesoutstanding',
+                    'SharesBasic',
+                    'sharesbasic',
+                ],
+            )
+            shares_eps_million = _normalize_shares_to_millions(shares_eps_raw)
+            if shares_eps_million not in (None, 0) and split_factor_eps and split_factor_eps > 1.0:
+                shares_eps_million = float(shares_eps_million) * float(split_factor_eps)
+            shares_for_eps = shares_eps_million if shares_eps_million not in (None, 0) else shares
 
             # Investor-lock fallback for missing/ambiguous revenue in non-bank sectors.
             if str(sector_profile_qg).lower() != 'bank' and (revenue is None or abs(float(revenue)) < 1e-9):
@@ -13693,7 +13972,10 @@ class SECFinancialSystem:
                         reasons_map[_mk] = interp.get('reason')
                         issues.append(f"{y}: {_mk} interpolated ({interp.get('reason')})")
 
-            # Institutional hard hierarchy guard (non-bank): Gross >= Operating >= Net and EBITDA <= Gross.
+            # Institutional hierarchy guard (non-bank):
+            # - Clamp Operating > Gross (invalid)
+            # - Do NOT clamp Net Margin to Operating Margin (can exceed due to other income/tax effects)
+            # - Clamp EBITDA margin > Gross (invalid)
             if str(sector_profile_qg).lower() != 'bank':
                 gm = _num(r.get('gross_margin'))
                 om = _num(r.get('operating_margin'))
@@ -13706,12 +13988,10 @@ class SECFinancialSystem:
                     r['operating_margin'] = gm
                     r['operating_margin_source'] = 'QUALITY_GATE_MARGIN_HIERARCHY_CLAMP'
                     issues.append(f"{y}: operating_margin clamped to gross_margin ({old} -> {gm})")
+                # Flag suspicious hierarchy only (do not override).
                 om = _num(r.get('operating_margin'))
-                if om is not None and nm is not None and nm > om:
-                    old = nm
-                    r['net_margin'] = om
-                    r['net_margin_source'] = 'QUALITY_GATE_MARGIN_HIERARCHY_CLAMP'
-                    issues.append(f"{y}: net_margin clamped to operating_margin ({old} -> {om})")
+                if gm is not None and nm is not None and nm > (gm + 0.05):
+                    issues.append(f"{y}: net_margin exceeds gross_margin by >5pp (check mapping/units) ({nm} > {gm})")
                 gm = _num(r.get('gross_margin'))
                 em = _num(r.get('ebitda_margin'))
                 if gm is not None and em is not None and em > gm:
@@ -13720,9 +14000,9 @@ class SECFinancialSystem:
                     r['ebitda_margin_source'] = 'QUALITY_GATE_MARGIN_HIERARCHY_CLAMP'
                     issues.append(f"{y}: ebitda_margin clamped to gross_margin ({old} -> {gm})")
                 nm_core = _num(r.get('net_margin'))
-                if nm_core is not None and _num(r.get('operating_margin')) is not None:
-                    # Core margin for hierarchy validation; reported net margin remains traceable.
-                    r['net_margin_core'] = min(float(nm_core), float(_num(r.get('operating_margin'))))
+                # Core margin for downstream scoring: cap by Gross (not Operating).
+                if nm_core is not None and gm is not None:
+                    r['net_margin_core'] = min(float(nm_core), float(gm))
                 elif nm_core is not None:
                     r['net_margin_core'] = float(nm_core)
 
@@ -13778,10 +14058,10 @@ class SECFinancialSystem:
             price_for_eps = _num(m.get('market:price') or m.get('yahoo:price'))
             market_pe_for_eps = _num(m.get('market:pe_ratio') or m.get('yahoo:pe_ratio'))
             split_factor = _split_ratio_for_year(y)
-            if allow_aggressive and net_income is not None and shares not in (None, 0) and eps_filed in (None, 0):
-                share_candidates = [shares]
+            if allow_aggressive and net_income is not None and shares_for_eps not in (None, 0) and eps_filed in (None, 0):
+                share_candidates = [shares_for_eps]
                 if split_factor > 1.0:
-                    share_candidates.extend([shares * split_factor, shares * (split_factor / 2.0)])
+                    share_candidates.extend([shares_for_eps * split_factor, shares_for_eps * (split_factor / 2.0)])
                 eps_candidates = []
                 for sh_c in share_candidates:
                     if sh_c in (None, 0):
@@ -13832,6 +14112,22 @@ class SECFinancialSystem:
             mcap = _as_million(r.get('market_cap'))
             if mcap is None:
                 mcap = _as_million(m.get('market:market_cap'))
+            # EV unit coherence: Ratios sheet expects Enterprise Value in million USD.
+            ev_layer = _as_million(m.get('market:enterprise_value') or m.get('yahoo:enterprise_value'))
+            ev_now = _num(r.get('enterprise_value'))
+            if ev_layer not in (None, 0):
+                if ev_now is None:
+                    r['enterprise_value'] = float(ev_layer)
+                    r['enterprise_value_source'] = 'LAYER2_ENTERPRISE_VALUE_MILLION'
+                else:
+                    try:
+                        drift = max(abs(float(ev_now)), abs(float(ev_layer))) / max(min(abs(float(ev_now)), abs(float(ev_layer))), 1e-12)
+                    except Exception:
+                        drift = None
+                    if drift is not None and 800.0 <= drift <= 1200.0:
+                        r['enterprise_value'] = float(ev_layer)
+                        r['enterprise_value_source'] = 'LAYER2_ENTERPRISE_VALUE_UNIT_REPAIR_X1000'
+                        issues.append(f"{y}: enterprise_value unit repaired using Layer2 anchor (×1000 drift)")
             price_y = _num(m.get('market:price')) or _num(m.get('yahoo:price'))
             equity = _pick_num_ci(
                 row,
@@ -14171,27 +14467,23 @@ class SECFinancialSystem:
                         r['roe_source'] = 'QUALITY_GATE_NET_INCOME_OVER_EQUITY'
                         issues.append(f"{y}: roe replaced by normalized net_income/equity ({roe_now} -> {roe_direct})")
 
-            # Bank LDR anomaly guard: incomplete latest-year filings can emit absurd ratios
-            # when deposits anchors are missing. Prefer prior-year stable ratio in that case.
+            # Bank LDR anomaly guard: incomplete filings can emit absurd ratios when anchors are missing.
+            # Do NOT carry-forward or fabricate bank balance ratios (validated by backtests).
             if str(sector_profile_qg).lower() == 'bank':
                 ldr_now = _num(r.get('loan_to_deposit_ratio'))
                 dep_now = _pick_num_ci(row, ['Deposits', 'DepositLiabilities', 'deposits', 'depositliabilities'])
                 loan_now = _pick_num_ci(row, ['LoansReceivable', 'NetLoans', 'loansreceivable', 'netloans'])
                 if ldr_now not in (None, 0) and abs(float(ldr_now)) > 3.0 and (dep_now in (None, 0) or loan_now in (None, 0)):
-                    prev_r = ratios_by_year.get(prev_y, {}) or {}
-                    prev_ldr = _num(prev_r.get('loan_to_deposit_ratio')) if prev_y is not None else None
-                    if prev_ldr not in (None, 0) and 0.05 <= abs(float(prev_ldr)) <= 5.0:
-                        r['loan_to_deposit_ratio'] = prev_ldr
-                        r['loan_to_deposit_ratio_source'] = 'QUALITY_GATE_BANK_LDR_PREV_YEAR_PROXY'
-                        issues.append(f"{y}: loan_to_deposit_ratio replaced with prior-year proxy under missing bank anchors")
+                    r['loan_to_deposit_ratio'] = None
+                    r['loan_to_deposit_ratio_source'] = 'MISSING_BANK_LOANS_OR_DEPOSITS'
+                    r.setdefault('_ratio_reasons', {})['loan_to_deposit_ratio'] = 'LOAN_DATA_UNAVAILABLE'
+                    issues.append(f"{y}: loan_to_deposit_ratio blocked (missing loans/deposits anchors, prior-year proxy forbidden)")
                 cap_now = _num(r.get('capital_ratio_proxy'))
                 if cap_now not in (None, 0) and abs(float(cap_now)) > 0.25 and dep_now in (None, 0) and loan_now in (None, 0):
-                    prev_r = ratios_by_year.get(prev_y, {}) or {}
-                    prev_cap = _num(prev_r.get('capital_ratio_proxy')) if prev_y is not None else None
-                    if prev_cap not in (None, 0) and -1.0 <= float(prev_cap) <= 1.0:
-                        r['capital_ratio_proxy'] = prev_cap
-                        r['capital_ratio_proxy_source'] = 'QUALITY_GATE_BANK_CAPITAL_PREV_YEAR_PROXY'
-                        issues.append(f"{y}: capital_ratio_proxy replaced with prior-year proxy under missing bank anchors")
+                    r['capital_ratio_proxy'] = None
+                    r['capital_ratio_proxy_source'] = 'MISSING_BANK_CAPITAL_ANCHORS'
+                    r.setdefault('_ratio_reasons', {})['capital_ratio_proxy'] = 'MISSING_BANK_CAPITAL_ANCHORS'
+                    issues.append(f"{y}: capital_ratio_proxy blocked (missing bank anchors, prior-year proxy forbidden)")
 
             # Net Debt / EBITDA guardrail (critical)
             debt = _num(r.get('total_debt'))
@@ -15437,7 +15729,6 @@ class SECFinancialSystem:
     def _build_investor_verdict_df(self, years, ratios_by_year, gate_issues, critical_df, forecasts_df, sector_profile=None, blocked_ratios=None):
         try:
             import pandas as pd
-            import re
 
             def _num(v):
                 try:
@@ -16211,6 +16502,28 @@ class SECFinancialSystem:
             item_col_export = self._t('raw_col_item')
             unit_col_export = self._t('raw_col_unit')
 
+            def _normalize_raw_key_for_export(k: str) -> str:
+                s = self._decode_mojibake_text(str(k or ""))
+                # Defensive: avoid any accidental local shadowing of the `re` module in this large function.
+                import re as _re_local
+                s = _re_local.sub(r"\s+", " ", s).strip()
+                return s
+
+            # Drop ambiguous human-label anchors when a proper GAAP/XBRL concept exists.
+            # This prevents misleading duplicates like "Total Assets" that sometimes point to
+            # "Total current assets" subtotals in older filings.
+            HUMAN_ANCHOR_EQUIVALENTS = {
+                "total assets": ["Assets", "TotalAssets"],
+                "current assets": ["AssetsCurrent", "CurrentAssets"],
+                "total liabilities": ["Liabilities", "TotalLiabilities"],
+                "current liabilities": ["LiabilitiesCurrent", "CurrentLiabilities"],
+                "operating income": ["OperatingIncomeLoss", "OperatingIncome"],
+                "income from operations": ["OperatingIncomeLoss", "OperatingIncome"],
+                "net income": ["NetIncomeLoss", "NetIncome"],
+                "gross profit": ["GrossProfit"],
+                "cost of revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold"],
+            }
+
             def _infer_unit_export(label_text: str) -> str:
                 t = str(label_text or '').lower()
                 if self.current_lang == 'ar':
@@ -16238,6 +16551,13 @@ class SECFinancialSystem:
                 return ('million' in u) or ('ملايين' in u) or ('usd (millions)' in u) or ('دولار' in u)
 
             export_concepts = sorted({k for y in years for k in (layer1_export.get(y, {}) or {}).keys()})
+            try:
+                from core.export_concept_filters import filter_raw_by_year_concepts
+
+                export_concepts = filter_raw_by_year_concepts(export_concepts)
+            except Exception:
+                pass
+            export_key_set = {_normalize_raw_key_for_export(str(k)) for k in export_concepts}
             export_rows = []
             for c in export_concepts:
                 # Skip internal helper concepts.
@@ -16247,6 +16567,13 @@ class SECFinancialSystem:
                 except Exception:
                     pass
                 raw_label = self._decode_mojibake_text(str(c))
+                raw_key_clean = _normalize_raw_key_for_export(raw_label)
+                raw_key_norm = raw_key_clean.lower()
+                if raw_key_norm in HUMAN_ANCHOR_EQUIVALENTS:
+                    equivs = HUMAN_ANCHOR_EQUIVALENTS.get(raw_key_norm, [])
+                    if any(_normalize_raw_key_for_export(e) in export_key_set for e in equivs):
+                        # Prefer the technical concept row; keep the human anchor for Layer1_Raw_SEC only.
+                        continue
                 display_label = self._sanitize_localized_text(
                     self._translate_financial_item(raw_label),
                     raw_label,
@@ -16265,6 +16592,20 @@ class SECFinancialSystem:
 
             if export_rows:
                 raw_df = pd.DataFrame(export_rows)
+                # Collapse duplicates that are the same SEC/XBRL concept under different display labels,
+                # e.g., "إجمالي الأصول (Assets)" vs "إجمالي الأصول (TotalAssets)".
+                try:
+                    from core.raw_export_dedupe import dedupe_timeseries_by_canonical_tag
+
+                    raw_df = dedupe_timeseries_by_canonical_tag(
+                        raw_df,
+                        label_col=item_col_export,
+                        year_cols=[str(y) for y in years],
+                        unit_col=unit_col_export,
+                        concept_col="__concept__",
+                    )
+                except Exception:
+                    pass
                 # Resolve label collisions (same Arabic label for multiple SEC concepts) without changing sheet structure.
                 try:
                     from core.raw_export_dedupe import dedupe_labeled_timeseries_df
@@ -16484,19 +16825,19 @@ class SECFinancialSystem:
             canonical_collision_df = pd.DataFrame(canonical_collision_rows)
             # Export deduplicated/coalesced view as main Raw_by_Year to prevent bilingual
             # duplicates splitting values across separate rows.
-            if not canonical_df.empty:
+            if (not raw_df_locked_to_ui) and (not canonical_df.empty):
                 export_cols = ['Concept'] + [str(y) for y in years]
                 raw_df = canonical_df[[c for c in export_cols if c in canonical_df.columns]].copy()
         except Exception:
             canonical_df = pd.DataFrame()
             canonical_collision_df = pd.DataFrame()
 
+        sector_profile_export = self._get_sector_profile()
         ticker = (self.current_data.get('company_info', {}) or {}).get('ticker', 'CURRENT')
         ratio_source = UnifiedRatioSource()
         ratio_source.load(ticker, data_by_year, ratios_by_year, sector_profile=sector_profile_export)
 
         ratio_rows = []
-        sector_profile_export = self._get_sector_profile()
         sector_norm_export = self._normalize_sector_for_packs(sector_profile_export)
         ratio_export_keys = self._get_sector_ratio_export_keys(sector_profile_export)
         mandatory_ratio_keys = set(self._get_sector_mandatory_ratio_keys(sector_profile_export))
@@ -16900,6 +17241,142 @@ class SECFinancialSystem:
                 except Exception:
                     pass
             with pd.ExcelWriter(fn, engine='openpyxl') as writer:
+                # Final export de-duplication (visual duplicates in Arabic/RTL can differ by hidden bidi marks).
+                # Do not change sheet names/structure; only collapse duplicate rows in Raw_by_Year.
+                try:
+                    import unicodedata
+                    import re as _re
+
+                    from core.raw_export_dedupe import (
+                        dedupe_labeled_timeseries_df,
+                        dedupe_timeseries_by_value_vector,
+                    )
+
+                    def _norm_export_label(v):
+                        if v is None:
+                            return v
+                        s = str(v)
+                        s = unicodedata.normalize('NFKC', s)
+                        # Strip bidi/zero-width marks that cause visually-identical duplicates.
+                        s = _re.sub(r'[\u200e\u200f\u202a-\u202e\u2066-\u2069]', '', s)
+                        return s.strip()
+
+                    def _fix_unit_mislabels(df: "pd.DataFrame", label_col: str, unit_col: str) -> "pd.DataFrame":
+                        """
+                        Some XBRL concept names include 'stock'/'stockholders' and can be mis-tagged as shares by
+                        heuristic unit inference. Correct obvious cases (Assets/Liabilities/Equity) back to money.
+                        """
+                        if df is None or df.empty:
+                            return df
+                        if label_col not in df.columns or unit_col not in df.columns:
+                            return df
+
+                        money_unit = 'ملايين دولار أمريكي' if self.current_lang == 'ar' else 'USD (millions)'
+                        shares_unit = 'أسهم' if self.current_lang == 'ar' else 'shares'
+                        per_share_unit = 'دولار/سهم' if self.current_lang == 'ar' else 'USD/share'
+
+                        def _is_money_label(lbl: str) -> bool:
+                            t = str(lbl or '').lower()
+                            # Balance sheet anchors and obvious monetary statements
+                            if any(k in t for k in ('assets', 'liabilities', 'equity', 'stockholders equity')):
+                                return True
+                            if any(k in t for k in ('الأصول', 'الخصوم', 'حقوق الملكية', 'حقوق المساهمين')):
+                                return True
+                            return False
+
+                        def _is_share_count_label(lbl: str) -> bool:
+                            t = str(lbl or '').lower()
+                            # Avoid misclassifying "stockholders equity" as shares.
+                            if 'equity' in t or 'حقوق' in t:
+                                return False
+                            return ('shares' in t) or ('أسهم' in t)
+
+                        def _is_per_share_label(lbl: str) -> bool:
+                            t = str(lbl or '').lower()
+                            return ('per share' in t) or ('pershare' in t) or ('eps' in t) or ('ربحية' in t)
+
+                        def _unit_is_shares(u: str) -> bool:
+                            uu = str(u or '').strip().lower()
+                            return uu in {shares_unit.lower(), 'share', 'shares', 'stock'} or ('أسهم' in uu)
+
+                        def _unit_is_money(u: str) -> bool:
+                            uu = str(u or '').strip().lower()
+                            return ('usd' in uu) or ('million' in uu) or ('دولار' in uu) or ('ملايين' in uu)
+
+                        new_units = []
+                        for _, r in df.iterrows():
+                            lbl = r.get(label_col)
+                            u = r.get(unit_col)
+                            if _is_per_share_label(lbl):
+                                new_units.append(per_share_unit)
+                                continue
+                            if _is_money_label(lbl) and _unit_is_shares(u):
+                                new_units.append(money_unit)
+                                continue
+                            if _is_share_count_label(lbl) and _unit_is_money(u):
+                                new_units.append(shares_unit)
+                                continue
+                            new_units.append(u)
+                        df = df.copy()
+                        df[unit_col] = new_units
+                        return df
+
+                    if isinstance(raw_df, pd.DataFrame) and not raw_df.empty:
+                        label_col = raw_df.columns[0]
+                        year_cols = [c for c in raw_df.columns if str(c).strip().isdigit()]
+                        unit_col = None
+                        for cand in ('الوحدة', '‏الوحدة', 'Unit', 'unit'):
+                            if cand in raw_df.columns:
+                                unit_col = cand
+                                break
+                        raw_df[label_col] = raw_df[label_col].map(_norm_export_label)
+                        if unit_col:
+                            raw_df[unit_col] = raw_df[unit_col].map(_norm_export_label)
+                            raw_df = _fix_unit_mislabels(raw_df, label_col=label_col, unit_col=unit_col)
+                        if year_cols:
+                            # First collapse identical value-vectors across alias labels (Assets vs TotalAssets vs Total Assets),
+                            # then resolve same-label collisions by disambiguating or collapsing when identical.
+                            raw_df = dedupe_timeseries_by_value_vector(
+                                raw_df,
+                                label_col=label_col,
+                                year_cols=year_cols,
+                                unit_col=unit_col,
+                            )
+                            raw_df = dedupe_labeled_timeseries_df(
+                                raw_df,
+                                label_col=label_col,
+                                year_cols=year_cols,
+                                unit_col=unit_col,
+                                concept_col="__concept__",
+                            )
+                    if isinstance(canonical_df, pd.DataFrame) and not canonical_df.empty:
+                        label_col = canonical_df.columns[0]
+                        year_cols = [c for c in canonical_df.columns if str(c).strip().isdigit()]
+                        unit_col = None
+                        for cand in ('الوحدة', '‏الوحدة', 'Unit', 'unit'):
+                            if cand in canonical_df.columns:
+                                unit_col = cand
+                                break
+                        canonical_df[label_col] = canonical_df[label_col].map(_norm_export_label)
+                        if unit_col:
+                            canonical_df[unit_col] = canonical_df[unit_col].map(_norm_export_label)
+                            canonical_df = _fix_unit_mislabels(canonical_df, label_col=label_col, unit_col=unit_col)
+                        if year_cols:
+                            canonical_df = dedupe_timeseries_by_value_vector(
+                                canonical_df,
+                                label_col=label_col,
+                                year_cols=year_cols,
+                                unit_col=unit_col,
+                            )
+                            canonical_df = dedupe_labeled_timeseries_df(
+                                canonical_df,
+                                label_col=label_col,
+                                year_cols=year_cols,
+                                unit_col=unit_col,
+                                concept_col="__concept__",
+                            )
+                except Exception:
+                    pass
                 raw_df.to_excel(writer, sheet_name='Raw_by_Year', index=False)
                 if not inputs_df.empty:
                     inputs_df.to_excel(writer, sheet_name='Inputs_View', index=False)

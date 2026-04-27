@@ -1,6 +1,11 @@
 # Python
 __pycache__/
 *.py[cod]
+$RECYCLE.BIN/
+
+# Local scratch / diagnostics (not part of product)
+tmp_run/
+backups/
 *.pyo
 *.pyd
 .Python

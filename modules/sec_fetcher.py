@@ -3166,6 +3166,13 @@ class SECDataFetcher:
             'us-gaap:InterestCostsIncurred': ['InterestCostsIncurred'],
             'us-gaap:DepreciationAndAmortization': ['DepreciationDepletionAndAmortization', 'DepreciationAmortization'],
             'us-gaap:CostOfGoodsAndServicesSold': ['CostOfRevenue'],
+            # Debt anchors (SEC-based fallback; enables Debt ratios without market data)
+            'us-gaap:DebtCurrent': ['DebtCurrent'],
+            'us-gaap:LongTermDebtNoncurrent': ['LongTermDebtNoncurrent'],
+            'us-gaap:DebtNoncurrent': ['DebtNoncurrent'],
+            'us-gaap:LongTermDebt': ['LongTermDebt'],
+            'us-gaap:LongTermDebtAndCapitalLeaseObligations': ['LongTermDebtAndCapitalLeaseObligations'],
+            'us-gaap:LongTermDebtAndFinanceLeaseObligations': ['LongTermDebtAndFinanceLeaseObligations'],
             'us-gaap:NetCashProvidedByUsedInOperatingActivities': ['NetCashProvidedByUsedInOperatingActivities'],
             'us-gaap:PaymentsToAcquirePropertyPlantAndEquipment': ['PaymentsToAcquirePropertyPlantAndEquipment'],
             'us-gaap:EarningsPerShareBasic': ['EarningsPerShareBasic'],
@@ -3343,16 +3350,10 @@ class SECDataFetcher:
                     m = int(end_date[5:7]) if len(end_date) >= 7 else None
                 except Exception:
                     continue
-                # Align companyconcept year keys with the app's analysis-year convention:
-                # for duration facts (have `start`) with fiscal year ending in Jan/Feb,
-                # map to prior calendar year (e.g. NVDA FY ended 2016-01-31 -> analysis year 2015).
-                try:
-                    start_date = str(e.get('start') or '')
-                    is_duration = bool(start_date and len(start_date) >= 10 and start_date != end_date)
-                    if is_duration and m in (1, 2):
-                        y = int(y) - 1
-                except Exception:
-                    pass
+                # IMPORTANT: Bucket companyconcept facts by the calendar year of the `end` date.
+                # The SEC `fy` field is not safe for bucketing (restatements can attach older end-dates
+                # to newer `fy` values). Using end-year keeps exported years consistent and makes
+                # SEC parity comparisons deterministic.
                 if y < int(start_year) or y > int(end_year):
                     continue
                 # For non-December filers, SEC `frame` often contains "Q" even for FY 10-K facts
@@ -3420,14 +3421,7 @@ class SECDataFetcher:
                     m = int(end_date[5:7]) if len(end_date) >= 7 else None
                 except Exception:
                     continue
-                # Align companyconcept year keys with the app's analysis-year convention (see above).
-                try:
-                    start_date = str(e.get('start') or '')
-                    is_duration = bool(start_date and len(start_date) >= 10 and start_date != end_date)
-                    if is_duration and m in (1, 2):
-                        y = int(y) - 1
-                except Exception:
-                    pass
+                # Bucket by end-year only (see _fetch_companyconcept_series).
                 if y < int(start_year) or y > int(end_year):
                     continue
                 # For non-December filers, SEC `frame` often contains "Q" even for FY 10-K facts.

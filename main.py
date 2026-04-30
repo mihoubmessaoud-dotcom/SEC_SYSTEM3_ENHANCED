@@ -49,36 +49,37 @@ except Exception as e:
     raise
 
 PALETTE = {
-    'bg': '#111521',
-    'panel': '#171c2b',
-    'surface': '#1f2536',
-    'surface_alt': '#232a3d',
-    'surface_soft': '#1b2132',
-    'shadow': '#0f1320',
-    'shadow_deep': '#0b0f1a',
-    'header': '#e6edf9',
-    'header_alt': '#111729',
-    'header_muted': '#8ea0bd',
-    'header_border': '#2f3a53',
-    'nav_bg': '#0c1120',
-    'nav_surface': '#141b2e',
-    'nav_border': '#2b3550',
+    # Core UI palette (premium dark + neon accents)
+    'bg': '#0b0f1a',
+    'panel': '#0f1526',
+    'surface': '#101a2f',
+    'surface_alt': '#121f3a',
+    'surface_soft': '#0d1322',
+    'shadow': '#070a12',
+    'shadow_deep': '#05070e',
+    'header': '#eaf2ff',
+    'header_alt': '#0b0f1a',
+    'header_muted': '#9fb0d1',
+    'header_border': '#24314f',
+    'nav_bg': '#0b0f1a',
+    'nav_surface': '#0f1526',
+    'nav_border': '#24314f',
     'accent': '#2f7dff',
     'accent_dark': '#1f5fc9',
-    'accent_soft': '#203657',
-    'teal': '#1db8aa',
-    'teal_soft': '#17393a',
+    'accent_soft': '#162b52',
+    'teal': '#00c2a8',
+    'teal_soft': '#0c2a2a',
     'text': '#d9e2f1',
     'muted': '#93a1b8',
-    'button': '#2f7dff',
-    'button_secondary': '#2a334a',
-    'button_neutral': '#525f7a',
-    'border': '#313b53',
-    'panel_border': '#313b53',
-    'success': '#138a63',
-    'danger': '#d14343',
-    'warning': '#b7791f',
-    # Premium Data tab dashboard accents (UI-only)
+    'button': '#0030e0',
+    'button_secondary': '#17233e',
+    'button_neutral': '#3a4662',
+    'border': '#24314f',
+    'panel_border': '#24314f',
+    'success': '#20c05c',
+    'danger': '#ff3b30',
+    'warning': '#f0b429',
+    # Premium accents used by the dashboard widgets / rail
     'dash_bg': '#0b0f1a',
     'dash_panel': '#0f1526',
     'dash_panel2': '#101a2f',
@@ -251,8 +252,8 @@ class SECFinancialSystem:
         ])
         mono_family = self._select_font_family(["JetBrains Mono", "Consolas", "Courier New"])
         FONTS.update({
-            'header': (arabic_family, 22, 'bold'),
-            'title': (arabic_family, 14, 'bold'),
+            'header': (arabic_family, 24, 'bold'),
+            'title': (arabic_family, 15, 'bold'),
             'subtitle': (arabic_family, 11),
             'label': (arabic_family, 12, 'bold'),
             'normal': (arabic_family, 11),
@@ -264,7 +265,8 @@ class SECFinancialSystem:
         self.root.option_add("*Font", f"{arabic_family} 11")
         # Slight DPI scaling for clearer text on modern displays.
         try:
-            self.root.tk.call('tk', 'scaling', 1.15)
+            # Keep scaling close to 1.0 to preserve pixel-consistent UI metrics.
+            self.root.tk.call('tk', 'scaling', 1.05)
         except Exception:
             pass
         self.root.option_add("*Button.Cursor", "hand2")
@@ -343,6 +345,7 @@ class SECFinancialSystem:
             'tab_ai': {'ar': 'التحليل الذكي', 'en': 'AI Intelligence', 'fr': 'Intelligence IA'},
             'tab_chat': {'ar': 'الدردشة المالية', 'en': 'Financial Chat', 'fr': 'Chat financier'},
             'tab_learning': {'ar': 'لوحة التعلم', 'en': 'Learning Board', 'fr': 'Tableau d’apprentissage'},
+            'dashboard': {'ar': 'لوحة التحكم', 'en': 'Dashboard', 'fr': 'Tableau de bord'},
             'workspace_title': {'ar': 'لوحة العمل المؤسسية', 'en': 'Institutional Workspace', 'fr': 'Espace de travail institutionnel'},
             'workspace_hint': {'ar': 'اختر شركة أو حمّل ملف إكسل لبدء التحليل والتدقيق والمقارنة.', 'en': 'Select a company or load an Excel file to begin analysis, audit, and comparison.', 'fr': 'Sélectionnez une société ou chargez un fichier Excel pour commencer l’analyse, l’audit et la comparaison.'},
             'sidebar_section_universe': {'ar': 'كون التحليل', 'en': 'Analysis Universe', 'fr': 'Univers d’analyse'},
@@ -1282,6 +1285,15 @@ class SECFinancialSystem:
             background=[("selected", PALETTE['accent_dark']), ("active", PALETTE['surface_alt'])],
             foreground=[("selected", "#ffffff"), ("active", PALETTE['text'])],
         )
+        # Premium rail navigation: hide the native Notebook tab strip to match the reference layout
+        # (tabs remain accessible via the right navigation rail).
+        if hasattr(self, "nav_rail"):
+            try:
+                style.layout("TNotebook.Tab", [])
+                style.configure("TNotebook", tabmargins=(0, 0, 0, 0))
+                style.configure("TNotebook.Tab", padding=(0, 0))
+            except Exception:
+                pass
         style.configure(
             "Treeview",
             font=FONTS['tree'],
@@ -1464,13 +1476,27 @@ class SECFinancialSystem:
         buttons = getattr(self, "workspace_nav_buttons", {}) or {}
         for key, btn in buttons.items():
             selected = key == current_key
-            scheme = "primary" if selected else "secondary"
-            self._style_tk_button(btn, scheme)
-            btn.configure(
-                relief='flat',
-                highlightbackground=PALETTE['accent'] if selected else PALETTE['border'],
-                bd=0,
-            )
+            if hasattr(self, "nav_rail"):
+                # Premium rail style
+                btn.configure(
+                    bg=PALETTE['dash_header2'] if selected else PALETTE['nav_surface'],
+                    fg=PALETTE['dash_text'] if selected else PALETTE['text'],
+                    activebackground=PALETTE['surface_alt'],
+                    activeforeground=PALETTE['dash_text'],
+                    relief='flat',
+                    bd=0,
+                    highlightthickness=1,
+                    highlightbackground=PALETTE['dash_blue'] if selected else PALETTE['nav_border'],
+                    highlightcolor=PALETTE['dash_blue'] if selected else PALETTE['nav_border'],
+                )
+            else:
+                scheme = "primary" if selected else "secondary"
+                self._style_tk_button(btn, scheme)
+                btn.configure(
+                    relief='flat',
+                    highlightbackground=PALETTE['accent'] if selected else PALETTE['border'],
+                    bd=0,
+                )
 
     def _build_section_card(self, parent, title, subtitle=None):
         card = tk.Frame(
@@ -2085,28 +2111,33 @@ class SECFinancialSystem:
         content_row = tk.Frame(shell, bg=PALETTE['bg'])
         content_row.pack(fill='both', expand=True)
 
+        # Premium right-side navigation rail (matches the reference design intent).
         nav_rail = tk.Frame(
             content_row,
-            bg=PALETTE['surface_alt'],
+            bg=PALETTE['nav_bg'],
             bd=0,
             highlightthickness=1,
-            highlightbackground=PALETTE['border'],
-            width=88,
+            highlightbackground=PALETTE['nav_border'],
+            width=240,
         )
-        nav_rail.pack(side='left', fill='y', padx=(0, 6))
+        nav_rail.pack(side='right', fill='y', padx=(6, 0))
         nav_rail.pack_propagate(False)
-        # Keep structure for shortcuts but hide the visual rail to reduce UI density.
-        nav_rail.pack_forget()
-        tk.Label(
-            nav_rail,
-            text="Sections",
-            bg=PALETTE['surface_alt'],
-            fg=PALETTE['header_muted'],
-            font=FONTS['caption'],
-        ).pack(pady=(10, 8))
+        self.nav_rail = nav_rail
 
-        nav_btn_box = tk.Frame(nav_rail, bg=PALETTE['surface_alt'])
-        nav_btn_box.pack(fill='y', expand=True, padx=8, pady=(0, 8))
+        nav_header = tk.Frame(nav_rail, bg=PALETTE['nav_bg'])
+        nav_header.pack(fill='x', padx=10, pady=(10, 8))
+        self.nav_title_label = tk.Label(
+            nav_header,
+            text=self._t('dashboard'),
+            bg=PALETTE['nav_bg'],
+            fg=PALETTE['dash_text'],
+            font=FONTS['label'],
+            anchor='e' if self.current_lang == 'ar' else 'w',
+        )
+        self.nav_title_label.pack(fill='x')
+
+        nav_btn_box = tk.Frame(nav_rail, bg=PALETTE['nav_bg'])
+        nav_btn_box.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         self.workspace_nav_button_box = nav_btn_box
 
         notebook_shell = tk.Frame(
@@ -2146,24 +2177,34 @@ class SECFinancialSystem:
 
         self.workspace_nav_buttons = {}
         nav_specs = [
-            ("raw", "Data", self.raw_tab),
-            ("ratios", "Ratios", self.ratios_tab),
-            ("strategic", "Strategy", self.strategic_tab),
-            ("comparison", "Peers", self.comparison_tab),
-            ("forecast", "Forecast", self.forecast_tab),
-            ("ai", "AI", self.ai_analysis_tab),
-            ("chat", "Chat", self.chat_tab),
-            ("learning", "Learn", self.learning_tab),
+            ("raw", "📑", self._t('tab_raw'), self.raw_tab),
+            ("ratios", "％", self._t('tab_ratios'), self.ratios_tab),
+            ("strategic", "🎯", self._t('tab_strategic'), self.strategic_tab),
+            ("forecast", "🔮", self._t('tab_forecast'), self.forecast_tab),
+            ("comparison", "⚖", self._t('tab_comparison'), self.comparison_tab),
+            ("ai", "🧠", self._t('tab_ai'), self.ai_analysis_tab),
+            ("chat", "💬", self._t('tab_chat'), self.chat_tab),
+            ("learning", "📚", self._t('tab_learning'), self.learning_tab),
         ]
-        for key, label, tab in nav_specs:
+        for key, icon, label, tab in nav_specs:
             btn = tk.Button(
                 self.workspace_nav_button_box,
-                text=label,
-                font=FONTS['caption'],
+                text=f"{icon}  {label}",
+                font=FONTS['label'],
+                anchor='e' if self.current_lang == 'ar' else 'w',
                 command=lambda t=tab: self._select_notebook_tab(t),
+                justify='right' if self.current_lang == 'ar' else 'left',
+                wraplength=210,
             )
             self._style_tk_button(btn, 'secondary')
-            btn.pack(fill='x', pady=3)
+            btn.configure(
+                bg=PALETTE['nav_surface'],
+                activebackground=PALETTE['surface_alt'],
+                highlightbackground=PALETTE['nav_border'],
+                padx=14,
+                pady=10,
+            )
+            btn.pack(fill='x', pady=6)
             self.workspace_nav_buttons[key] = btn
         self._apply_table_density("comfortable")
         self._sync_workspace_nav_state()
@@ -2209,7 +2250,8 @@ class SECFinancialSystem:
         self.raw_layer_combo.pack(side='left', padx=8)
         self.raw_layer_combo.bind('<<ComboboxSelected>>', lambda e: self.display_raw_data())
         tk.Label(raw_controls_inner, text=self._t('sec_view_mode_label'), bg=PALETTE['surface_soft'], fg=PALETTE['header'], font=FONTS['label']).pack(side='left', padx=(18, 0))
-        self._sec_view_mode_var = tk.StringVar(value='official')
+        # Default to the premium canonical dashboard view (raw layer browsing remains available).
+        self._sec_view_mode_var = tk.StringVar(value='canonical')
         self.sec_view_mode_display_var = tk.StringVar(value=self._t('sec_view_mode_official'))
         self.sec_view_mode_combo = ttk.Combobox(
             raw_controls_inner,

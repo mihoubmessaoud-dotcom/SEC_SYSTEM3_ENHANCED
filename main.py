@@ -78,6 +78,19 @@ PALETTE = {
     'success': '#138a63',
     'danger': '#d14343',
     'warning': '#b7791f',
+    # Premium Data tab dashboard accents (UI-only)
+    'dash_bg': '#0b0f1a',
+    'dash_panel': '#0f1526',
+    'dash_panel2': '#101a2f',
+    'dash_border': '#24314f',
+    'dash_header': '#1a0a4a',
+    'dash_header2': '#200090',
+    'dash_blue': '#0030e0',
+    'dash_teal': '#00a3a3',
+    'dash_green': '#20c05c',
+    'dash_red': '#ff3b30',
+    'dash_text': '#eaf2ff',
+    'dash_muted': '#9fb0d1',
 }
 
 FONTS = {
@@ -2215,6 +2228,8 @@ class SECFinancialSystem:
         )
         tree_frame = tk.Frame(self.raw_tab, bg=PALETTE['panel'], highlightthickness=1, highlightbackground=PALETTE['border'], bd=0)
         tree_frame.pack(fill='both', expand=True, padx=10, pady=(0, 8))
+        # Keep a handle so canonical dashboard can hide raw tree without touching other modes.
+        self._raw_tree_container = tree_frame
         self.raw_tree = ttk.Treeview(tree_frame, show='headings')
         raw_y = ttk.Scrollbar(tree_frame, orient='vertical', command=self.raw_tree.yview)
         raw_x = ttk.Scrollbar(tree_frame, orient='horizontal', command=self.raw_tree.xview)
@@ -8069,24 +8084,37 @@ class SECFinancialSystem:
                 selected_source = 'SEC'
 
         sec_view_mode = getattr(self, '_sec_view_mode_var', tk.StringVar(value='official')).get() or 'official'
+        # Toggle dashboard/raw containers safely (UI-only).
+        if sec_view_mode != 'canonical':
+            try:
+                if hasattr(self, "_data_dashboard_container") and self._data_dashboard_container is not None:
+                    self._data_dashboard_container.pack_forget()
+            except Exception:
+                pass
+            try:
+                if hasattr(self, "_raw_tree_container") and self._raw_tree_container is not None:
+                    # Re-pack only if it was hidden by canonical dashboard.
+                    if not self._raw_tree_container.winfo_ismapped():
+                        self._raw_tree_container.pack(fill='both', expand=True, padx=10, pady=(0, 8))
+            except Exception:
+                pass
 
-        # Canonical analysis mode: always show the same final view (Raw_by_Year)
-        # regardless of the selected layer. Layer-specific browsing remains in "official".
+        # Canonical analysis mode: premium Data dashboard (UI-only).
+        # Layer-specific browsing remains in "official". Full calculation inputs remain in "inputs".
         if sec_view_mode == 'canonical':
             years = self._get_display_years_range() or []
             if not years:
                 return
-            layer1_by_year = (data_layers.get('layer1_by_year', {}) or self.current_data.get('data_by_year', {}) or {})
-            raw_df = self._build_raw_by_year_df_for_ui(years, data_layers=data_layers, data_by_year=layer1_by_year)
-            if raw_df is not None and not raw_df.empty:
-                self._render_df_in_raw_tree(raw_df, year_cols=[str(y) for y in years])
+            try:
+                self._display_data_dashboard(years=years, data_layers=data_layers)
                 ci = self.current_data.get('company_info', {})
                 self.company_info_label.config(
                     text=f"{self._t('summary_prefix')} {ci.get('name','')} ({ci.get('ticker','')}) | {self._t('sec_view_mode_canonical')}"
                 )
                 return
-            # If we fail to build canonical view for any reason, fall back to official path.
-            sec_view_mode = 'official'
+            except Exception:
+                # Never block research browsing; fall back to official view.
+                sec_view_mode = 'official'
 
         # Comprehensive inputs mode: show all calculation inputs across layers + ratios + strategic.
         if sec_view_mode == 'inputs':
@@ -10473,6 +10501,137 @@ class SECFinancialSystem:
         ])
         acceptance_df = pd.DataFrame(acceptance_rows)
         return ratio_audit_df, balance_df, critical_df, acceptance_df
+
+    # ---------- Premium Data dashboard (Data tab / canonical view) ----------
+    def _ensure_data_dashboard_widgets(self):
+        import tkinter as tk
+        if hasattr(self, "_data_dashboard_container") and isinstance(self._data_dashboard_container, tk.Widget):
+            return
+        self._data_dashboard_container = tk.Frame(self.raw_tab, bg=PALETTE["dash_bg"])
+        self._data_dashboard_widget = None
+        try:
+            from modules.ui_data_dashboard import DataDashboard
+        except Exception:
+            DataDashboard = None
+        if DataDashboard is not None:
+            self._data_dashboard_widget = DataDashboard(
+                self._data_dashboard_container,
+                palette=PALETTE,
+                fonts=FONTS,
+                lang=getattr(self, "current_lang", "ar"),
+            )
+            self._data_dashboard_widget.pack(fill="both", expand=True)
+
+    def _display_data_dashboard(self, *, years, data_layers):
+        """
+        Canonical UI dashboard for the Data tab (matches premium design intent).
+        UI-only: does not alter any calculation/export structures.
+        """
+        self._ensure_data_dashboard_widgets()
+
+        # Hide raw tree container while dashboard active.
+        try:
+            if hasattr(self, "_raw_tree_container") and self._raw_tree_container is not None:
+                self._raw_tree_container.pack_forget()
+        except Exception:
+            pass
+        try:
+            self._data_dashboard_container.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        except Exception:
+            pass
+
+        if not getattr(self, "_data_dashboard_widget", None):
+            return
+
+        # Sources
+        layer1_by_year = (data_layers or {}).get("layer1_by_year", {}) or (self.current_data.get("data_by_year", {}) or {})
+        layer2_by_year = (data_layers or {}).get("layer2_by_year", {}) or {}
+        ratios_by_year = self._merge_financial_analysis_system_ratios(
+            maybe_guard_ratios_by_year(self.current_data.get("financial_ratios", {}) or {})
+        )
+
+        def _num(v):
+            try:
+                vv = self._safe_excel_number(v)
+                if vv is None:
+                    return None
+                return float(vv)
+            except Exception:
+                return None
+
+        def value_getter(year: int, key: str):
+            rr = (ratios_by_year or {}).get(year, {}) or {}
+            l2 = (layer2_by_year or {}).get(year, {}) or {}
+            if key == "market_cap_m":
+                return _num(l2.get("market:market_cap") or l2.get("yahoo:market_cap"))
+            if key == "enterprise_value_m":
+                return _num(l2.get("market:enterprise_value") or rr.get("enterprise_value"))
+            return _num(rr.get(key))
+
+        from modules.ui_data_dashboard import DashboardMetric, default_formatters, safe_float
+
+        fmtters = default_formatters()
+
+        groups = [
+            (self._translate_ui_text("البيانات المالية"), [
+                DashboardMetric(icon="($)", label="عائد التوزيعات", key="dividend_yield", fmt="pct"),
+                DashboardMetric(icon="ε", label="ربحية السهم (EPS)", key="eps_basic", fmt="num"),
+                DashboardMetric(icon="📘", label="القيمة الدفترية للسهم", key="book_value_per_share", fmt="num"),
+            ]),
+            (self._translate_ui_text("نسب التقييم ورأس المال"), [
+                DashboardMetric(icon="🏦", label="القيمة السوقية (مليون دولار)", key="market_cap_m", fmt="money_m"),
+                DashboardMetric(icon="🏛", label="قيمة المنشأة (مليون دولار)", key="enterprise_value_m", fmt="money_m"),
+                DashboardMetric(icon="🧾", label="مضاعف EV/EBITDA", key="ev_ebitda", fmt="num"),
+                DashboardMetric(icon="💸", label="تكلفة الدين", key="cost_of_debt", fmt="pct"),
+                DashboardMetric(icon="⚖", label="متوسط تكلفة رأس المال المرجح", key="wacc", fmt="pct"),
+                DashboardMetric(icon="🌿", label="عائد التدفق النقدي الحر", key="fcf_yield", fmt="pct"),
+            ]),
+        ]
+
+        years_i = [int(y) for y in (years or [])]
+        if not years_i:
+            return
+        y_last = years_i[-1]
+        rr_last = (ratios_by_year or {}).get(y_last, {}) or {}
+        dy_last = (layer1_by_year or {}).get(y_last, {}) or {}
+
+        def _pick_rev(y):
+            row = (layer1_by_year or {}).get(y, {}) or {}
+            for k in ("Revenues", "SalesRevenueNet", "Revenue", "TotalRevenue", "TotalRevenues"):
+                if k in row:
+                    v = safe_float(row.get(k))
+                    if v is not None:
+                        return v
+            return None
+
+        cagr = safe_float(rr_last.get("revenue_cagr_5y") or rr_last.get("cagr_revenue") or rr_last.get("cagr"))
+        if cagr is None and len(years_i) >= 3:
+            y0 = years_i[0]
+            rev0 = _pick_rev(y0)
+            rev1 = _pick_rev(y_last)
+            if rev0 not in (None, 0) and rev1 not in (None, 0) and rev0 > 0 and rev1 > 0:
+                n = max(1, int(y_last) - int(y0))
+                try:
+                    cagr = (float(rev1) / float(rev0)) ** (1.0 / float(n)) - 1.0
+                except Exception:
+                    cagr = None
+
+        kpi_payload = {
+            "cagr": cagr,
+            "assets": safe_float(dy_last.get("Assets") or dy_last.get("TotalAssets")),
+            "equity": safe_float(dy_last.get("StockholdersEquity") or dy_last.get("TotalEquity")),
+            "current_ratio": safe_float(rr_last.get("current_ratio")),
+            "net_margin": safe_float(rr_last.get("net_margin")),
+            "fcf": safe_float(rr_last.get("free_cash_flow")),
+        }
+
+        self._data_dashboard_widget.render(
+            years=years_i,
+            groups=groups,
+            value_getter=value_getter,
+            fmtters=fmtters,
+            kpi_payload=kpi_payload,
+        )
 
     def display_ratios(self):
         if not self.current_data:

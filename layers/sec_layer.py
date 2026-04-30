@@ -27,13 +27,16 @@ class SECLayer:
         self.user_agent = user_agent
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Avoid broken proxy env vars interfering with SEC access.
+        self._session = requests.Session()
+        self._session.trust_env = False
 
     def fetch(self, cik: str, start_year: int, end_year: int) -> LayerOutput:
         """Return structured SEC accounting data for a CIK and year range."""
         cik_padded = str(cik).zfill(10)
         endpoint = self.BASE_COMPANYFACTS.format(cik=cik_padded)
 
-        response = requests.get(
+        response = self._session.get(
             endpoint,
             headers={"User-Agent": self.user_agent, "Accept": "application/json"},
             timeout=30,
@@ -79,6 +82,28 @@ class SECLayer:
             "us-gaap:LiabilitiesNoncurrent",
             "us-gaap:StockholdersEquity",
             "us-gaap:LiabilitiesAndStockholdersEquity",
+            # Debt (corporates + banks): needed for leverage, EV, WACC weights, and debt ratios.
+            # Note: some concepts include capital leases; we still ingest them so the application
+            # can apply a "debt-only preferred, lease-inclusive last resort" policy upstream.
+            "us-gaap:Debt",
+            "us-gaap:TotalDebt",
+            "us-gaap:DebtCurrent",
+            "us-gaap:DebtNoncurrent",
+            "us-gaap:LongTermDebt",
+            "us-gaap:LongTermDebtCurrent",
+            "us-gaap:LongTermDebtNoncurrent",
+            "us-gaap:CurrentPortionOfLongTermDebt",
+            "us-gaap:ShortTermBorrowings",
+            "us-gaap:CommercialPaper",
+            "us-gaap:NotesPayable",
+            "us-gaap:LongTermDebtAndCapitalLeaseObligations",
+            "us-gaap:DebtAndCapitalLeaseObligations",
+            "us-gaap:OperatingLeaseLiability",
+            "us-gaap:OperatingLeaseLiabilityCurrent",
+            "us-gaap:OperatingLeaseLiabilityNoncurrent",
+            "us-gaap:FinanceLeaseLiability",
+            "us-gaap:FinanceLeaseLiabilityCurrent",
+            "us-gaap:FinanceLeaseLiabilityNoncurrent",
             "us-gaap:Revenues",
             "us-gaap:SalesRevenueNet",
             "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -172,19 +197,28 @@ class SECLayer:
                     end_date = entry.get("end")
                     if not end_date:
                         continue
-                    year = int(end_date[:4])
+                    # Prefer SEC-provided fiscal year (fy) when present.
+                    # Many issuers have fiscal years that end in the following calendar year
+                    # (e.g., fiscal 2022 end date in Jan 2023). Using end_date[:4] would shift
+                    # the fact by +1 year and breaks time-series matching.
+                    fy = entry.get("fy")
+                    year = int(fy) if isinstance(fy, int) else int(end_date[:4])
                     if year < start_year or year > end_year:
                         continue
-                    frame = entry.get("frame", "")
-                    if frame and "Q" in frame:
+                    # Do not exclude annual 10-K facts just because the SEC "frame" contains Q4.
+                    # Many annual instant facts are framed like "CY2020Q4I" even for 10-K filings.
+                    # Instead, drop true quarterly filings via fp ("Q1/Q2/Q3").
+                    fp = str(entry.get("fp") or "").upper()
+                    if fp.startswith("Q"):
                         continue
+                    frame = entry.get("frame", "")
 
                     candidate = {
                         "value": entry.get("val"),
                         "unit": unit_name,
                         "period_start": entry.get("start"),
                         "period_end": entry.get("end"),
-                        "fy": entry.get("fy"),
+                        "fy": fy,
                         "fp": entry.get("fp"),
                         "form": entry.get("form"),
                         "accn": entry.get("accn"),

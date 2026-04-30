@@ -451,11 +451,18 @@ def compare_excel_vs_companyfacts(
             split_factor = None
             try:
                 if used_target in {"shares_million", "shares_millions"} and sec_val_norm and excel_val and sec_val_norm > 0 and excel_val > 0:
-                    ratio = float(excel_val) / float(sec_val_norm)
-                    nearest = int(round(ratio))
-                    if nearest in {2, 3, 4, 5, 10, 20, 40} and abs(ratio - nearest) <= (0.05 * nearest):
-                        split_factor = nearest
-                        sec_val_norm = float(sec_val_norm) * float(nearest)
+                    # Either Excel is split-adjusted (bigger shares) or SEC is split-adjusted.
+                    ratio_a = float(excel_val) / float(sec_val_norm)
+                    ratio_b = float(sec_val_norm) / float(excel_val)
+                    for ratio, mode in ((ratio_a, "sec_up"), (ratio_b, "sec_down")):
+                        nearest = int(round(ratio))
+                        if nearest in {2, 3, 4, 5, 10, 20, 40} and abs(ratio - nearest) <= (0.05 * nearest):
+                            split_factor = nearest
+                            if mode == "sec_up":
+                                sec_val_norm = float(sec_val_norm) * float(nearest)
+                            else:
+                                sec_val_norm = float(sec_val_norm) / float(nearest)
+                            break
                 if used_target in {"per_share", "usd_per_share"} and sec_val_norm and excel_val and sec_val_norm > 0 and excel_val > 0:
                     ratio = float(sec_val_norm) / float(excel_val)
                     nearest = int(round(ratio))

@@ -13108,10 +13108,34 @@ class SECFinancialSystem:
         }
 
         def _num(v):
+            """
+            Robust numeric extractor for mixed layer payloads.
+            Accepts plain numbers, strings, and layer value-objects like:
+              {"value": 123, "unit": "USD", ...}
+            Must NOT coerce legitimate zeros to None.
+            """
             try:
                 if v is None:
                     return None
-                fv = float(v)
+                # Layer value-object
+                if isinstance(v, dict):
+                    if "value" in v:
+                        v = v.get("value")
+                    elif "val" in v:
+                        v = v.get("val")
+                    elif "amount" in v:
+                        v = v.get("amount")
+                    else:
+                        # try single-key dicts
+                        try:
+                            if len(v) == 1:
+                                v = next(iter(v.values()))
+                        except Exception:
+                            pass
+                fv = self._safe_excel_number(v)
+                if fv is None:
+                    return None
+                fv = float(fv)
                 if fv != fv or math.isinf(fv):
                     return None
                 return fv
@@ -13193,6 +13217,18 @@ class SECFinancialSystem:
                 return fv / 1_000_000.0
             return fv
 
+        # Cross-layer resolver helpers (SEC-first backfill, unit-safe).
+        try:
+            from core.cross_layer_resolver import (
+                pick_cash_million,
+                pick_total_debt_million_including_leases,
+                derive_enterprise_value_million,
+            )
+        except Exception:
+            pick_cash_million = None
+            pick_total_debt_million_including_leases = None
+            derive_enterprise_value_million = None
+
         def _split_ratio_for_year(year):
             # Strict cutoff-first policy for known split issuers:
             # apply split factor only on years BEFORE cutoff; never after.
@@ -13247,6 +13283,7 @@ class SECFinancialSystem:
                 _pick_num_ci(row, ['WeightedAverageNumberOfSharesOutstandingBasic', 'weightedaveragenumberofsharesoutstandingbasic']),
                 _pick_num_ci(row, ['SharesBasic', 'sharesbasic']),
                 _pick_num_ci(row, ['CommonStockSharesOutstanding', 'commonstocksharesoutstanding']),
+                _pick_num_ci(row, ['EntityCommonStockSharesOutstanding', 'entitycommonstocksharesoutstanding']),
                 ratios_by_year.get(year, {}).get('shares_outstanding'),
             ]
             values = []
@@ -13365,36 +13402,130 @@ class SECFinancialSystem:
             if changed:
                 issues.append(f"Layer2: market:shares_outstanding derived as market_cap/price for {changed} years.")
 
-        # 2) Total debt: if constant across years, rebuild from SEC debt facts first.
+        # 2) Total debt: fill missing annual series from SEC debt facts.
+        # Policy: include leases in total_debt (Debt+CapitalLease) when available.
+        # This should run by default to prevent missing leverage/EV ratios.
         debt_vals = _series_values('market:total_debt')
-        if allow_aggressive and _is_constant(debt_vals):
+        allow_sec_debt_backfill = str(os.environ.get('ALLOW_SEC_DEBT_BACKFILL', '1')).strip().lower() in ('1', 'true', 'yes')
+        if allow_sec_debt_backfill:
+            # Legacy candidates remain as fallback if resolver is unavailable.
             debt_component_keys = (
+                # Preferred (explicit total debt concepts)
+                'TotalDebt',
+                'totaldebt',
+                'Debt',
+                'debt',
                 'DebtCurrent',
                 'ShortTermBorrowings',
                 'CommercialPaper',
+                'NotesPayable',
+                'notespayable',
                 'LongTermDebtCurrent',
                 'CurrentPortionOfLongTermDebt',
                 'LongTermDebtNoncurrent',
                 'DebtNoncurrent',
                 'LongTermDebt',
-                'LongTermDebtAndCapitalLeaseObligation',
+                # Wider but still debt-like concepts sometimes used by issuers
+                'LongTermBorrowings',
+                'longtermborrowings',
+            )
+
+            # Concepts that may include lease obligations. Only use if no debt-only path exists.
+            debt_plus_lease_keys = (
                 'LongTermDebtAndCapitalLeaseObligations',
+                'DebtAndCapitalLeaseObligations',
             )
 
             def _sec_total_debt_million(year):
                 rr = ratios_by_year.get(year, {}) or {}
+                # Primary: cross-layer resolver (includes leases).
+                try:
+                    if pick_total_debt_million_including_leases is not None:
+                        sec_payload = ((self.current_data or {}).get('source_layer_payloads') or {}).get('SEC') or {}
+                        layer1_by_year = ((data_layers or {}).get('layer1_by_year') or {})
+                        pr = pick_total_debt_million_including_leases(
+                            year=year,
+                            data_by_year=(data_by_year or {}),
+                            layer1_by_year=(layer1_by_year or {}),
+                            sec_payload=(sec_payload or {}),
+                        )
+                        if pr.value_million is not None:
+                            return float(pr.value_million)
+                except Exception:
+                    pass
+                # Fallback: cached ratio result (may be debt-only in older exports).
                 sec_td = _as_million(rr.get('total_debt'))
-                if sec_td not in (None, 0):
+                if sec_td is not None:
                     return sec_td
+                # Secondary: read directly from SEC companyfacts payload (if available) to avoid
+                # dependence on statement-extraction label coverage.
+                try:
+                    sec_payload = ((self.current_data or {}).get('source_layer_payloads') or {}).get('SEC') or {}
+                    periods = (sec_payload.get('periods') or {})
+                    facts = ((periods.get(str(year)) or {}).get('facts') or {})
+                    # Prefer debt-only concepts; fall back to debt+lease only if nothing else exists.
+                    sec_candidates = []
+                    for k in (
+                        'us-gaap:TotalDebt',
+                        'us-gaap:Debt',
+                        'us-gaap:DebtCurrent',
+                        'us-gaap:LongTermDebtNoncurrent',
+                        'us-gaap:DebtNoncurrent',
+                        'us-gaap:LongTermDebt',
+                        'us-gaap:LongTermDebtCurrent',
+                        'us-gaap:CurrentPortionOfLongTermDebt',
+                        'us-gaap:ShortTermBorrowings',
+                        'us-gaap:CommercialPaper',
+                        'us-gaap:NotesPayable',
+                    ):
+                        fobj = facts.get(k)
+                        if isinstance(fobj, dict):
+                            vv = _num(fobj.get('value'))
+                            if vv is not None:
+                                # Keep explicit zeros (e.g., no-debt year) if the fact exists.
+                                sec_candidates.append(float(vv))
+                    if sec_candidates:
+                        # SEC payload monetary values are absolute USD; normalize to USD_million.
+                        return _as_million(sum(sec_candidates))
+                    # LAST resort (lower confidence): debt + capital leases combined
+                    for k in ('us-gaap:LongTermDebtAndCapitalLeaseObligations', 'us-gaap:DebtAndCapitalLeaseObligations'):
+                        fobj = facts.get(k)
+                        if isinstance(fobj, dict):
+                            vv = _num(fobj.get('value'))
+                            if vv is not None:
+                                issues.append(f"{year}: SEC payload debt used lease-inclusive concept (LOWER_CONFIDENCE).")
+                                return _as_million(float(vv))
+                except Exception:
+                    pass
                 raw_row = (data_by_year or {}).get(year, {}) or {}
-                comps = [_pick_num_ci(raw_row, [k]) for k in debt_component_keys]
-                comps = [c for c in comps if c is not None and c != 0]
-                if not comps:
+                # Keep explicit zeros if the key exists (distinguish "reported 0" from "missing").
+                comps = []
+                present_any = False
+                for k in debt_component_keys:
+                    if k in raw_row:
+                        present_any = True
+                    c = _pick_num_ci(raw_row, [k])
+                    if c is None:
+                        continue
+                    comps.append(float(c))
+
+                # If issuer only reports combined debt+lease, keep as LAST resort and flag.
+                if (not comps) and (not present_any):
+                    lease_combo = [_pick_num_ci(raw_row, [k]) for k in debt_plus_lease_keys]
+                    lease_combo = [c for c in lease_combo if c is not None]
+                    if lease_combo:
+                        chosen_combo = _as_million(lease_combo[0])
+                        if chosen_combo not in (None, 0):
+                            issues.append(f"{year}: SEC debt fallback used debt+capital-lease concept (LOWER_CONFIDENCE).")
+                        return chosen_combo
                     return None
+                if (not comps) and present_any:
+                    # Keys exist but all values are 0 => treat as explicit no-debt year.
+                    return 0.0
                 direct_td = None
-                for dk in ('LongTermDebt', 'LongTermDebtAndCapitalLeaseObligation', 'LongTermDebtAndCapitalLeaseObligations'):
+                for dk in ('LongTermDebt', 'LongTermDebtNoncurrent', 'DebtNoncurrent'):
                     dv = _pick_num_ci(raw_row, [dk])
-                    if dv not in (None, 0):
+                    if dv is not None:
                         direct_td = dv
                         break
                 sum_td = float(sum(comps))
@@ -13407,42 +13538,76 @@ class SECFinancialSystem:
                 return _as_million(chosen)
 
             sec_series = {y: _sec_total_debt_million(y) for y in years}
-            sec_valid = {y: v for y, v in sec_series.items() if v not in (None, 0)}
-            if len(sec_valid) >= 2 and len({round(v, 6) for v in sec_valid.values()}) > 1:
-                for y, v in sec_valid.items():
-                    layer2_by_year.setdefault(y, {})['market:total_debt'] = v
-                issues.append(f"Layer2: market:total_debt synchronized from SEC debt facts for {len(sec_valid)} years.")
-            elif sec_valid:
-                # Snapshot fallback: keep only the latest known debt instead of a fake flat series.
-                latest_y = max(sec_valid.keys())
+            sec_valid = {y: v for y, v in sec_series.items() if v is not None}
+            if sec_valid:
+                # Always fill missing market debt from SEC-derived debt facts (do not overwrite non-missing).
+                filled = 0
                 for y in years:
+                    if y not in sec_valid:
+                        continue
                     row2 = layer2_by_year.setdefault(y, {})
-                    row2['market:total_debt'] = sec_valid[latest_y] if y == latest_y else None
-                issues.append("Layer2: market:total_debt kept as snapshot (insufficient annual SEC debt coverage).")
+                    cur = _as_million(row2.get('market:total_debt'))
+                    if cur is None:
+                        row2['market:total_debt'] = sec_valid[y]
+                        filled += 1
+                if filled:
+                    issues.append(f"Layer2: market:total_debt filled from SEC debt facts for {filled} missing years.")
 
-        # 3) Enterprise value: if constant across years, derive as market_cap + total_debt - cash.
+                # If market series is flat/constant while SEC varies, replace with SEC series to prevent fake constancy.
+                if allow_aggressive and _is_constant(debt_vals) and len(sec_valid) >= 2 and len({round(float(v), 6) for v in sec_valid.values() if v is not None}) > 1:
+                    for y, v in sec_valid.items():
+                        layer2_by_year.setdefault(y, {})['market:total_debt'] = v
+                    issues.append(f"Layer2: market:total_debt synchronized from SEC debt facts for {len(sec_valid)} years (override flat market series).")
+
+        # 3) Enterprise value (EV) is derived/corrected later in the per-year hard-sanity loop,
+        # AFTER market_cap has been repaired. This avoids a known failure mode where EV is
+        # computed against stale/tiny market_cap and then never re-corrected.
         ev_vals = _series_values('market:enterprise_value')
+        allow_ev_backfill = str(os.environ.get('ALLOW_EV_BACKFILL', '1')).strip().lower() in ('1', 'true', 'yes')
         if allow_aggressive and _is_constant(ev_vals):
-            changed = 0
+            pass
+
+        # 3b) EV/EBITDA ratio: compute when EV + EBITDA are available (prevents false 'MISSING_SEC_CONCEPT' labels).
+        allow_ev_ebitda_backfill = str(os.environ.get('ALLOW_EV_EBITDA_BACKFILL', '1')).strip().lower() in ('1', 'true', 'yes')
+        if allow_ev_ebitda_backfill:
+            computed_cnt = 0
             for y in years:
-                row2 = layer2_by_year.setdefault(y, {})
-                raw_row = (data_by_year or {}).get(y, {}) or {}
-                mcap = _as_million(row2.get('market:market_cap'))
-                debt = _as_million(row2.get('market:total_debt'))
-                cash = _num(
-                    raw_row.get('CashAndCashEquivalentsAtCarryingValue')
-                    or raw_row.get('CashAndCashEquivalents')
-                    or raw_row.get('Cash and Cash Equivalents')
-                )
-                if None in (mcap, debt, cash):
+                rr = ratios_by_year.setdefault(y, {})
+                if _num(rr.get('ev_ebitda')) is not None:
                     continue
-                cash_m = _as_million(cash)
-                derived_ev = mcap + debt - cash_m
-                if derived_ev > 0 and _num(row2.get('market:enterprise_value')) != derived_ev:
-                    row2['market:enterprise_value'] = derived_ev
-                    changed += 1
-            if changed:
-                issues.append(f"Layer2: market:enterprise_value derived as market_cap + total_debt - cash for {changed} years.")
+                row2 = layer2_by_year.get(y, {}) or {}
+                raw_row = (data_by_year or {}).get(y, {}) or {}
+                ev_m = _as_million(row2.get('market:enterprise_value'))
+                if ev_m in (None, 0):
+                    ev_m = _as_million(rr.get('enterprise_value'))
+                ebitda_m = _pick_num_ci(raw_row, ['EBITDA', 'Ebitda'])
+                if ebitda_m in (None, 0):
+                    op = _pick_num_ci(raw_row, ['OperatingIncomeLoss', 'OperatingIncome', 'Operating Income', 'Income from operations'])
+                    dep = _pick_num_ci(
+                        raw_row,
+                        [
+                            'DepreciationDepletionAndAmortization',
+                            'DepreciationAmortization',
+                            'Depreciation and Amortization',
+                            'DepreciationAmortizationAndDepletion',
+                        ],
+                    )
+                    if op is not None:
+                        ebitda_m = float(op) + float(dep or 0.0)
+                # Defensive: normalize absolute-USD EBITDA into USD_million if it slips through.
+                if ebitda_m is not None and abs(float(ebitda_m)) >= 100_000_000.0:
+                    ebitda_m = float(ebitda_m) / 1_000_000.0
+                if ev_m in (None, 0) or ebitda_m in (None, 0):
+                    continue
+                ratio = abs(float(ev_m)) / max(abs(float(ebitda_m)), 1e-9)
+                if 0.5 <= ratio <= 500.0:
+                    rr['ev_ebitda'] = float(ev_m) / float(ebitda_m)
+                    reasons = rr.get('_ratio_reasons')
+                    if isinstance(reasons, dict):
+                        reasons.pop('ev_ebitda', None)
+                    computed_cnt += 1
+            if computed_cnt:
+                issues.append(f"Ratios: ev_ebitda computed from enterprise_value/EBITDA for {computed_cnt} years.")
 
         # 4) Debt prefix anomaly guard:
         # If earliest years are a flat repeated debt value and then drop sharply,
@@ -13583,6 +13748,13 @@ class SECFinancialSystem:
                 }
             except Exception:
                 return None
+
+        # EV correction must happen AFTER market_cap repair; track outcomes for a single summary line.
+        ev_post_derived_cnt = 0
+        ev_post_corrected_cnt = 0
+        ev_post_cash_src_counts = {}
+        ev_post_debt_src_counts = {}
+        export_gate_debug = str(os.environ.get('EXPORT_GATE_DEBUG', '0')).strip().lower() in ('1', 'true', 'yes')
 
         for idx, y in enumerate(years):
             row = (data_by_year or {}).get(y, {}) or {}
@@ -13756,6 +13928,98 @@ class SECFinancialSystem:
                         if diff_ratio > 0.80:
                             m['market:market_cap'] = mcap_derived
                             issues.append(f"{y}: market:market_cap corrected ({mcap_raw} -> {mcap_derived})")
+
+            # EV must be corrected AFTER market_cap repair (stale EV is a known failure mode).
+            try:
+                if allow_ev_backfill:
+                    mcap_now = _as_million(m.get('market:market_cap'))
+                    debt_now = _as_million(m.get('market:total_debt'))
+                    debt_src = None
+                    if debt_now is None and pick_total_debt_million_including_leases is not None:
+                        try:
+                            sec_payload = ((self.current_data or {}).get('source_layer_payloads') or {}).get('SEC') or {}
+                            layer1_by_year_now = ((data_layers or {}).get('layer1_by_year') or {})
+                            prd = pick_total_debt_million_including_leases(
+                                year=y,
+                                data_by_year=(data_by_year or {}),
+                                layer1_by_year=(layer1_by_year_now or {}),
+                                sec_payload=(sec_payload or {}),
+                            )
+                            if prd.value_million is not None:
+                                debt_now = float(prd.value_million)
+                                debt_src = prd.source
+                                # Fill missing market debt anchor for downstream ratios/exports.
+                                try:
+                                    if _as_million(m.get('market:total_debt')) is None:
+                                        m['market:total_debt'] = float(debt_now)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            debt_now = debt_now
+                    cash_now = None
+                    cash_src = None
+                    # Prefer resolver (SEC-first) when available.
+                    if pick_cash_million is not None:
+                        sec_payload = ((self.current_data or {}).get('source_layer_payloads') or {}).get('SEC') or {}
+                        layer1_by_year_now = ((data_layers or {}).get('layer1_by_year') or {})
+                        prc = pick_cash_million(
+                            year=y,
+                            data_by_year=(data_by_year or {}),
+                            layer1_by_year=(layer1_by_year_now or {}),
+                            sec_payload=(sec_payload or {}),
+                        )
+                        cash_now = prc.value_million
+                        cash_src = prc.source
+                    if cash_now is None:
+                        cash_now = _as_million(
+                            _pick_num_ci(
+                                row,
+                                [
+                                    'CashAndCashEquivalentsAtCarryingValue',
+                                    'CashAndCashEquivalents',
+                                    'CashCashEquivalentsAndShortTermInvestments',
+                                    'Cash and Cash Equivalents',
+                                ],
+                            )
+                        )
+                        cash_src = 'ROW_FALLBACK'
+
+                    if mcap_now not in (None, 0) and debt_now is not None and cash_now is not None:
+                        ev_now = _as_million(m.get('market:enterprise_value'))
+                        if derive_enterprise_value_million is not None:
+                            ev_derived = derive_enterprise_value_million(market_cap_m=mcap_now, total_debt_m=debt_now, cash_m=cash_now)
+                        else:
+                            ev_derived = float(mcap_now) + float(debt_now) - float(cash_now)
+                        if ev_derived is not None and ev_derived > 0:
+                            if export_gate_debug:
+                                issues.append(
+                                    f"DEBUG_EV_POST {y}: mcap={mcap_now} debt={debt_now} cash={cash_now} ev_derived={float(ev_derived)} cash_src={cash_src or 'NA'} debt_src={debt_src or 'NA'}"
+                                )
+                            should_set = False
+                            if ev_now in (None, 0):
+                                should_set = True
+                            else:
+                                r_ev = abs(float(ev_now)) / max(abs(float(ev_derived)), 1e-9)
+                                if r_ev < 0.2 or r_ev > 5.0:
+                                    should_set = True
+                            if should_set:
+                                prev = ev_now
+                                m['market:enterprise_value'] = float(ev_derived)
+                                rr = ratios_by_year.setdefault(y, {})
+                                rr['enterprise_value'] = float(ev_derived)
+                                rr['enterprise_value_source'] = 'QUALITY_GATE_POST_MCAP_REPAIR'
+                                issues.append(f"{y}: market:enterprise_value corrected ({prev} -> {float(ev_derived)}) via mcap+debt-cash [{cash_src}]")
+                                # Track summary counters (derived vs corrected).
+                                if prev in (None, 0):
+                                    ev_post_derived_cnt += 1
+                                else:
+                                    ev_post_corrected_cnt += 1
+                                if cash_src:
+                                    ev_post_cash_src_counts[cash_src] = ev_post_cash_src_counts.get(cash_src, 0) + 1
+                                if debt_src:
+                                    ev_post_debt_src_counts[debt_src] = ev_post_debt_src_counts.get(debt_src, 0) + 1
+            except Exception:
+                pass
 
             # Total Assets mapping guard:
             # Some SEC filings / learned mappings can mistakenly place Current Assets into "Assets".
@@ -14864,6 +15128,21 @@ class SECFinancialSystem:
                     if _num(r.get('fcf_yield')) is None or abs(_num(r.get('fcf_yield')) - fy_val) > 1e-9:
                         r['fcf_yield'] = fy_val
                         issues.append(f"{y}: fcf_yield investor-lock normalized")
+
+        # Summarize EV corrections (keeps Quality_Gate readable; detailed lines are already included per-year).
+        try:
+            if allow_ev_backfill and (ev_post_derived_cnt or ev_post_corrected_cnt):
+                issues.append(
+                    f"Layer2: market:enterprise_value post-mcap EV updates -> derived={ev_post_derived_cnt} corrected={ev_post_corrected_cnt}."
+                )
+                if ev_post_cash_src_counts:
+                    top = sorted(ev_post_cash_src_counts.items(), key=lambda kv: -kv[1])[:4]
+                    issues.append("Layer2: EV cash sources -> " + ", ".join([f"{k}:{v}" for k, v in top]))
+                if ev_post_debt_src_counts:
+                    top = sorted(ev_post_debt_src_counts.items(), key=lambda kv: -kv[1])[:4]
+                    issues.append("Layer2: EV debt sources -> " + ", ".join([f"{k}:{v}" for k, v in top]))
+        except Exception:
+            pass
 
         # ----- No-dividend institutional policy -----
         # Use market dividend markers only (avoid inferred dividends noise).
@@ -16429,6 +16708,9 @@ class SECFinancialSystem:
 
         data_by_year = self.current_data.get('data_by_year', {}) or {}
         data_layers = self.current_data.get('data_layers', {}) or {}
+        # Quality gate must operate on canonical SEC Layer1 facts when available;
+        # `data_by_year` may be a translated/merged view and can miss critical anchors (cash, EBITDA, etc.).
+        data_by_year_gate = (data_layers.get('layer1_by_year') or data_by_year or {}) if isinstance(data_layers, dict) else (data_by_year or {})
         ratios_by_year = self._merge_financial_analysis_system_ratios(
             self.current_data.get('financial_ratios', {}) or {}
         )
@@ -16437,7 +16719,7 @@ class SECFinancialSystem:
         blocked_strategic_metrics = set(sector_gating.get('blocked_strategic_metrics', []) or [])
         gate_issues = self._apply_pre_export_quality_gate(
             years=self._get_selected_years_range(),
-            data_by_year=data_by_year,
+            data_by_year=data_by_year_gate,
             ratios_by_year=ratios_by_year,
             data_layers=data_layers,
         )
@@ -16684,6 +16966,41 @@ class SECFinancialSystem:
             year_cols = [str(y) for y in years]
             if raw_df is not None and not raw_df.empty:
                 raw_df = coerce_df_year_columns(raw_df, year_cols=year_cols)
+        except Exception:
+            pass
+
+        # Final dedupe pass (works even when Raw_by_Year/Inputs_View came from UI snapshots).
+        # Removes noisy repeated aliases like (Assets / TotalAssets / Total Assets) while preserving sheet structure.
+        try:
+            from core.raw_export_dedupe import (
+                dedupe_timeseries_by_canonical_tag,
+                dedupe_timeseries_by_value_vector,
+                dedupe_labeled_timeseries_df,
+            )
+            year_cols = [str(y) for y in years]
+            item_col = item_col_export if 'item_col_export' in locals() else (raw_df.columns[0] if raw_df is not None and not raw_df.empty else None)
+            unit_col = unit_col_export if 'unit_col_export' in locals() else None
+            if item_col:
+                if raw_df is not None and not raw_df.empty:
+                    raw_df = dedupe_timeseries_by_canonical_tag(
+                        raw_df, label_col=item_col, year_cols=year_cols, unit_col=unit_col, concept_col="__concept__"
+                    )
+                    raw_df = dedupe_timeseries_by_value_vector(
+                        raw_df, label_col=item_col, year_cols=year_cols, unit_col=unit_col
+                    )
+                    raw_df = dedupe_labeled_timeseries_df(
+                        raw_df, label_col=item_col, year_cols=year_cols, unit_col=unit_col, concept_col="__concept__"
+                    )
+                if inputs_df is not None and not inputs_df.empty:
+                    inputs_df = dedupe_timeseries_by_canonical_tag(
+                        inputs_df, label_col=item_col, year_cols=year_cols, unit_col=unit_col, concept_col="__concept__"
+                    )
+                    inputs_df = dedupe_timeseries_by_value_vector(
+                        inputs_df, label_col=item_col, year_cols=year_cols, unit_col=unit_col
+                    )
+                    inputs_df = dedupe_labeled_timeseries_df(
+                        inputs_df, label_col=item_col, year_cols=year_cols, unit_col=unit_col, concept_col="__concept__"
+                    )
         except Exception:
             pass
 
@@ -17250,6 +17567,7 @@ class SECFinancialSystem:
                     from core.raw_export_dedupe import (
                         dedupe_labeled_timeseries_df,
                         dedupe_timeseries_by_value_vector,
+                        dedupe_timeseries_by_canonical_tag,
                     )
 
                     def _norm_export_label(v):
@@ -17342,6 +17660,15 @@ class SECFinancialSystem:
                                 year_cols=year_cols,
                                 unit_col=unit_col,
                             )
+                            # Then drop duplicated SEC/XBRL concept variants (keeps one best row per canonical tag),
+                            # even when values differ (prevents confusing repeated items like Assets/TotalAssets).
+                            raw_df = dedupe_timeseries_by_canonical_tag(
+                                raw_df,
+                                label_col=label_col,
+                                year_cols=year_cols,
+                                unit_col=unit_col,
+                                concept_col="__concept__",
+                            )
                             raw_df = dedupe_labeled_timeseries_df(
                                 raw_df,
                                 label_col=label_col,
@@ -17367,6 +17694,13 @@ class SECFinancialSystem:
                                 label_col=label_col,
                                 year_cols=year_cols,
                                 unit_col=unit_col,
+                            )
+                            canonical_df = dedupe_timeseries_by_canonical_tag(
+                                canonical_df,
+                                label_col=label_col,
+                                year_cols=year_cols,
+                                unit_col=unit_col,
+                                concept_col="__concept__",
                             )
                             canonical_df = dedupe_labeled_timeseries_df(
                                 canonical_df,
@@ -17705,7 +18039,11 @@ class SECFinancialSystem:
                 with open(log_path, "a", encoding="utf-8") as fh:
                     fh.write(f"\n[{datetime.now().isoformat()}] Full export crashed in wrapper\n")
                     fh.write(f"Error: {repr(e)}\n")
-                    fh.write(traceback.format_exc())
+                    try:
+                        fh.write("Traceback:\n")
+                        fh.write("".join(traceback.format_exception(type(e), e, e.__traceback__)))
+                    except Exception:
+                        fh.write(traceback.format_exc())
                     fh.write("\n" + ("-" * 80) + "\n")
             except Exception:
                 pass

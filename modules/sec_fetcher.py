@@ -111,6 +111,14 @@ class SECDataFetcher:
         'total_debt',
     }
 
+    # Use a no-proxy session by default. Some environments set broken HTTP(S)_PROXY
+    # (e.g., 127.0.0.1:9) which silently breaks SEC requests and causes missing facts.
+    _SEC_SESSION = requests.Session()
+    _SEC_SESSION.trust_env = False
+
+    # Cache schema version. Bump to invalidate stale cached runs after logic changes.
+    FETCH_REQUEST_CACHE_VERSION = 2
+
     SECTOR_RATIO_BLOCKLIST = {
         # Banking statements are structurally different; these ratios are not
         # reliable under generic industrial formulas.
@@ -420,7 +428,20 @@ class SECDataFetcher:
             if p.exists():
                 payload = json.loads(p.read_text(encoding='utf-8'))
                 if isinstance(payload, dict):
-                    self._fetch_request_cache = payload
+                    # New format: {"__version__": int, "data": {...}}
+                    if "__version__" in payload and "data" in payload:
+                        if int(payload.get("__version__") or 0) == int(self.FETCH_REQUEST_CACHE_VERSION):
+                            data = payload.get("data")
+                            if isinstance(data, dict):
+                                self._fetch_request_cache = data
+                            else:
+                                self._fetch_request_cache = {}
+                        else:
+                            # Invalidate old cache schema automatically.
+                            self._fetch_request_cache = {}
+                    else:
+                        # Old format: plain dict cache (invalidate to prevent stale logic artifacts).
+                        self._fetch_request_cache = {}
         except Exception:
             self._fetch_request_cache = {}
 
@@ -429,7 +450,10 @@ class SECDataFetcher:
             p = self._fetch_request_cache_path
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(
-                json.dumps(self._fetch_request_cache, ensure_ascii=False),
+                json.dumps(
+                    {"__version__": int(self.FETCH_REQUEST_CACHE_VERSION), "data": self._fetch_request_cache},
+                    ensure_ascii=False,
+                ),
                 encoding='utf-8'
             )
         except Exception:
@@ -2634,13 +2658,22 @@ class SECDataFetcher:
                     out['Liabilities'] = rebuilt_liab
                     liab = rebuilt_liab
         # Enforce identity consistency when all three fields exist.
+        # If SEC provides an explicit "LiabilitiesAndStockholdersEquity" total matching Assets,
+        # do NOT rewrite reported Liabilities to force Assets=Liabilities+Equity; some issuers
+        # break liabilities into additional sections (e.g., temporary equity / conversion obligations).
+        # In that case we keep reported Liabilities (SEC-parity) and allow identity gap to remain.
         if assets is not None and liab is not None and equity is not None:
+            lse = _num(out.get('LiabilitiesAndStockholdersEquity'))
             gap = assets - (liab + equity)
-            if abs(gap) > max(1.0, abs(assets) * 0.01):
-                rebuilt_liab = assets - equity
-                if rebuilt_liab >= 0:
-                    out['Liabilities'] = rebuilt_liab
-                    liab = rebuilt_liab
+            if lse is not None and abs(lse - assets) <= max(1.0, abs(assets) * 0.005):
+                # Keep reported liabilities; do not rebuild.
+                pass
+            else:
+                if abs(gap) > max(1.0, abs(assets) * 0.01):
+                    rebuilt_liab = assets - equity
+                    if rebuilt_liab >= 0:
+                        out['Liabilities'] = rebuilt_liab
+                        liab = rebuilt_liab
 
         # Keep aliases synchronized to a single trusted anchor value to avoid
         # cross-sheet inconsistencies (e.g., TotalLiabilities accidentally equal to Assets).
@@ -3259,6 +3292,169 @@ class SECDataFetcher:
                     row['InterestExpense_Hierarchy'] = best_val
         return out
 
+    def _reconcile_layer1_from_sec_payload(self, layer1_by_year, sec_payload):
+        """
+        Reconcile (override) a small set of core anchors from SEC companyfacts payload.
+
+        Rationale:
+        - Direct statement extraction can occasionally place duration concepts into the wrong year slot
+          (fiscal-year leakage / comparative-column confusion).
+        - For auditability and 1:1 SEC parity, we treat SEC companyfacts as the truth source for these
+          core anchors when available, even if a value already exists in layer1.
+        """
+        out = {int(y): dict(row or {}) for y, row in (layer1_by_year or {}).items() if str(y).isdigit()}
+        if not isinstance(sec_payload, dict):
+            return out
+        periods = (sec_payload.get('periods') or {})
+        if not isinstance(periods, dict):
+            return out
+
+        # Only override these anchors; everything else remains as extracted.
+        force_overwrite = {
+            'Assets', 'Liabilities', 'StockholdersEquity',
+            'Revenues', 'SalesRevenueNet', 'CostOfRevenue', 'CostOfGoodsAndServicesSold',
+            'GrossProfit', 'OperatingIncomeLoss', 'NetIncomeLoss', 'ProfitLoss',
+            'ResearchAndDevelopmentExpense', 'SellingGeneralAndAdministrativeExpense',
+            'InterestExpense', 'InterestExpenseNonoperating', 'InterestAndDebtExpense', 'InterestExpenseDebt',
+            'DepreciationAndAmortization',
+            'EarningsPerShareBasic', 'EarningsPerShareDiluted',
+            'WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfDilutedSharesOutstanding',
+        }
+
+        # Map SEC payload facts to layer1 keys (same as backfill aliases).
+        concept_aliases = {
+            'us-gaap:Assets': ['Assets'],
+            'us-gaap:Liabilities': ['Liabilities'],
+            'us-gaap:StockholdersEquity': ['StockholdersEquity'],
+            'us-gaap:Revenues': ['Revenues'],
+            'us-gaap:SalesRevenueNet': ['SalesRevenueNet', 'Revenues'],
+            'us-gaap:CostOfRevenue': ['CostOfRevenue'],
+            'us-gaap:CostOfGoodsAndServicesSold': ['CostOfGoodsAndServicesSold', 'CostOfRevenue'],
+            'us-gaap:GrossProfit': ['GrossProfit'],
+            'us-gaap:OperatingIncomeLoss': ['OperatingIncomeLoss'],
+            'us-gaap:NetIncomeLoss': ['NetIncomeLoss', 'ProfitLoss'],
+            'us-gaap:ProfitLoss': ['ProfitLoss', 'NetIncomeLoss'],
+            'us-gaap:ResearchAndDevelopmentExpense': ['ResearchAndDevelopmentExpense'],
+            'us-gaap:SellingGeneralAndAdministrativeExpense': ['SellingGeneralAndAdministrativeExpense'],
+            'us-gaap:InterestExpense': ['InterestExpense'],
+            'us-gaap:InterestExpenseNonoperating': ['InterestExpenseNonoperating', 'InterestExpense'],
+            'us-gaap:InterestAndDebtExpense': ['InterestAndDebtExpense', 'InterestExpense'],
+            'us-gaap:InterestExpenseDebt': ['InterestExpenseDebt', 'InterestExpense'],
+            'us-gaap:DepreciationAndAmortization': ['DepreciationDepletionAndAmortization', 'DepreciationAmortization', 'DepreciationAndAmortization'],
+            'us-gaap:EarningsPerShareBasic': ['EarningsPerShareBasic'],
+            'us-gaap:EarningsPerShareDiluted': ['EarningsPerShareDiluted'],
+            'us-gaap:WeightedAverageNumberOfSharesOutstandingBasic': ['WeightedAverageNumberOfSharesOutstandingBasic'],
+            'us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding': ['WeightedAverageNumberOfDilutedSharesOutstanding'],
+        }
+
+        for y_str, pobj in periods.items():
+            try:
+                yi = int(y_str)
+            except Exception:
+                continue
+            facts = (pobj or {}).get('facts', {}) or {}
+            if not isinstance(facts, dict):
+                continue
+            row = out.setdefault(yi, {})
+            for sec_concept, aliases in concept_aliases.items():
+                fobj = facts.get(sec_concept)
+                if not isinstance(fobj, dict):
+                    continue
+                val = self._safe_float(fobj.get('value'))
+                if val is None:
+                    continue
+                for key in aliases:
+                    if key not in force_overwrite:
+                        continue
+                    norm_val = self._normalize_backfilled_fact_value(sec_concept, key, val)
+                    if norm_val is None:
+                        continue
+                    if 'interestexpense' in str(sec_concept).lower() or key in ('InterestExpense', 'InterestExpense_Hierarchy', 'InterestExpenseDebt', 'InterestAndDebtExpense'):
+                        norm_val = abs(norm_val)
+                    row[key] = norm_val
+        return out
+
+    def _override_layer1_from_companyfacts_per_share(self, layer1_by_year, cik_padded, start_year, end_year):
+        """
+        Ensure SEC Layer1 per-share anchors match SEC companyfacts exactly (raw, not split-adjusted):
+        - EarningsPerShareBasic
+        - WeightedAverageNumberOfSharesOutstandingBasic
+
+        These are frequently mutated elsewhere for valuation consistency, but Layer1 must remain a
+        faithful SEC mirror for audit/matching.
+        """
+        out = {int(y): dict(row or {}) for y, row in (layer1_by_year or {}).items() if str(y).isdigit()}
+        try:
+            import requests
+        except Exception:
+            return out
+
+        cik_padded = str(cik_padded or '').zfill(10)
+        url = f"{self.base_url}/api/xbrl/companyfacts/CIK{cik_padded}.json"
+        try:
+            r = self._SEC_SESSION.get(url, headers=self.headers, timeout=30)
+            if r.status_code != 200:
+                return out
+            facts_data = r.json() or {}
+        except Exception:
+            return out
+
+        us_gaap = (facts_data.get('facts') or {}).get('us-gaap', {}) or {}
+
+        def _pick_fy(concept, year):
+            cdata = us_gaap.get(concept) or {}
+            units = cdata.get('units') or {}
+            best = None
+            for unit, arr in units.items():
+                if not isinstance(arr, list):
+                    continue
+                for item in arr:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get('fp') != 'FY':
+                        continue
+                    if item.get('fy') != year:
+                        continue
+                    filed = str(item.get('filed') or '')
+                    end = str(item.get('end') or '')
+                    val = item.get('val')
+                    if val is None:
+                        continue
+                    cand = (filed, end, unit, val)
+                    if best is None or cand[:2] > best[:2]:
+                        best = cand
+            if best is None:
+                return None
+            return {'filed': best[0], 'end': best[1], 'unit': best[2], 'val': best[3]}
+
+        years = range(int(start_year), int(end_year) + 1)
+        for y in years:
+            row = out.setdefault(int(y), {})
+            eps = _pick_fy('EarningsPerShareBasic', int(y))
+            if eps and eps.get('unit') == 'USD/shares':
+                row['EarningsPerShareBasic'] = float(eps['val'])
+            sh = _pick_fy('WeightedAverageNumberOfSharesOutstandingBasic', int(y))
+            if sh and sh.get('unit') == 'shares':
+                # normalize to shares_million for system consistency
+                row['WeightedAverageNumberOfSharesOutstandingBasic'] = float(sh['val']) / 1_000_000.0
+            # Also fix a few frequently mis-mapped expense anchors.
+            rd = _pick_fy('ResearchAndDevelopmentExpense', int(y))
+            if rd and rd.get('unit') == 'USD':
+                row['ResearchAndDevelopmentExpense'] = float(rd['val']) / 1_000_000.0
+            ie = _pick_fy('InterestExpense', int(y))
+            if ie and ie.get('unit') == 'USD':
+                row['InterestExpense'] = abs(float(ie['val'])) / 1_000_000.0
+            cogs = _pick_fy('CostOfRevenue', int(y))
+            if cogs and cogs.get('unit') == 'USD':
+                row['CostOfRevenue'] = float(cogs['val']) / 1_000_000.0
+            cash = _pick_fy('CashAndCashEquivalentsAtCarryingValue', int(y))
+            if cash and cash.get('unit') == 'USD':
+                row['CashAndCashEquivalentsAtCarryingValue'] = float(cash['val']) / 1_000_000.0
+            ap = _pick_fy('AccountsPayableCurrent', int(y))
+            if ap and ap.get('unit') == 'USD':
+                row['AccountsPayableCurrent'] = float(ap['val']) / 1_000_000.0
+        return out
+
     def _needs_companyconcept_backfill(self, layer1_by_year, start_year, end_year):
         """
         Run expensive companyconcept backfill only when core annual anchors are missing.
@@ -3326,7 +3522,7 @@ class SECDataFetcher:
         req_headers = dict(self.headers or {})
         req_headers.pop('Host', None)
         try:
-            r = requests.get(url, headers=req_headers, timeout=30)
+            r = self._SEC_SESSION.get(url, headers=req_headers, timeout=30)
             if r.status_code != 200:
                 self._companyconcept_cache[key] = {}
                 return {}
@@ -3346,14 +3542,15 @@ class SECDataFetcher:
                 if len(end_date) < 4:
                     continue
                 try:
-                    y = int(end_date[:4])
-                    m = int(end_date[5:7]) if len(end_date) >= 7 else None
+                    end_year = int(end_date[:4])
                 except Exception:
                     continue
-                # IMPORTANT: Bucket companyconcept facts by the calendar year of the `end` date.
-                # The SEC `fy` field is not safe for bucketing (restatements can attach older end-dates
-                # to newer `fy` values). Using end-year keeps exported years consistent and makes
-                # SEC parity comparisons deterministic.
+                # Bucket companyconcept facts by fiscal year when available.
+                # Many issuers (e.g., NVDA) have fiscal years that end in the following calendar year
+                # (FY2022 ends in Jan 2023). Using end-year would shift all annual facts by +1 year.
+                # Fallback to end-year only when fy is unavailable/unparseable.
+                fy = e.get('fy')
+                y = int(fy) if isinstance(fy, int) else int(end_year)
                 if y < int(start_year) or y > int(end_year):
                     continue
                 # For non-December filers, SEC `frame` often contains "Q" even for FY 10-K facts
@@ -3397,7 +3594,7 @@ class SECDataFetcher:
         req_headers = dict(self.headers or {})
         req_headers.pop('Host', None)
         try:
-            r = requests.get(url, headers=req_headers, timeout=30)
+            r = self._SEC_SESSION.get(url, headers=req_headers, timeout=30)
             if r.status_code != 200:
                 self._companyconcept_entries_cache[key] = {}
                 return {}
@@ -3417,11 +3614,12 @@ class SECDataFetcher:
                 if len(end_date) < 4:
                     continue
                 try:
-                    y = int(end_date[:4])
-                    m = int(end_date[5:7]) if len(end_date) >= 7 else None
+                    end_year = int(end_date[:4])
                 except Exception:
                     continue
-                # Bucket by end-year only (see _fetch_companyconcept_series).
+                # Bucket by fiscal year when available (see _fetch_companyconcept_series).
+                fy = e.get('fy')
+                y = int(fy) if isinstance(fy, int) else int(end_year)
                 if y < int(start_year) or y > int(end_year):
                     continue
                 # For non-December filers, SEC `frame` often contains "Q" even for FY 10-K facts.
@@ -5389,7 +5587,7 @@ class SECDataFetcher:
                 'User-Agent': 'Company-Loader/1.0 (mihoubmessaoud@yahoo.fr)',
                 'Accept': 'application/json'
             }
-            r = requests.get(url, headers=headers, timeout=30)
+            r = self._SEC_SESSION.get(url, headers=headers, timeout=30)
             if r.status_code == 200:
                 data = r.json()
                 for item in data.values():
@@ -5786,7 +5984,7 @@ class SECDataFetcher:
                     continue
                 url = f"{self.base_url}/submissions/{name}"
                 try:
-                    rr = requests.get(url, headers=self.headers, timeout=30)
+                    rr = self._SEC_SESSION.get(url, headers=self.headers, timeout=30)
                     if rr.status_code != 200:
                         continue
                     chunk = rr.json() or {}
@@ -5972,7 +6170,7 @@ class SECDataFetcher:
             subs_key = str(cik).zfill(10)
             subs = (self._submissions_cache or {}).get(subs_key)
             if not isinstance(subs, dict):
-                r = requests.get(submissions_url, headers=self.headers, timeout=30)
+                r = self._SEC_SESSION.get(submissions_url, headers=self.headers, timeout=30)
                 if r.status_code != 200:
                     return {'success': False, 'error': f'SEC connection failed: HTTP {r.status_code}'}
                 subs = r.json()
@@ -6166,6 +6364,14 @@ class SECDataFetcher:
                 data_layers.get('layer1_by_year') or {},
                 sec_payload,
             )
+            # Reconcile core anchors from SEC payload (override) to enforce 1:1 SEC parity.
+            try:
+                data_layers['layer1_by_year'] = self._reconcile_layer1_from_sec_payload(
+                    data_layers.get('layer1_by_year') or {},
+                    sec_payload,
+                )
+            except Exception:
+                pass
             # Direct companyconcept backfill (smart cross-year concept continuity)
             # is expensive; run only when core anchors are truly missing.
             if self._needs_companyconcept_backfill(
@@ -6185,6 +6391,16 @@ class SECDataFetcher:
             data_layers['layer1_by_year'] = self._sanitize_data_by_year_for_integrity(
                 data_layers.get('layer1_by_year') or {}
             )
+            # Final SEC parity: override raw per-share anchors from SEC companyfacts.
+            try:
+                data_layers['layer1_by_year'] = self._override_layer1_from_companyfacts_per_share(
+                    data_layers.get('layer1_by_year') or {},
+                    cik_padded=str(cik).zfill(10),
+                    start_year=int(start_year),
+                    end_year=int(end_year),
+                )
+            except Exception:
+                pass
             layer_catalog = [
                 {'key': 'layer1_by_year', 'title': 'Layer 1 - SEC XBRL (EDGAR)', 'source': 'SEC'},
                 {'key': 'layer2_by_year', 'title': 'Layer 2 - Market (Polygon)', 'source': 'MARKET'},
@@ -6527,7 +6743,7 @@ class SECDataFetcher:
             return cache_path.read_text(encoding='utf-8', errors='ignore')
         req_headers = dict(self.headers or {})
         req_headers.pop('Host', None)
-        r = requests.get(url, headers=req_headers, timeout=30)
+        r = self._SEC_SESSION.get(url, headers=req_headers, timeout=30)
         if r.status_code != 200:
             return None
         txt = r.text
@@ -6541,7 +6757,7 @@ class SECDataFetcher:
             return cache_path.read_bytes()
         req_headers = dict(self.headers or {})
         req_headers.pop('Host', None)
-        r = requests.get(url, headers=req_headers, timeout=30)
+        r = self._SEC_SESSION.get(url, headers=req_headers, timeout=30)
         if r.status_code != 200:
             return None
         data = r.content
@@ -6605,7 +6821,7 @@ class SECDataFetcher:
             try:
                 req_headers = dict(self.headers or {})
                 req_headers.pop('Host', None)
-                r = requests.get(candidate_url, headers=req_headers, timeout=30)
+                r = self._SEC_SESSION.get(candidate_url, headers=req_headers, timeout=30)
                 index_attempts.append({'url': candidate_url, 'status_code': int(r.status_code)})
                 if r.status_code == 200 and isinstance(r.text, str) and r.text.strip().startswith('{'):
                     idx_txt = r.text
@@ -6905,7 +7121,13 @@ class SECDataFetcher:
                 if ptype == 'DURATION':
                     rank += 10
                 filed = m.get('filed') or ''
-                if best is None or rank > best[0] or (rank == best[0] and filed > best[1].get('filed', '')):
+                # Some SEC "companyfacts" concepts include both the current FY value and the comparative prior-year
+                # value within the same filing, and they can share the same `fiscal_year` and `filed` date.
+                # Prefer the candidate with the latest `period_end` in tie cases to avoid year-shift artifacts.
+                period_end = m.get('period_end') or ''
+                best_filed = '' if best is None else (best[1].get('filed') or '')
+                best_end = '' if best is None else (best[1].get('period_end') or '')
+                if best is None or rank > best[0] or (rank == best[0] and (filed, period_end) > (best_filed, best_end)):
                     best = (rank, m)
             if best is not None:
                 bm = dict(best[1])
@@ -7519,21 +7741,6 @@ class SECDataFetcher:
                         except Exception:
                             end_year = None
                     fy = v.get('fy') or filing_year or end_year
-                    year_key = end_year or fy
-                    if year_key is None:
-                        continue
-                    period_key = f"{year_key}-FY"
-                    try:
-                        if fp and isinstance(fp, str) and fp.strip() != '':
-                            fp_up = fp.upper()
-                            if fp_up.startswith('Q'):
-                                period_key = f"{year_key}-{fp_up}"
-                            elif 'FY' in fp_up:
-                                period_key = f"{year_key}-FY"
-                            else:
-                                period_key = f"{year_key}-{fp_up}"
-                    except:
-                        period_key = f"{year_key}-FY"
                     frame = v.get('frame')
                     # Context filter: exclude segmented/adjustment contexts.
                     if self._is_non_consolidated_context(frame):
@@ -7548,8 +7755,6 @@ class SECDataFetcher:
                     val = self._normalize_value_by_decimals(raw_val, decimals)
                     if val is None:
                         continue
-                    extracted.setdefault(concept, {})
-                    existing = extracted[concept].get(period_key)
                     filed = v.get('filed')
                     candidate = {
                         'value': val,
@@ -7590,6 +7795,41 @@ class SECDataFetcher:
                         candidate['fiscal_duration_days'] = duration_days
                         if duration_days < 360 or duration_days > 370:
                             continue
+
+                    # Year-key policy (critical):
+                    # - DURATION facts: key by `fy` (document fiscal year focus) to avoid
+                    #   comparative prior-year values (same end-year) leaking into the wrong slot.
+                    # - INSTANT facts: key by end-date year (balance sheet date), falling back to fy.
+                    year_key = None
+                    try:
+                        if candidate['period_type'] == 'DURATION':
+                            year_key = int(fy) if fy is not None else None
+                        else:
+                            year_key = int(end_year) if end_year is not None else (int(fy) if fy is not None else None)
+                    except Exception:
+                        year_key = None
+                    if year_key is None:
+                        continue
+
+                    # Period-key normalization:
+                    # In SEC companyfacts there are sometimes FY-tagged facts that are actually quarterly.
+                    # We rely on duration filtering above; for DURATION we always store under FY.
+                    period_key = f"{year_key}-FY"
+                    if candidate['period_type'] != 'DURATION':
+                        try:
+                            if fp and isinstance(fp, str) and fp.strip() != '':
+                                fp_up = fp.upper()
+                                if fp_up.startswith('Q'):
+                                    period_key = f"{year_key}-{fp_up}"
+                                elif 'FY' in fp_up:
+                                    period_key = f"{year_key}-FY"
+                                else:
+                                    period_key = f"{year_key}-{fp_up}"
+                        except Exception:
+                            period_key = f"{year_key}-FY"
+
+                    extracted.setdefault(concept, {})
+                    existing = extracted[concept].get(period_key)
                     score = 0
                     if self._is_consolidated_context(frame):
                         score += 50
@@ -7609,8 +7849,15 @@ class SECDataFetcher:
                         new_score = self._safe_float(candidate.get('context_quality')) or 0.0
                         if new_score > old_score:
                             should_take = True
-                        elif new_score == old_score and filed and existing.get('filed') and filed > existing.get('filed'):
-                            should_take = True
+                        else:
+                            # Tie-breaker: prefer latest filed, then latest period_end.
+                            if new_score == old_score:
+                                old_filed = str(existing.get('filed') or '')
+                                new_filed = str(filed or '')
+                                old_end = str(existing.get('period_end') or '')
+                                new_end = str(candidate.get('period_end') or '')
+                                if (new_filed, new_end) > (old_filed, old_end):
+                                    should_take = True
 
                     if should_take:
                         extracted[concept][period_key] = candidate

@@ -2353,13 +2353,18 @@ class SECFinancialSystem:
         content_row.pack(fill='both', expand=True)
 
         # Premium right-side navigation rail (matches the reference design intent).
+        NAV_RAIL_W = 300  # match reference rail width (UI-only)
+        NAV_PAD_X = 12
+        NAV_BTN_W = NAV_RAIL_W - (NAV_PAD_X * 2)
+        NAV_ICON_PX = 56
+
         nav_rail = tk.Frame(
             content_row,
             bg=PALETTE['nav_bg'],
             bd=0,
             highlightthickness=1,
             highlightbackground=PALETTE['nav_border'],
-            width=240,
+            width=NAV_RAIL_W,
         )
         nav_rail.pack(side='right', fill='y', padx=(6, 0))
         nav_rail.pack_propagate(False)
@@ -2367,7 +2372,7 @@ class SECFinancialSystem:
 
         # ---- Premium sidebar header (matches reference layout) ----
         nav_header = tk.Frame(nav_rail, bg=PALETTE['nav_bg'])
-        nav_header.pack(fill='x', padx=10, pady=(10, 8))
+        nav_header.pack(fill='x', padx=NAV_PAD_X, pady=(10, 8))
 
         # Load sidebar icons (cropped from the provided reference image)
         self._nav_icon_images = {}
@@ -2378,7 +2383,12 @@ class SECFinancialSystem:
                 p = os.path.join(BASE_DIR, "assets", "ui", "nav_icons", f"{name}.png")
                 if os.path.exists(p):
                     im = Image.open(p).convert("RGBA")
-                    # Icons are already normalized to 44x44 with binary alpha for crisp rendering.
+                    # Upscale to a consistent size for crisp display on the nav rail.
+                    try:
+                        if im.size != (NAV_ICON_PX, NAV_ICON_PX):
+                            im = im.resize((NAV_ICON_PX, NAV_ICON_PX), Image.LANCZOS)
+                    except Exception:
+                        pass
                     return ImageTk.PhotoImage(im)
                 return None
 
@@ -2412,8 +2422,8 @@ class SECFinancialSystem:
             compound="right",
             anchor="e",
             justify="right",
-            width=214,
-            height=52,
+            width=NAV_BTN_W,
+            height=58,
             radius=16,
             border_width=2,
             glow_radius=10,
@@ -2427,7 +2437,7 @@ class SECFinancialSystem:
         self.nav_home_btn.pack(fill="x")
 
         nav_btn_box = tk.Frame(nav_rail, bg=PALETTE['nav_bg'])
-        nav_btn_box.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        nav_btn_box.pack(fill='both', expand=True, padx=NAV_PAD_X, pady=(0, 10))
         self.workspace_nav_button_box = nav_btn_box
 
         notebook_shell = tk.Frame(
@@ -2502,8 +2512,8 @@ class SECFinancialSystem:
                 compound="right",
                 anchor="e",
                 justify="right",
-                width=214,
-                height=56,
+                width=NAV_BTN_W,
+                height=62,
                 radius=16,
                 border_width=2,
                 glow_radius=10,
@@ -2517,11 +2527,11 @@ class SECFinancialSystem:
         # Favorites panel (visual only)
         try:
             fav_box = tk.Frame(nav_rail, bg=PALETTE['nav_bg'])
-            fav_box.pack(fill='x', padx=10, pady=(8, 10))
+            fav_box.pack(fill='x', padx=NAV_PAD_X, pady=(8, 10))
             fav_panel = RoundedPanel(
                 fav_box,
-                width=214,
-                height=120,
+                width=NAV_BTN_W,
+                height=132,
                 radius=18,
                 fill=PALETTE['nav_surface'],
                 border=PALETTE['dash_header2'],
@@ -2529,7 +2539,7 @@ class SECFinancialSystem:
             )
             fav_panel.pack()
             fav_inner = tk.Frame(fav_panel, bg=PALETTE['nav_surface'])
-            fav_inner.place(x=14, y=10, width=186, height=100)
+            fav_inner.place(x=14, y=10, width=NAV_BTN_W - 28, height=112)
             tk.Label(
                 fav_inner,
                 text="المفضلة",

@@ -37,6 +37,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from modules.ratio_formats import canonicalize_ratio_value, format_ratio_value
 from modules.ratio_source import UnifiedRatioSource, maybe_guard_ratios_by_year
 from modules.financial_chat import FinancialChatAssistant
+from modules.ui_premium_widgets import GlowButton, GlowButtonStyle
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -1479,17 +1480,15 @@ class SECFinancialSystem:
             selected = key == current_key
             if hasattr(self, "nav_rail"):
                 # Premium rail style
-                btn.configure(
-                    bg=PALETTE['dash_header2'] if selected else PALETTE['nav_surface'],
-                    fg=PALETTE['dash_text'] if selected else PALETTE['text'],
-                    activebackground=PALETTE['surface_alt'],
-                    activeforeground=PALETTE['dash_text'],
-                    relief='flat',
-                    bd=0,
-                    highlightthickness=1,
-                    highlightbackground=PALETTE['dash_blue'] if selected else PALETTE['nav_border'],
-                    highlightcolor=PALETTE['dash_blue'] if selected else PALETTE['nav_border'],
-                )
+                try:
+                    styles = getattr(btn, "_rail_styles", None)
+                    if styles and isinstance(styles, tuple) and len(styles) == 2:
+                        default_style, selected_style = styles
+                        btn._style = selected_style if selected else default_style  # type: ignore[attr-defined]
+                        btn._redraw()  # type: ignore[attr-defined]
+                        btn._apply_state("normal")  # type: ignore[attr-defined]
+                except Exception:
+                    pass
             else:
                 scheme = "primary" if selected else "secondary"
                 self._style_tk_button(btn, scheme)
@@ -1536,26 +1535,47 @@ class SECFinancialSystem:
         return card, body
 
     def _build_status_chip(self, parent, label, value, *, bg=None, fg=None):
-        chip = tk.Frame(
-            parent,
-            bg=bg or PALETTE['surface_alt'],
-            bd=0,
-            highlightthickness=1,
-            highlightbackground=PALETTE['border'],
-            padx=10,
-            pady=6,
-        )
+        # Premium chip with rounded border (no logic change)
+        fill = bg or PALETTE['surface']
+        border = PALETTE['dash_blue'] if fill == PALETTE['teal_soft'] else PALETTE['border']
+        chip = tk.Frame(parent, bg=parent.cget('bg'), bd=0, highlightthickness=0)
+        try:
+            from modules.ui_premium_widgets import RoundedPanel
+            panel = RoundedPanel(
+                chip,
+                width=180,
+                height=38,
+                radius=14,
+                fill=fill,
+                border=border,
+                border_width=2,
+            )
+            panel.pack(fill='x', expand=True)
+            inner = tk.Frame(panel, bg=fill)
+            inner.place(x=10, y=7, relwidth=1.0, height=24)
+        except Exception:
+            inner = tk.Frame(
+                chip,
+                bg=fill,
+                bd=0,
+                highlightthickness=1,
+                highlightbackground=border,
+                padx=10,
+                pady=6,
+            )
+            inner.pack(fill='x')
+
         tk.Label(
-            chip,
+            inner,
             text=f"{label}:",
-            bg=chip['bg'],
+            bg=fill,
             fg=PALETTE['muted'],
             font=FONTS['caption'],
         ).pack(side='left', padx=(0, 6))
         value_label = tk.Label(
-            chip,
+            inner,
             text=value,
-            bg=chip['bg'],
+            bg=fill,
             fg=fg or PALETTE['header'],
             font=FONTS['label'],
         )
@@ -1940,13 +1960,45 @@ class SECFinancialSystem:
         top_company_entry.bind('<KP_Enter>', lambda _e: self._add_companies())
         self.company_entry = top_company_entry
 
-        self.add_company_btn = tk.Button(
+        # Premium gradient/glow buttons (match reference)
+        blue_style = GlowButtonStyle(
+            fill_top=PALETTE['dash_blue'],
+            fill_bottom=PALETTE['dash_blue'],
+            border=PALETTE['dash_blue'],
+            glow=PALETTE['dash_blue'],
+        )
+        red_style = GlowButtonStyle(
+            fill_top=PALETTE['dash_red'],
+            fill_bottom=PALETTE['dash_red'],
+            border=PALETTE['dash_red'],
+            glow=PALETTE['dash_red'],
+        )
+        purple_style = GlowButtonStyle(
+            fill_top=PALETTE['dash_header2'],
+            fill_bottom=PALETTE['dash_header'],
+            border=PALETTE['dash_blue'],
+            glow=PALETTE['dash_blue'],
+        )
+        dark_style = GlowButtonStyle(
+            fill_top=PALETTE['surface_alt'],
+            fill_bottom=PALETTE['surface'],
+            border=PALETTE['border'],
+            glow=PALETTE['dash_teal'],
+        )
+
+        self.add_company_btn = GlowButton(
             ops_row,
             text=self._t('add'),
-            font=FONTS['button'],
             command=self._add_companies,
+            font=FONTS['button'],
+            fg=PALETTE['dash_text'],
+            width=92,
+            height=44,
+            radius=14,
+            border_width=2,
+            glow_radius=10,
+            style=blue_style,
         )
-        self._style_tk_button(self.add_company_btn, 'primary')
         self.add_company_btn.pack(side='left', padx=(0, 8))
 
         self.company_selector_var = tk.StringVar(value="")
@@ -1960,22 +2012,34 @@ class SECFinancialSystem:
         self.company_selector.pack(side='left', padx=(0, 6))
         self.company_selector.bind('<<ComboboxSelected>>', self._on_company_selector_change)
 
-        self.remove_company_btn = tk.Button(
+        self.remove_company_btn = GlowButton(
             ops_row,
             text=self._t('remove_selected'),
-            font=FONTS['normal'],
             command=self._remove_selected_companies,
+            font=FONTS['normal'],
+            fg=PALETTE['dash_text'],
+            width=132,
+            height=44,
+            radius=14,
+            border_width=2,
+            glow_radius=10,
+            style=red_style,
         )
-        self._style_tk_button(self.remove_company_btn, 'danger')
         self.remove_company_btn.pack(side='left', padx=(0, 6))
 
-        self.clear_companies_btn = tk.Button(
+        self.clear_companies_btn = GlowButton(
             ops_row,
             text=self._t('clear_all'),
-            font=FONTS['normal'],
             command=self._clear_companies,
+            font=FONTS['normal'],
+            fg=PALETTE['dash_text'],
+            width=120,
+            height=44,
+            radius=14,
+            border_width=2,
+            glow_radius=10,
+            style=dark_style,
         )
-        self._style_tk_button(self.clear_companies_btn, 'neutral')
         self.clear_companies_btn.pack(side='left', padx=(0, 10))
 
         tk.Label(
@@ -1998,29 +2062,47 @@ class SECFinancialSystem:
         ttk.Spinbox(
             ops_row, from_=1990, to=2035, textvariable=self.end_year_var, width=7
         ).pack(side='right')
-        self.fetch_btn = tk.Button(
+        self.fetch_btn = GlowButton(
             ops_row,
             text=self._t('fetch_data'),
-            font=FONTS['button'],
             command=self.fetch_data,
+            font=FONTS['button'],
+            fg=PALETTE['dash_text'],
+            width=210,
+            height=44,
+            radius=14,
+            border_width=2,
+            glow_radius=10,
+            style=blue_style,
         )
-        self._style_tk_button(self.fetch_btn, 'primary')
         self.fetch_btn.pack(side='left', padx=(0, 6))
-        self.quick_load_btn = tk.Button(
+        self.quick_load_btn = GlowButton(
             ops_row,
             text=self._t('tool_load_compact'),
-            font=FONTS['normal'],
             command=self.load_results_from_excel,
+            font=FONTS['normal'],
+            fg=PALETTE['dash_text'],
+            width=120,
+            height=44,
+            radius=14,
+            border_width=2,
+            glow_radius=10,
+            style=dark_style,
         )
-        self._style_tk_button(self.quick_load_btn, 'secondary')
         self.quick_load_btn.pack(side='left', padx=(0, 6))
-        self.quick_export_btn = tk.Button(
+        self.quick_export_btn = GlowButton(
             ops_row,
             text=self._t('tool_export_compact'),
-            font=FONTS['normal'],
             command=self.export_to_excel_safe,
+            font=FONTS['normal'],
+            fg=PALETTE['dash_text'],
+            width=170,
+            height=44,
+            radius=14,
+            border_width=2,
+            glow_radius=10,
+            style=blue_style,
         )
-        self._style_tk_button(self.quick_export_btn, 'primary')
         self.quick_export_btn.pack(side='left')
         self._refresh_company_selector()
 
@@ -2187,25 +2269,36 @@ class SECFinancialSystem:
             ("chat", "💬", self._t('tab_chat'), self.chat_tab),
             ("learning", "📚", self._t('tab_learning'), self.learning_tab),
         ]
+        # Premium rail buttons (glow/gradient) - keep same callbacks
+        rail_selected_style = GlowButtonStyle(
+            fill_top=PALETTE['dash_header2'],
+            fill_bottom=PALETTE['dash_header'],
+            border=PALETTE['dash_blue'],
+            glow=PALETTE['dash_blue'],
+        )
+        rail_default_style = GlowButtonStyle(
+            fill_top=PALETTE['nav_surface'],
+            fill_bottom=PALETTE['nav_surface'],
+            border=PALETTE['nav_border'],
+            glow=PALETTE['dash_teal'],
+        )
         for key, icon, label, tab in nav_specs:
-            btn = tk.Button(
+            btn = GlowButton(
                 self.workspace_nav_button_box,
                 text=f"{icon}  {label}",
-                font=FONTS['label'],
-                anchor='e' if self.current_lang == 'ar' else 'w',
                 command=lambda t=tab: self._select_notebook_tab(t),
-                justify='right' if self.current_lang == 'ar' else 'left',
-                wraplength=210,
+                font=FONTS['label'],
+                fg=PALETTE['dash_text'],
+                width=214,
+                height=56,
+                radius=16,
+                border_width=2,
+                glow_radius=10,
+                style=rail_default_style,
             )
-            self._style_tk_button(btn, 'secondary')
-            btn.configure(
-                bg=PALETTE['nav_surface'],
-                activebackground=PALETTE['surface_alt'],
-                highlightbackground=PALETTE['nav_border'],
-                padx=14,
-                pady=10,
-            )
-            btn.pack(fill='x', pady=6)
+            btn.pack(fill='x', pady=8)
+            # store both widget and the two styles for selection highlighting
+            btn._rail_styles = (rail_default_style, rail_selected_style)  # type: ignore[attr-defined]
             self.workspace_nav_buttons[key] = btn
         self._apply_table_density("comfortable")
         self._sync_workspace_nav_state()

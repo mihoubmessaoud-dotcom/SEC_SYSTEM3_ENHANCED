@@ -2378,6 +2378,8 @@ class SECFinancialSystem:
                 p = os.path.join(BASE_DIR, "assets", "ui", "nav_icons", f"{name}.png")
                 if os.path.exists(p):
                     im = Image.open(p).convert("RGBA")
+                    # Normalize icon size so crops never leak into neighboring icons.
+                    im = im.resize((40, 40), Image.Resampling.LANCZOS)
                     return ImageTk.PhotoImage(im)
                 return None
 

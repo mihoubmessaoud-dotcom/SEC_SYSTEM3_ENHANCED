@@ -85,7 +85,8 @@ def _render_button_rgba(
         col = _mix(top, bot, t)
         ImageDraw.Draw(grad).line([(0, y), (w, y)], fill=(*col, 255))
 
-    base.alpha_composite(grad, (0, 0), mask)
+    # Apply gradient clipped by mask.
+    base.paste(grad, (0, 0), mask)
 
     # Border
     if bw > 0:
@@ -211,8 +212,9 @@ class GlowButton(tk.Frame):
         self._text = text
         self._font = font
         self._fg = fg
-        self._w = int(width)
-        self._h = int(height)
+        # NOTE: tkinter uses `self._w` for the widget pathname; never overwrite it.
+        self._width_px = int(width)
+        self._height_px = int(height)
         self._radius = int(radius)
         self._bw = int(border_width)
         self._gr = int(glow_radius)
@@ -221,7 +223,7 @@ class GlowButton(tk.Frame):
         self._pressed_boost = float(pressed_boost)
 
         self._label = tk.Label(self, text=text, fg=fg, bg=self.cget("bg"), font=font, compound="center")
-        self._label.place(x=0, y=0, width=self._w, height=self._h)
+        self._label.place(x=0, y=0, width=self._width_px, height=self._height_px)
         self._label.configure(cursor=cursor)
 
         self._img_normal = None
@@ -251,8 +253,8 @@ class GlowButton(tk.Frame):
         st = self._style
         self._img_normal = _as_photo(
             _render_button_rgba(
-                self._w,
-                self._h,
+                self._width_px,
+                self._height_px,
                 fill_top=st.fill_top,
                 fill_bottom=st.fill_bottom,
                 border=st.border,
@@ -264,8 +266,8 @@ class GlowButton(tk.Frame):
         )
         self._img_hover = _as_photo(
             _render_button_rgba(
-                self._w,
-                self._h,
+                self._width_px,
+                self._height_px,
                 fill_top=self._boost(st.fill_top, self._hover_boost),
                 fill_bottom=self._boost(st.fill_bottom, self._hover_boost),
                 border=self._boost(st.border, self._hover_boost),
@@ -277,8 +279,8 @@ class GlowButton(tk.Frame):
         )
         self._img_pressed = _as_photo(
             _render_button_rgba(
-                self._w,
-                self._h,
+                self._width_px,
+                self._height_px,
                 fill_top=self._boost(st.fill_top, self._pressed_boost),
                 fill_bottom=self._boost(st.fill_bottom, self._pressed_boost),
                 border=self._boost(st.border, self._pressed_boost),

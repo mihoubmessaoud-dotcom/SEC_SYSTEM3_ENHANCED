@@ -204,6 +204,106 @@ def _render_debug(img: Image.Image, sidebar_x0: int, boxes: Iterable[CropBox], o
     dbg.save(out_path)
 
 
+def _make_bg_transparent(icon_rgba: Image.Image) -> Image.Image:
+    """
+    Turn the (nearly-uniform) dark icon-chip background transparent while keeping
+    the glyph pixels intact. This is intentionally conservative to avoid cutting
+    thin strokes.
+    """
+    im = icon_rgba.convert("RGBA")
+    w, h = im.size
+    px = im.load()
+
+    # Estimate background color from border pixels with low saturation.
+    samples = []
+    for x in range(w):
+        for y in (0, 1, h - 2, h - 1):
+            r, g, b, a = px[x, y]
+            mx, mn = max(r, g, b), min(r, g, b)
+            sat = 0 if mx == 0 else (mx - mn) / mx
+            if a > 0 and mx < 120 and sat < 0.25:
+                samples.append((r, g, b))
+    for y in range(h):
+        for x in (0, 1, w - 2, w - 1):
+            r, g, b, a = px[x, y]
+            mx, mn = max(r, g, b), min(r, g, b)
+            sat = 0 if mx == 0 else (mx - mn) / mx
+            if a > 0 and mx < 120 and sat < 0.25:
+                samples.append((r, g, b))
+
+    if not samples:
+        return im
+
+    # Median background color.
+    rs = sorted(s[0] for s in samples)
+    gs = sorted(s[1] for s in samples)
+    bs = sorted(s[2] for s in samples)
+    bg = (rs[len(rs) // 2], gs[len(gs) // 2], bs[len(bs) // 2])
+
+    def dist(c1, c2) -> int:
+        return abs(c1[0] - c2[0]) + abs(c1[1] - c2[1]) + abs(c1[2] - c2[2])
+
+    # Build a glyph mask: keep only pixels that are clearly "icon glyph" (bright or saturated),
+    # which avoids bringing along button borders and background chips.
+    mask = Image.new("L", (w, h), 0)
+    mpx = mask.load()
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a == 0:
+                continue
+            mx, mn = max(r, g, b), min(r, g, b)
+            sat = 0 if mx == 0 else (mx - mn) / mx
+            d = dist((r, g, b), bg)
+            # glyph pixels: either bright (white-ish), or reasonably saturated, or very far from bg.
+            if mx >= 210 or (mx >= 120 and sat >= 0.22) or (d >= 180 and mx >= 110):
+                mpx[x, y] = 255
+
+    # Keep only the right side of the crop where the glyph is (prevents capturing sidebar text/selection strip).
+    cut_x = int(w * 0.45)
+    for y in range(h):
+        for x in range(0, cut_x):
+            mpx[x, y] = 0
+
+    # Slight dilation to keep thin edges.
+    try:
+        from PIL import ImageFilter
+
+        mask = mask.filter(ImageFilter.MaxFilter(size=3))
+    except Exception:
+        pass
+
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    out_px = out.load()
+    mpx = mask.load()
+    for y in range(h):
+        for x in range(w):
+            if mpx[x, y] == 0:
+                continue
+            r, g, b, a = px[x, y]
+            out_px[x, y] = (r, g, b, a)
+    return out
+
+
+def _tighten_alpha_to_square(im: Image.Image, pad: int = 6) -> Image.Image:
+    im = im.convert("RGBA")
+    alpha = im.split()[-1]
+    bbox = alpha.getbbox()
+    if not bbox:
+        return im
+    l, t, r, b = bbox
+    l = max(0, l - pad)
+    t = max(0, t - pad)
+    r = min(im.size[0], r + pad)
+    b = min(im.size[1], b + pad)
+    cropped = im.crop((l, t, r, b))
+    cw, ch = cropped.size
+    side = max(cw, ch)
+    canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    canvas.alpha_composite(cropped, ((side - cw) // 2, (side - ch) // 2))
+    return canvas
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ref", required=False, help="Path to the reference PNG")
@@ -213,6 +313,11 @@ def main() -> int:
         help="Output directory for icons",
     )
     ap.add_argument("--size", type=int, default=56, help="Square icon size (px)")
+    ap.add_argument(
+        "--keep-bg",
+        action="store_true",
+        help="Keep icon chip background (disable transparency keying).",
+    )
     ap.add_argument(
         "--write-debug",
         action="store_true",
@@ -233,9 +338,12 @@ def main() -> int:
     out_dir = Path(args.out_dir)
     _ensure_dir(out_dir)
 
-    # Crop and resize using LANCZOS, no alpha keying: keep pixels intact.
+    # Crop at native size, optionally key out dark bg, then resize.
     for b in boxes:
         crop = img.crop(b.box)
+        if not args.keep_bg:
+            crop = _make_bg_transparent(crop)
+            crop = _tighten_alpha_to_square(crop, pad=6)
         crop = crop.resize((args.size, args.size), Image.LANCZOS)
         crop.save(out_dir / f"{b.name}.png")
 

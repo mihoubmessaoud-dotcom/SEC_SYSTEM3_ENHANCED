@@ -2023,7 +2023,7 @@ class SECFinancialSystem:
             highlightthickness=1,
             highlightbackground=PALETTE['border'],
         )
-        workspace_bar.pack(fill='x', pady=(0, 3))
+        workspace_bar.pack(fill='x', pady=(0, 2))
 
         search_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
         search_row.pack(fill='x', padx=8, pady=(6, 2))
@@ -2093,9 +2093,16 @@ class SECFinancialSystem:
             search_shell.destroy()
         except Exception:
             pass
+        # Keep the top chrome compact: the right navigation rail already provides fast access,
+        # so we remove this whole row to free vertical space for the data viewport.
+        try:
+            search_row.pack_forget()
+            search_row.destroy()
+        except Exception:
+            pass
 
         ops_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
-        ops_row.pack(fill='x', padx=8, pady=(0, 4))
+        ops_row.pack(fill='x', padx=8, pady=(0, 3))
         tk.Label(
             ops_row,
             text=self._t('company_symbols'),
@@ -2258,7 +2265,7 @@ class SECFinancialSystem:
         self._refresh_company_selector()
 
         meta_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
-        meta_row.pack(fill='x', padx=8, pady=(2, 4))
+        meta_row.pack(fill='x', padx=8, pady=(1, 3))
         self.workspace_context_label = tk.Label(
             meta_row,
             text=self._t('status_ready'),

@@ -230,19 +230,19 @@ class GlowButton(tk.Frame):
         self._hover_boost = float(hover_boost)
         self._pressed_boost = float(pressed_boost)
 
-        self._label = tk.Label(
-            self,
-            text=text,
-            fg=fg,
-            bg=self.cget("bg"),
-            font=font,
-            image=image,
-            compound=compound,
-            anchor=anchor,
-            justify=justify,
-        )
-        self._label.place(x=0, y=0, width=self._width_px, height=self._height_px)
-        self._label.configure(cursor=cursor)
+        # Canvas-based composition so we can show:
+        # - background image (gradient/glow)
+        # - optional icon image
+        # - text
+        self._canvas = tk.Canvas(self, bd=0, highlightthickness=0, bg=self.cget("bg"))
+        self._canvas.place(x=0, y=0, width=self._width_px, height=self._height_px)
+        try:
+            self._canvas.configure(cursor=cursor)
+        except Exception:
+            pass
+        self._bg_item = self._canvas.create_image(0, 0, anchor="nw")
+        self._icon_item = None
+        self._text_item = None
 
         self._img_normal = None
         self._img_hover = None
@@ -250,13 +250,62 @@ class GlowButton(tk.Frame):
         self._state = "normal"
 
         self._redraw()
+        self._rebuild_foreground()
         self._apply_state("normal")
 
-        for w in (self, self._label):
+        for w in (self, self._canvas):
             w.bind("<Enter>", self._on_enter)
             w.bind("<Leave>", self._on_leave)
             w.bind("<ButtonPress-1>", self._on_press)
             w.bind("<ButtonRelease-1>", self._on_release)
+
+    def _rebuild_foreground(self):
+        c = self._canvas
+        # remove old foreground items (keep bg)
+        if self._icon_item is not None:
+            try:
+                c.delete(self._icon_item)
+            except Exception:
+                pass
+            self._icon_item = None
+        if self._text_item is not None:
+            try:
+                c.delete(self._text_item)
+            except Exception:
+                pass
+            self._text_item = None
+
+        pad = 14
+        icon_pad = 10
+        icon_size = 0
+        if self._image is not None:
+            try:
+                icon_size = int(self._image.width())
+            except Exception:
+                icon_size = 0
+
+        # Icon placement: right side for "right" compound, left side for "left"
+        if self._image is not None and self._compound in ("right", "left"):
+            if self._compound == "right":
+                ix = self._width_px - pad - icon_size / 2
+            else:
+                ix = pad + icon_size / 2
+            iy = self._height_px / 2
+            self._icon_item = c.create_image(ix, iy, image=self._image)
+
+        # Text placement
+        text = self._text or ""
+        if self._anchor in ("e", "ne", "se"):
+            tx = self._width_px - pad - (icon_size + icon_pad if (self._image is not None and self._compound == "right") else 0)
+            anch = "e"
+        elif self._anchor in ("w", "nw", "sw"):
+            tx = pad + (icon_size + icon_pad if (self._image is not None and self._compound == "left") else 0)
+            anch = "w"
+        else:
+            tx = self._width_px / 2
+            anch = "center"
+        ty = self._height_px / 2 + 0.5
+        self._text_item = c.create_text(tx, ty, text=text, fill=self._fg, font=self._font, anchor=anch)
 
     def _boost(self, c: Color, amt: float) -> Color:
         r, g, b = _hex_to_rgb(c)
@@ -312,11 +361,11 @@ class GlowButton(tk.Frame):
     def _apply_state(self, state: str):
         self._state = state
         if state == "pressed":
-            self._label.configure(image=self._img_pressed)
+            self._canvas.itemconfigure(self._bg_item, image=self._img_pressed)
         elif state == "hover":
-            self._label.configure(image=self._img_hover)
+            self._canvas.itemconfigure(self._bg_item, image=self._img_hover)
         else:
-            self._label.configure(image=self._img_normal)
+            self._canvas.itemconfigure(self._bg_item, image=self._img_normal)
 
     def _on_enter(self, _e=None):
         if self._state != "pressed":
@@ -334,7 +383,7 @@ class GlowButton(tk.Frame):
         try:
             x, y = self.winfo_pointerxy()
             w = self.winfo_containing(x, y)
-            if w in (self, self._label):
+            if w in (self, self._canvas):
                 self._cmd()
         finally:
             self._apply_state("hover")

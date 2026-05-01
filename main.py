@@ -344,7 +344,8 @@ class SECFinancialSystem:
         tk.Frame(self.root, bg=PALETTE['nav_border'], height=1).pack(fill='x')
 
         main = tk.Frame(self.root, bg=PALETTE['bg'])
-        main.pack(fill='both', expand=True, padx=10, pady=10)
+        # Keep top chrome compact to preserve data viewport height (match reference density).
+        main.pack(fill='both', expand=True, padx=10, pady=6)
 
         left = tk.Frame(
             main,
@@ -2013,7 +2014,7 @@ class SECFinancialSystem:
 
     def _build_right(self, parent):
         shell = tk.Frame(parent, bg=PALETTE['bg'])
-        shell.pack(fill='both', expand=True, padx=8, pady=8)
+        shell.pack(fill='both', expand=True, padx=8, pady=6)
 
         workspace_bar = tk.Frame(
             shell,
@@ -2022,10 +2023,10 @@ class SECFinancialSystem:
             highlightthickness=1,
             highlightbackground=PALETTE['border'],
         )
-        workspace_bar.pack(fill='x', pady=(0, 4))
+        workspace_bar.pack(fill='x', pady=(0, 3))
 
         search_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
-        search_row.pack(fill='x', padx=8, pady=(8, 4))
+        search_row.pack(fill='x', padx=8, pady=(6, 2))
         search_shell = tk.Frame(
             search_row,
             bg=PALETTE['surface'],
@@ -2094,7 +2095,7 @@ class SECFinancialSystem:
             pass
 
         ops_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
-        ops_row.pack(fill='x', padx=8, pady=(0, 6))
+        ops_row.pack(fill='x', padx=8, pady=(0, 4))
         tk.Label(
             ops_row,
             text=self._t('company_symbols'),
@@ -2143,7 +2144,7 @@ class SECFinancialSystem:
             font=FONTS['button'],
             fg=PALETTE['dash_text'],
             width=92,
-            height=44,
+            height=40,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2169,7 +2170,7 @@ class SECFinancialSystem:
             font=FONTS['normal'],
             fg=PALETTE['dash_text'],
             width=132,
-            height=44,
+            height=40,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2184,7 +2185,7 @@ class SECFinancialSystem:
             font=FONTS['normal'],
             fg=PALETTE['dash_text'],
             width=120,
-            height=44,
+            height=40,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2200,7 +2201,7 @@ class SECFinancialSystem:
             font=FONTS['caption'],
         ).pack(side='right', padx=(0, 6))
         ttk.Spinbox(
-            ops_row, from_=1990, to=2035, textvariable=self.start_year_var, width=7
+            ops_row, from_=1990, to=2035, textvariable=self.start_year_var, width=6
         ).pack(side='right')
         tk.Label(
             ops_row,
@@ -2210,7 +2211,7 @@ class SECFinancialSystem:
             font=FONTS['normal'],
         ).pack(side='right', padx=6)
         ttk.Spinbox(
-            ops_row, from_=1990, to=2035, textvariable=self.end_year_var, width=7
+            ops_row, from_=1990, to=2035, textvariable=self.end_year_var, width=6
         ).pack(side='right')
         self.fetch_btn = GlowButton(
             ops_row,
@@ -2219,7 +2220,7 @@ class SECFinancialSystem:
             font=FONTS['button'],
             fg=PALETTE['dash_text'],
             width=210,
-            height=44,
+            height=40,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2233,7 +2234,7 @@ class SECFinancialSystem:
             font=FONTS['normal'],
             fg=PALETTE['dash_text'],
             width=120,
-            height=44,
+            height=40,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2247,7 +2248,7 @@ class SECFinancialSystem:
             font=FONTS['normal'],
             fg=PALETTE['dash_text'],
             width=170,
-            height=44,
+            height=40,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2257,7 +2258,7 @@ class SECFinancialSystem:
         self._refresh_company_selector()
 
         meta_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
-        meta_row.pack(fill='x', padx=8, pady=5)
+        meta_row.pack(fill='x', padx=8, pady=(2, 4))
         self.workspace_context_label = tk.Label(
             meta_row,
             text=self._t('status_ready'),

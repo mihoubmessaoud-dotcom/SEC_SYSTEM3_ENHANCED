@@ -153,8 +153,8 @@ class SECFinancialSystem:
             messagebox.showerror("خطأ", f"فشل تهيئة جالب SEC: {e}")
 
     def _init_ui(self):
-        # Header height closer to the reference design (logo + title + subtitle)
-        header = tk.Frame(self.root, bg=PALETTE['nav_bg'], height=104)
+        # Header height closer to the reference design (keep compact so it doesn't steal data space)
+        header = tk.Frame(self.root, bg=PALETTE['nav_bg'], height=86)
         header.pack(fill='x')
         header.pack_propagate(False)
 
@@ -200,10 +200,10 @@ class SECFinancialSystem:
                 _do()
 
         header.bind("<Configure>", _on_header_configure)
-        _render_header_bg(1600, 104)
+        _render_header_bg(1600, 86)
 
         brand_box = tk.Frame(header, bg=PALETTE['nav_bg'])
-        brand_box.pack(side='left', fill='both', expand=True, padx=18, pady=10)
+        brand_box.pack(side='left', fill='both', expand=True, padx=18, pady=6)
 
         # Premium header title with glow/shadow (keeps same text; UI-only).
         title_text = self._t('app_header')
@@ -211,7 +211,7 @@ class SECFinancialSystem:
 
         # Logo + title block
         brand_row = tk.Frame(brand_box, bg=PALETTE['nav_bg'])
-        brand_row.pack(side='top', anchor='w', pady=(2, 0))
+        brand_row.pack(side='top', anchor='w', pady=(0, 0))
 
         # Reference logo (cropped from the provided design image). UI-only.
         self._header_logo_img = None
@@ -220,7 +220,8 @@ class SECFinancialSystem:
             logo_path = os.path.join(BASE_DIR, "assets", "ui", "logo_ref.png")
             if os.path.exists(logo_path):
                 logo = Image.open(logo_path).convert("RGBA")
-                logo = logo.resize((54, 54))
+                # Slightly smaller logo to keep header compact
+                logo = logo.resize((46, 46))
                 self._header_logo_img = ImageTk.PhotoImage(logo)
         except Exception:
             self._header_logo_img = None
@@ -233,7 +234,7 @@ class SECFinancialSystem:
             ).pack(side='left', padx=(0, 12))
         else:
             # keep spacing even if the logo isn't available
-            tk.Frame(brand_row, width=54, height=54, bg=PALETTE['nav_bg']).pack(side='left', padx=(0, 12))
+            tk.Frame(brand_row, width=46, height=46, bg=PALETTE['nav_bg']).pack(side='left', padx=(0, 12))
 
         title_wrap = tk.Frame(brand_row, bg=PALETTE['nav_bg'])
         title_wrap.pack(side='left', anchor='w')
@@ -242,7 +243,7 @@ class SECFinancialSystem:
         self.header_title_shadow = tk.Label(
             title_wrap,
             text=title_text,
-            font=FONTS['header'],
+            font=(FONTS['header'][0], max(20, int(FONTS['header'][1]) - 2), 'bold'),
             bg=PALETTE['nav_bg'],
             fg='#000000',
             anchor='w',
@@ -253,7 +254,7 @@ class SECFinancialSystem:
         self.header_title_glow = tk.Label(
             title_wrap,
             text=title_text,
-            font=FONTS['header'],
+            font=(FONTS['header'][0], max(20, int(FONTS['header'][1]) - 2), 'bold'),
             bg=PALETTE['nav_bg'],
             fg=PALETTE['dash_blue'],
             anchor='w',
@@ -264,7 +265,7 @@ class SECFinancialSystem:
         self.header_title_label = tk.Label(
             title_wrap,
             text=title_text,
-            font=FONTS['header'],
+            font=(FONTS['header'][0], max(20, int(FONTS['header'][1]) - 2), 'bold'),
             bg=PALETTE['nav_bg'],
             fg=PALETTE['header'],
             anchor='w',
@@ -273,11 +274,11 @@ class SECFinancialSystem:
 
         # Subtitle with subtle glow
         subtitle_wrap = tk.Frame(brand_box, bg=PALETTE['nav_bg'])
-        subtitle_wrap.pack(side='top', anchor='w', pady=(1, 0), padx=(66, 0))
+        subtitle_wrap.pack(side='top', anchor='w', pady=(0, 0), padx=(58, 0))
         self.header_subtitle_shadow = tk.Label(
             subtitle_wrap,
             text=subtitle_text,
-            font=FONTS['subtitle'],
+            font=(FONTS['subtitle'][0], max(9, int(FONTS['subtitle'][1]) - 1)),
             bg=PALETTE['nav_bg'],
             fg='#000000',
             anchor='w',
@@ -286,7 +287,7 @@ class SECFinancialSystem:
         self.header_subtitle_label = tk.Label(
             subtitle_wrap,
             text=subtitle_text,
-            font=FONTS['subtitle'],
+            font=(FONTS['subtitle'][0], max(9, int(FONTS['subtitle'][1]) - 1)),
             bg=PALETTE['nav_bg'],
             fg=PALETTE['header_muted'],
             anchor='w',

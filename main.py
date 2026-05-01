@@ -2365,17 +2365,65 @@ class SECFinancialSystem:
         nav_rail.pack_propagate(False)
         self.nav_rail = nav_rail
 
+        # ---- Premium sidebar header (matches reference layout) ----
         nav_header = tk.Frame(nav_rail, bg=PALETTE['nav_bg'])
         nav_header.pack(fill='x', padx=10, pady=(10, 8))
-        self.nav_title_label = tk.Label(
+
+        # Load sidebar icons (cropped from the provided reference image)
+        self._nav_icon_images = {}
+        try:
+            from PIL import Image, ImageTk
+
+            def _load_icon(name: str):
+                p = os.path.join(BASE_DIR, "assets", "ui", "nav_icons", f"{name}.png")
+                if os.path.exists(p):
+                    im = Image.open(p).convert("RGBA")
+                    return ImageTk.PhotoImage(im)
+                return None
+
+            for nm in (
+                "home",
+                "ai",
+                "smart",
+                "financials",
+                "metrics_pct",
+                "strategic",
+                "forecasts",
+                "comparison",
+                "reports",
+                "fav_star",
+                "fav_heart",
+            ):
+                ph = _load_icon(nm)
+                if ph is not None:
+                    self._nav_icon_images[nm] = ph
+        except Exception:
+            pass
+
+        home_img = self._nav_icon_images.get("home")
+        self.nav_home_btn = GlowButton(
             nav_header,
-            text=self._t('dashboard'),
-            bg=PALETTE['nav_bg'],
-            fg=PALETTE['dash_text'],
-            font=FONTS['label'],
-            anchor='e' if self.current_lang == 'ar' else 'w',
+            text=self._t("dashboard"),
+            command=lambda: self._select_notebook_tab(self.raw_tab),
+            font=FONTS["label"],
+            fg=PALETTE["dash_text"],
+            image=home_img,
+            compound="right",
+            anchor="e",
+            justify="right",
+            width=214,
+            height=52,
+            radius=16,
+            border_width=2,
+            glow_radius=10,
+            style=GlowButtonStyle(
+                fill_top=PALETTE["nav_surface"],
+                fill_bottom=PALETTE["nav_surface"],
+                border=PALETTE["dash_teal"],
+                glow=PALETTE["dash_teal"],
+            ),
         )
-        self.nav_title_label.pack(fill='x')
+        self.nav_home_btn.pack(fill="x")
 
         nav_btn_box = tk.Frame(nav_rail, bg=PALETTE['nav_bg'])
         nav_btn_box.pack(fill='both', expand=True, padx=10, pady=(0, 10))
@@ -2417,15 +2465,16 @@ class SECFinancialSystem:
         self.notebook.bind('<<NotebookTabChanged>>', self._on_notebook_tab_changed)
 
         self.workspace_nav_buttons = {}
+        # Map to reference sidebar (labels) while keeping existing underlying tabs.
         nav_specs = [
-            ("raw", "📑", self._t('tab_raw'), self.raw_tab),
-            ("ratios", "％", self._t('tab_ratios'), self.ratios_tab),
-            ("strategic", "🎯", self._t('tab_strategic'), self.strategic_tab),
-            ("forecast", "🔮", self._t('tab_forecast'), self.forecast_tab),
-            ("comparison", "⚖", self._t('tab_comparison'), self.comparison_tab),
-            ("ai", "🧠", self._t('tab_ai'), self.ai_analysis_tab),
-            ("chat", "💬", self._t('tab_chat'), self.chat_tab),
-            ("learning", "📚", self._t('tab_learning'), self.learning_tab),
+            ("chat", self._t('tab_ai'), "ai", self.chat_tab),  # الذكاء الاصطناعي (chat/assistant)
+            ("ai", self._t('tab_ai'), "smart", self.ai_analysis_tab),  # التحليل الذكي
+            ("raw", self._t('tab_raw'), "financials", self.raw_tab),  # البيانات المالية
+            ("ratios", "المؤشرات المالية", "metrics_pct", self.ratios_tab),  # المؤشرات المالية
+            ("strategic", self._t('tab_strategic'), "strategic", self.strategic_tab),  # التحليل الاستراتيجي
+            ("forecast", self._t('tab_forecast'), "forecasts", self.forecast_tab),  # التوقعات
+            ("comparison", self._t('tab_comparison'), "comparison", self.comparison_tab),  # المقارنات
+            ("learning", "التقارير", "reports", self.learning_tab),  # التقارير (maps to Learning tab)
         ]
         # Premium rail buttons (glow/gradient) - keep same callbacks
         rail_selected_style = GlowButtonStyle(
@@ -2440,13 +2489,18 @@ class SECFinancialSystem:
             border=PALETTE['nav_border'],
             glow=PALETTE['dash_teal'],
         )
-        for key, icon, label, tab in nav_specs:
+        for key, label, icon_name, tab in nav_specs:
+            icon_img = self._nav_icon_images.get(icon_name)
             btn = GlowButton(
                 self.workspace_nav_button_box,
-                text=f"{icon}  {label}",
+                text=str(label),
                 command=lambda t=tab: self._select_notebook_tab(t),
                 font=FONTS['label'],
                 fg=PALETTE['dash_text'],
+                image=icon_img,
+                compound="right",
+                anchor="e",
+                justify="right",
                 width=214,
                 height=56,
                 radius=16,
@@ -2458,6 +2512,55 @@ class SECFinancialSystem:
             # store both widget and the two styles for selection highlighting
             btn._rail_styles = (rail_default_style, rail_selected_style)  # type: ignore[attr-defined]
             self.workspace_nav_buttons[key] = btn
+
+        # Favorites panel (visual only)
+        try:
+            fav_box = tk.Frame(nav_rail, bg=PALETTE['nav_bg'])
+            fav_box.pack(fill='x', padx=10, pady=(8, 10))
+            fav_panel = RoundedPanel(
+                fav_box,
+                width=214,
+                height=120,
+                radius=18,
+                fill=PALETTE['nav_surface'],
+                border=PALETTE['dash_header2'],
+                border_width=2,
+            )
+            fav_panel.pack()
+            fav_inner = tk.Frame(fav_panel, bg=PALETTE['nav_surface'])
+            fav_inner.place(x=14, y=10, width=186, height=100)
+            tk.Label(
+                fav_inner,
+                text="المفضلة",
+                bg=PALETTE['nav_surface'],
+                fg=PALETTE['dash_text'],
+                font=FONTS['label'],
+                anchor='w',
+            ).pack(fill='x')
+            row = tk.Frame(fav_inner, bg=PALETTE['nav_surface'])
+            row.pack(fill='x', pady=(10, 0))
+            heart_img = self._nav_icon_images.get("fav_heart")
+            if heart_img is not None:
+                tk.Label(row, image=heart_img, bg=PALETTE['nav_surface']).pack(side='right')
+            tk.Label(
+                row,
+                text="الشركات المحفوظة",
+                bg=PALETTE['nav_surface'],
+                fg=PALETTE['dash_muted'],
+                font=FONTS['caption'],
+                anchor='e',
+                justify='right',
+            ).pack(side='right', padx=(0, 8))
+            tk.Label(
+                fav_inner,
+                text="شركة 12",
+                bg=PALETTE['nav_surface'],
+                fg=PALETTE['dash_text'],
+                font=FONTS['caption'],
+                anchor='e',
+            ).pack(fill='x', pady=(6, 0))
+        except Exception:
+            pass
         self._apply_table_density("comfortable")
         self._sync_workspace_nav_state()
 

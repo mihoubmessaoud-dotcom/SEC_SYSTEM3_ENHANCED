@@ -196,6 +196,10 @@ class GlowButton(tk.Frame):
         command: Callable[[], None],
         font=None,
         fg: Color = "#f8f8f8",
+        image: Optional[tk.PhotoImage] = None,
+        compound: str = "center",
+        anchor: str = "center",
+        justify: str = "center",
         width: int = 150,
         height: int = 44,
         radius: int = 14,
@@ -212,6 +216,10 @@ class GlowButton(tk.Frame):
         self._text = text
         self._font = font
         self._fg = fg
+        self._image = image
+        self._compound = compound
+        self._anchor = anchor
+        self._justify = justify
         # NOTE: tkinter uses `self._w` for the widget pathname; never overwrite it.
         self._width_px = int(width)
         self._height_px = int(height)
@@ -222,7 +230,17 @@ class GlowButton(tk.Frame):
         self._hover_boost = float(hover_boost)
         self._pressed_boost = float(pressed_boost)
 
-        self._label = tk.Label(self, text=text, fg=fg, bg=self.cget("bg"), font=font, compound="center")
+        self._label = tk.Label(
+            self,
+            text=text,
+            fg=fg,
+            bg=self.cget("bg"),
+            font=font,
+            image=image,
+            compound=compound,
+            anchor=anchor,
+            justify=justify,
+        )
         self._label.place(x=0, y=0, width=self._width_px, height=self._height_px)
         self._label.configure(cursor=cursor)
 

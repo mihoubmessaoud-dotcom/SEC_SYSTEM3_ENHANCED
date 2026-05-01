@@ -15,6 +15,27 @@ class DashboardMetric:
     fmt: str  # 'pct' | 'num' | 'money_m'
 
 
+def _rounded_rect(canvas: tk.Canvas, x1: float, y1: float, x2: float, y2: float, r: float, **kwargs):
+    r = max(0, float(r))
+    if r <= 0:
+        return canvas.create_rectangle(x1, y1, x2, y2, **kwargs)
+    points = [
+        x1 + r, y1,
+        x2 - r, y1,
+        x2, y1,
+        x2, y1 + r,
+        x2, y2 - r,
+        x2, y2,
+        x2 - r, y2,
+        x1 + r, y2,
+        x1, y2,
+        x1, y2 - r,
+        x1, y1 + r,
+        x1, y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+
 class DataDashboard(tk.Frame):
     """
     Canvas-based premium dashboard for the Data tab.
@@ -157,11 +178,45 @@ class _DashboardCanvasTable(tk.Frame):
 
             icon = str(r.get("icon") or "")
             label = str(r.get("label") or "")
-            c.create_text(x0 + 14, (top + bot) / 2, text=icon, fill=palette["dash_teal"], font=self.fonts["label"], anchor="w")
-            c.create_text(x0 + icon_w, (top + bot) / 2, text=label, fill=palette["dash_text"], font=self.fonts["tree"], anchor="w")
-
             key = str(r.get("key") or "")
             fmt = str(r.get("fmt") or "")
+
+            # Premium indicator chip (varies by metric type, like the reference design).
+            chip_x = x0 + 10
+            chip_y = (top + bot) / 2
+            chip_w = 30
+            chip_h = 26
+            x1 = chip_x
+            y1 = chip_y - chip_h / 2
+            x2 = chip_x + chip_w
+            y2 = chip_y + chip_h / 2
+
+            def indicator_kind() -> str:
+                k = (key or "").lower()
+                if fmt == "money_m":
+                    return "bars"
+                if "debt" in k or "wacc" in k or "cost_of_debt" in k:
+                    return "pct_badge"
+                return "icon"
+
+            kind = indicator_kind()
+            if kind == "bars":
+                _rounded_rect(c, x1, y1, x2, y2, 8, fill=palette["dash_panel"], outline=palette["dash_teal"], width=2)
+                bx = x1 + 8
+                by = y2 - 6
+                bar_color = palette["dash_teal"]
+                c.create_rectangle(bx, by - 6, bx + 3, by, fill=bar_color, outline="")
+                c.create_rectangle(bx + 6, by - 10, bx + 9, by, fill=bar_color, outline="")
+                c.create_rectangle(bx + 12, by - 14, bx + 15, by, fill=bar_color, outline="")
+            elif kind == "pct_badge":
+                _rounded_rect(c, x1, y1, x2, y2, 8, fill=palette["dash_panel"], outline=palette["dash_red"], width=2)
+                c.create_text((x1 + x2) / 2, (y1 + y2) / 2 + 0.5, text="%", fill=palette["dash_red"], font=self.fonts["label"])
+            else:
+                _rounded_rect(c, x1, y1, x2, y2, 8, fill=palette["dash_panel"], outline=palette["dash_teal"], width=2)
+                c.create_text((x1 + x2) / 2, (y1 + y2) / 2 + 0.5, text=icon, fill=palette["dash_teal"], font=self.fonts["label"])
+
+            c.create_text(x0 + icon_w, (top + bot) / 2, text=label, fill=palette["dash_text"], font=self.fonts["tree"], anchor="w")
+
             fmtter = self._fmtters.get(fmt, lambda v: str(v) if v is not None else "—")
 
             prev_val: Optional[float] = None
@@ -263,4 +318,3 @@ def safe_float(v: Any) -> Optional[float]:
         return fv
     except Exception:
         return None
-

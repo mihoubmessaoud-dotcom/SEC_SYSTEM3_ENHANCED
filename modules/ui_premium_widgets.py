@@ -123,6 +123,56 @@ def _as_photo(img: Image.Image) -> ImageTk.PhotoImage:
     return ImageTk.PhotoImage(img)
 
 
+@lru_cache(maxsize=128)
+def render_vertical_gradient_rgba(width: int, height: int, top: Color, bottom: Color) -> Image.Image:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    t_rgb = _hex_to_rgb(top)
+    b_rgb = _hex_to_rgb(bottom)
+    d = ImageDraw.Draw(img)
+    for y in range(h):
+        t = 0.0 if h <= 1 else (y / (h - 1))
+        col = _mix(t_rgb, b_rgb, t)
+        d.line([(0, y), (w, y)], fill=(*col, 255))
+    return img
+
+
+@lru_cache(maxsize=128)
+def render_header_bg_rgba(
+    width: int,
+    height: int,
+    *,
+    top: Color,
+    mid: Color,
+    bottom: Color,
+    glow: Color,
+    glow_height: int = 36,
+) -> Image.Image:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+
+    # 2-stage gradient (top->mid, mid->bottom) to match reference feel.
+    mid_y = int(h * 0.55)
+    g1 = render_vertical_gradient_rgba(w, max(1, mid_y), top, mid)
+    g2 = render_vertical_gradient_rgba(w, max(1, h - mid_y), mid, bottom)
+    img.alpha_composite(g1, (0, 0))
+    img.alpha_composite(g2, (0, mid_y))
+
+    # Subtle glow line near the bottom edge.
+    gh = max(8, int(glow_height))
+    glow_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(glow_layer)
+    gcol = (*_hex_to_rgb(glow), 180)
+    y0 = max(0, h - gh - 1)
+    d.rectangle([0, y0, w, h], fill=gcol)
+    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+    img.alpha_composite(glow_layer)
+
+    return img
+
+
 @dataclass(frozen=True)
 class GlowButtonStyle:
     fill_top: Color
@@ -288,4 +338,3 @@ class RoundedPanel(tk.Frame):
         self._photo = _as_photo(img)
         self._label = tk.Label(self, image=self._photo, bd=0, bg=master.cget("bg"))
         self._label.place(x=0, y=0, width=width, height=height)
-

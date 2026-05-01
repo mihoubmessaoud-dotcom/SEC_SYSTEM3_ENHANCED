@@ -37,7 +37,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from modules.ratio_formats import canonicalize_ratio_value, format_ratio_value
 from modules.ratio_source import UnifiedRatioSource, maybe_guard_ratios_by_year
 from modules.financial_chat import FinancialChatAssistant
-from modules.ui_premium_widgets import GlowButton, GlowButtonStyle
+from modules.ui_premium_widgets import GlowButton, GlowButtonStyle, RoundedPanel, render_header_bg_rgba
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -153,9 +153,54 @@ class SECFinancialSystem:
             messagebox.showerror("خطأ", f"فشل تهيئة جالب SEC: {e}")
 
     def _init_ui(self):
-        header = tk.Frame(self.root, bg=PALETTE['nav_bg'], height=74)
+        header = tk.Frame(self.root, bg=PALETTE['nav_bg'], height=88)
         header.pack(fill='x')
         header.pack_propagate(False)
+
+        # Premium header background (gradient + glow). UI-only: does not affect any logic.
+        header_canvas = tk.Canvas(header, bg=PALETTE['nav_bg'], highlightthickness=0, bd=0)
+        header_canvas.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+        self._header_canvas = header_canvas
+        self._header_bg_img = None
+        self._header_bg_item = header_canvas.create_image(0, 0, anchor='nw')
+        self._header_resize_job = None
+
+        def _render_header_bg(width: int, height: int):
+            try:
+                from PIL import ImageTk
+                img = render_header_bg_rgba(
+                    int(width),
+                    int(height),
+                    top=PALETTE['nav_bg'],
+                    mid=PALETTE['panel'],
+                    bottom=PALETTE['surface_alt'],
+                    glow=PALETTE['dash_blue'],
+                    glow_height=34,
+                )
+                self._header_bg_img = ImageTk.PhotoImage(img)
+                header_canvas.itemconfigure(self._header_bg_item, image=self._header_bg_img)
+            except Exception:
+                # Fallback: solid fill
+                header_canvas.configure(bg=PALETTE['nav_bg'])
+
+        def _on_header_configure(event):
+            try:
+                if self._header_resize_job:
+                    header.after_cancel(self._header_resize_job)
+            except Exception:
+                pass
+
+            def _do():
+                _render_header_bg(event.width, event.height)
+
+            try:
+                self._header_resize_job = header.after(60, _do)
+            except Exception:
+                _do()
+
+        header.bind("<Configure>", _on_header_configure)
+        _render_header_bg(1600, 88)
+
         brand_box = tk.Frame(header, bg=PALETTE['nav_bg'])
         brand_box.pack(side='left', fill='both', expand=True, padx=18, pady=10)
         self.header_title_label = tk.Label(
@@ -169,15 +214,8 @@ class SECFinancialSystem:
         self.header_title_label.pack(anchor='w', pady=(6, 0))
         self.header_subtitle_label = None
 
-        lang_box = tk.Frame(
-            header,
-            bg=PALETTE['nav_surface'],
-            highlightthickness=1,
-            highlightbackground=PALETTE['nav_border'],
-            bd=0,
-            padx=10,
-            pady=8,
-        )
+        # Premium language chip (rounded panel). UI-only: preserves same combobox behavior.
+        lang_box = tk.Frame(header, bg=PALETTE['nav_bg'], bd=0, highlightthickness=0)
         self.lang_label = tk.Label(
             lang_box,
             text=self._t('lang_label'),
@@ -186,9 +224,36 @@ class SECFinancialSystem:
             fg='white',
         )
         lang_box.pack(side='right', padx=14, pady=14)
-        self.lang_label.pack(side='left', padx=(0, 8))
+
+        try:
+            lang_panel = RoundedPanel(
+                lang_box,
+                width=200,
+                height=44,
+                radius=16,
+                fill=PALETTE['nav_surface'],
+                border=PALETTE['dash_teal'],
+                border_width=2,
+            )
+            lang_panel.pack()
+            lang_inner = tk.Frame(lang_panel, bg=PALETTE['nav_surface'])
+            lang_inner.place(x=12, y=8, relwidth=1.0, height=28)
+        except Exception:
+            lang_inner = tk.Frame(
+                lang_box,
+                bg=PALETTE['nav_surface'],
+                highlightthickness=1,
+                highlightbackground=PALETTE['nav_border'],
+                bd=0,
+                padx=10,
+                pady=8,
+            )
+            lang_inner.pack()
+
+        self.lang_label.configure(bg=PALETTE['nav_surface'])
+        self.lang_label.pack(in_=lang_inner, side='left', padx=(0, 8))
         self.lang_combo = ttk.Combobox(
-            lang_box,
+            lang_inner,
             textvariable=self._lang_choice_var,
             state='readonly',
             values=[lbl for lbl, _ in self._lang_options],

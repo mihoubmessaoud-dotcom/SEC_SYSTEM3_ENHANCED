@@ -203,16 +203,68 @@ class SECFinancialSystem:
 
         brand_box = tk.Frame(header, bg=PALETTE['nav_bg'])
         brand_box.pack(side='left', fill='both', expand=True, padx=18, pady=10)
-        self.header_title_label = tk.Label(
-            brand_box,
-            text=self._t('app_header'),
+
+        # Premium header title with glow/shadow (keeps same text; UI-only).
+        title_text = self._t('app_header')
+        subtitle_text = self._t('app_subtitle')
+
+        title_wrap = tk.Frame(brand_box, bg=PALETTE['nav_bg'])
+        title_wrap.pack(side='top', anchor='w', pady=(4, 0))
+
+        # Shadow
+        self.header_title_shadow = tk.Label(
+            title_wrap,
+            text=title_text,
             font=FONTS['header'],
             bg=PALETTE['nav_bg'],
-            fg='white',
+            fg='#000000',
             anchor='w',
         )
-        self.header_title_label.pack(anchor='w', pady=(6, 0))
-        self.header_subtitle_label = None
+        self.header_title_shadow.place(x=2, y=2)
+
+        # Glow (blue)
+        self.header_title_glow = tk.Label(
+            title_wrap,
+            text=title_text,
+            font=FONTS['header'],
+            bg=PALETTE['nav_bg'],
+            fg=PALETTE['dash_blue'],
+            anchor='w',
+        )
+        self.header_title_glow.place(x=1, y=1)
+
+        # Main title (original handle for i18n updates)
+        self.header_title_label = tk.Label(
+            title_wrap,
+            text=title_text,
+            font=FONTS['header'],
+            bg=PALETTE['nav_bg'],
+            fg=PALETTE['header'],
+            anchor='w',
+        )
+        self.header_title_label.pack(anchor='w')
+
+        # Subtitle with subtle glow
+        subtitle_wrap = tk.Frame(brand_box, bg=PALETTE['nav_bg'])
+        subtitle_wrap.pack(side='top', anchor='w', pady=(2, 0))
+        self.header_subtitle_shadow = tk.Label(
+            subtitle_wrap,
+            text=subtitle_text,
+            font=FONTS['subtitle'],
+            bg=PALETTE['nav_bg'],
+            fg='#000000',
+            anchor='w',
+        )
+        self.header_subtitle_shadow.place(x=1, y=1)
+        self.header_subtitle_label = tk.Label(
+            subtitle_wrap,
+            text=subtitle_text,
+            font=FONTS['subtitle'],
+            bg=PALETTE['nav_bg'],
+            fg=PALETTE['header_muted'],
+            anchor='w',
+        )
+        self.header_subtitle_label.pack(anchor='w')
 
         # Premium language chip (rounded panel). UI-only: preserves same combobox behavior.
         lang_box = tk.Frame(header, bg=PALETTE['nav_bg'], bd=0, highlightthickness=0)
@@ -413,6 +465,11 @@ class SECFinancialSystem:
             'tab_chat': {'ar': 'الدردشة المالية', 'en': 'Financial Chat', 'fr': 'Chat financier'},
             'tab_learning': {'ar': 'لوحة التعلم', 'en': 'Learning Board', 'fr': 'Tableau d’apprentissage'},
             'dashboard': {'ar': 'لوحة التحكم', 'en': 'Dashboard', 'fr': 'Tableau de bord'},
+            'app_subtitle': {
+                'ar': 'تحليلات متقدمة للبيانات المالية وفهم أعمق لاتخاذ أفضل القرارات',
+                'en': 'Advanced financial analytics and deeper insight for better decisions',
+                'fr': 'Analyses financières avancées et meilleurs éclairages pour décider',
+            },
             'workspace_title': {'ar': 'لوحة العمل المؤسسية', 'en': 'Institutional Workspace', 'fr': 'Espace de travail institutionnel'},
             'workspace_hint': {'ar': 'اختر شركة أو حمّل ملف إكسل لبدء التحليل والتدقيق والمقارنة.', 'en': 'Select a company or load an Excel file to begin analysis, audit, and comparison.', 'fr': 'Sélectionnez une société ou chargez un fichier Excel pour commencer l’analyse, l’audit et la comparaison.'},
             'sidebar_section_universe': {'ar': 'كون التحليل', 'en': 'Analysis Universe', 'fr': 'Univers d’analyse'},
@@ -2778,6 +2835,14 @@ class SECFinancialSystem:
         try:
             if hasattr(self, 'header_title_label'):
                 self.header_title_label.config(text=self._t('app_header'))
+            if hasattr(self, 'header_title_glow'):
+                self.header_title_glow.config(text=self._t('app_header'))
+            if hasattr(self, 'header_title_shadow'):
+                self.header_title_shadow.config(text=self._t('app_header'))
+            if hasattr(self, 'header_subtitle_label'):
+                self.header_subtitle_label.config(text=self._t('app_subtitle'))
+            if hasattr(self, 'header_subtitle_shadow'):
+                self.header_subtitle_shadow.config(text=self._t('app_subtitle'))
             if getattr(self, 'header_subtitle_label', None):
                 self.header_subtitle_label.config(text=self._t('app_subtitle'))
             if hasattr(self, 'lang_label'):

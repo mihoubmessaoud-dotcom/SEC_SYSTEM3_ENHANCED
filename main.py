@@ -2380,28 +2380,35 @@ class SECFinancialSystem:
             from PIL import Image, ImageTk
 
             def _load_icon(name: str):
-                p = os.path.join(BASE_DIR, "assets", "ui", "nav_icons", f"{name}.png")
-                if os.path.exists(p):
-                    im = Image.open(p).convert("RGBA")
-                    # Upscale to a consistent size for crisp display on the nav rail.
-                    try:
-                        if im.size != (NAV_ICON_PX, NAV_ICON_PX):
-                            im = im.resize((NAV_ICON_PX, NAV_ICON_PX), Image.LANCZOS)
-                    except Exception:
-                        pass
-                    return ImageTk.PhotoImage(im)
+                # Prefer user-supplied master icons (glyph-only), fallback to generated icons.
+                for rel in (
+                    os.path.join("assets", "ui", "nav_icons_master", f"{name}.png"),
+                    os.path.join("assets", "ui", "nav_icons", f"{name}.png"),
+                ):
+                    p = os.path.join(BASE_DIR, rel)
+                    if os.path.exists(p):
+                        im = Image.open(p).convert("RGBA")
+                        # Normalize to a consistent size for crisp display on the nav rail.
+                        try:
+                            if im.size != (NAV_ICON_PX, NAV_ICON_PX):
+                                im = im.resize((NAV_ICON_PX, NAV_ICON_PX), Image.LANCZOS)
+                        except Exception:
+                            pass
+                        return ImageTk.PhotoImage(im)
                 return None
 
             for nm in (
+                # right-rail icons
                 "home",
-                "ai",
-                "smart",
-                "financials",
-                "metrics_pct",
-                "strategic",
-                "forecasts",
-                "comparison",
-                "reports",
+                "snowflake",
+                "chart",
+                "bars_purple",
+                "percent",
+                "target",
+                "orb",
+                "scales",
+                "doc",
+                # favorites
                 "fav_star",
                 "fav_heart",
             ):
@@ -2478,14 +2485,14 @@ class SECFinancialSystem:
         self.workspace_nav_buttons = {}
         # Map to reference sidebar (labels) while keeping existing underlying tabs.
         nav_specs = [
-            ("chat", self._t('tab_ai'), "ai", self.chat_tab),  # الذكاء الاصطناعي (chat/assistant)
-            ("ai", self._t('tab_ai'), "smart", self.ai_analysis_tab),  # التحليل الذكي
-            ("raw", self._t('tab_raw'), "financials", self.raw_tab),  # البيانات المالية
-            ("ratios", "المؤشرات المالية", "metrics_pct", self.ratios_tab),  # المؤشرات المالية
-            ("strategic", self._t('tab_strategic'), "strategic", self.strategic_tab),  # التحليل الاستراتيجي
-            ("forecast", self._t('tab_forecast'), "forecasts", self.forecast_tab),  # التوقعات
-            ("comparison", self._t('tab_comparison'), "comparison", self.comparison_tab),  # المقارنات
-            ("learning", "التقارير", "reports", self.learning_tab),  # التقارير (maps to Learning tab)
+            ("chat", self._t('tab_ai'), "snowflake", self.chat_tab),  # الذكاء الاصطناعي
+            ("ai", self._t('tab_ai'), "chart", self.ai_analysis_tab),  # التحليل الذكي
+            ("raw", self._t('tab_raw'), "bars_purple", self.raw_tab),  # البيانات المالية
+            ("ratios", "المؤشرات المالية", "percent", self.ratios_tab),  # المؤشرات المالية
+            ("strategic", self._t('tab_strategic'), "target", self.strategic_tab),  # التحليل الاستراتيجي
+            ("forecast", self._t('tab_forecast'), "orb", self.forecast_tab),  # التوقعات
+            ("comparison", self._t('tab_comparison'), "scales", self.comparison_tab),  # المقارنات
+            ("learning", "التقارير", "doc", self.learning_tab),  # التقارير (maps to Learning tab)
         ]
         # Premium rail buttons (glow/gradient) - keep same callbacks
         rail_selected_style = GlowButtonStyle(

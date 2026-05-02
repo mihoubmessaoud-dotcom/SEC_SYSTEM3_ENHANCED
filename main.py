@@ -2357,7 +2357,8 @@ class SECFinancialSystem:
         NAV_RAIL_W = 300  # match reference rail width (UI-only)
         NAV_PAD_X = 12
         NAV_BTN_W = NAV_RAIL_W - (NAV_PAD_X * 2)
-        NAV_ICON_PX = 64
+        # Keep icons large but leave breathing room from the rounded border.
+        NAV_ICON_PX = 60
 
         nav_rail = tk.Frame(
             content_row,

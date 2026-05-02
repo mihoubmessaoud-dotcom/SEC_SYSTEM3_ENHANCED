@@ -275,8 +275,9 @@ class GlowButton(tk.Frame):
                 pass
             self._text_item = None
 
-        pad = 14
-        icon_pad = 10
+        # Slightly larger inset to avoid icons visually touching the rounded border on high DPI.
+        pad = 18
+        icon_pad = 12
         icon_size = 0
         if self._image is not None:
             try:

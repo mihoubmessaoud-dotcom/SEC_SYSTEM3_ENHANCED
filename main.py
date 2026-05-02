@@ -2425,14 +2425,54 @@ class SECFinancialSystem:
                     # Keep edges
                     mask = mask.filter(ImageFilter.MaxFilter(size=3))
 
+                    # Choose the best connected component (prefer tall glyphs over long thin strips).
+                    mpx = mask.load()
+                    visited = set()
+                    best_comp = []
+                    best_score = (-1, -1)  # (height, area)
+
+                    def neigh(xx: int, yy: int):
+                        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                            nx, ny = xx + dx, yy + dy
+                            if 0 <= nx < w and 0 <= ny < h:
+                                yield nx, ny
+
+                    for yy in range(h):
+                        for xx in range(w):
+                            if mpx[xx, yy] == 0 or (xx, yy) in visited:
+                                continue
+                            stack = [(xx, yy)]
+                            visited.add((xx, yy))
+                            comp = []
+                            minx = maxx = xx
+                            miny = maxy = yy
+                            while stack:
+                                cx, cy = stack.pop()
+                                comp.append((cx, cy))
+                                if cx < minx:
+                                    minx = cx
+                                if cx > maxx:
+                                    maxx = cx
+                                if cy < miny:
+                                    miny = cy
+                                if cy > maxy:
+                                    maxy = cy
+                                for nx, ny in neigh(cx, cy):
+                                    if mpx[nx, ny] != 0 and (nx, ny) not in visited:
+                                        visited.add((nx, ny))
+                                        stack.append((nx, ny))
+                            height = (maxy - miny + 1)
+                            area = len(comp)
+                            score = (height, area)
+                            if score > best_score:
+                                best_score = score
+                                best_comp = comp
+
                     out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                     opx = out.load()
                     ipx = im.load()
-                    mpx = mask.load()
-                    for y in range(h):
-                        for x in range(w):
-                            if mpx[x, y]:
-                                opx[x, y] = ipx[x, y]
+                    for (xx, yy) in best_comp:
+                        opx[xx, yy] = ipx[xx, yy]
 
                     # Tight crop to the glyph content (keeps consistent padding later via resize)
                     bbox = out.split()[-1].getbbox()

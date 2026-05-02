@@ -2379,22 +2379,39 @@ class SECFinancialSystem:
         try:
             from PIL import Image, ImageTk
 
+            _ICON_ALIASES = {
+                # New glyph-only names -> existing generated icon filenames
+                "snowflake": "ai",
+                "chart": "smart",
+                "bars_purple": "financials",
+                "percent": "metrics_pct",
+                "target": "strategic",
+                "orb": "forecasts",
+                "scales": "comparison",
+                "doc": "reports",
+            }
+
             def _load_icon(name: str):
                 # Prefer user-supplied master icons (glyph-only), fallback to generated icons.
-                for rel in (
-                    os.path.join("assets", "ui", "nav_icons_master", f"{name}.png"),
-                    os.path.join("assets", "ui", "nav_icons", f"{name}.png"),
-                ):
-                    p = os.path.join(BASE_DIR, rel)
-                    if os.path.exists(p):
-                        im = Image.open(p).convert("RGBA")
-                        # Normalize to a consistent size for crisp display on the nav rail.
-                        try:
-                            if im.size != (NAV_ICON_PX, NAV_ICON_PX):
-                                im = im.resize((NAV_ICON_PX, NAV_ICON_PX), Image.LANCZOS)
-                        except Exception:
-                            pass
-                        return ImageTk.PhotoImage(im)
+                cand_names = [name]
+                alias = _ICON_ALIASES.get(name)
+                if alias and alias not in cand_names:
+                    cand_names.append(alias)
+                for nm in cand_names:
+                    for rel in (
+                        os.path.join("assets", "ui", "nav_icons_master", f"{nm}.png"),
+                        os.path.join("assets", "ui", "nav_icons", f"{nm}.png"),
+                    ):
+                        p = os.path.join(BASE_DIR, rel)
+                        if os.path.exists(p):
+                            im = Image.open(p).convert("RGBA")
+                            # Normalize to a consistent size for crisp display on the nav rail.
+                            try:
+                                if im.size != (NAV_ICON_PX, NAV_ICON_PX):
+                                    im = im.resize((NAV_ICON_PX, NAV_ICON_PX), Image.LANCZOS)
+                            except Exception:
+                                pass
+                            return ImageTk.PhotoImage(im)
                 return None
 
             for nm in (

@@ -491,6 +491,7 @@ class SECFinancialSystem:
             'tab_comparison': {'ar': 'التحليل المقارن', 'en': 'Comparative Analysis', 'fr': 'Analyse comparative'},
             'tab_forecast': {'ar': 'التوقعات', 'en': 'Forecasts', 'fr': 'Prévisions'},
             'tab_ai': {'ar': 'التحليل الذكي', 'en': 'AI Intelligence', 'fr': 'Intelligence IA'},
+            'tab_ai_assistant': {'ar': 'الذكاء الاصطناعي', 'en': 'AI', 'fr': 'IA'},
             'tab_chat': {'ar': 'الدردشة المالية', 'en': 'Financial Chat', 'fr': 'Chat financier'},
             'tab_learning': {'ar': 'لوحة التعلم', 'en': 'Learning Board', 'fr': 'Tableau d’apprentissage'},
             'dashboard': {'ar': 'لوحة التحكم', 'en': 'Dashboard', 'fr': 'Tableau de bord'},
@@ -2502,7 +2503,7 @@ class SECFinancialSystem:
         self.workspace_nav_buttons = {}
         # Map to reference sidebar (labels) while keeping existing underlying tabs.
         nav_specs = [
-            ("chat", self._t('tab_ai'), "snowflake", self.chat_tab),  # الذكاء الاصطناعي
+            ("chat", self._t('tab_ai_assistant'), "snowflake", self.chat_tab),  # الذكاء الاصطناعي
             ("ai", self._t('tab_ai'), "chart", self.ai_analysis_tab),  # التحليل الذكي
             ("raw", self._t('tab_raw'), "bars_purple", self.raw_tab),  # البيانات المالية
             ("ratios", "المؤشرات المالية", "percent", self.ratios_tab),  # المؤشرات المالية

@@ -2495,6 +2495,20 @@ class SECFinancialSystem:
                 alias = _ICON_ALIASES.get(name)
                 if alias and alias not in cand_names:
                     cand_names.append(alias)
+
+                def _is_valid_icon(im):
+                    try:
+                        alpha = im.split()[-1]
+                        bbox = alpha.getbbox()
+                        if not bbox:
+                            return False
+                        l, t, r, b = bbox
+                        area = max(0, (r - l) * (b - t))
+                        # Reject fully/mostly empty icons to avoid invisible buttons.
+                        return area >= 36
+                    except Exception:
+                        return False
+
                 for nm in cand_names:
                     for rel in (
                         os.path.join("assets", "ui", "nav_icons_master", f"{nm}.png"),
@@ -2503,6 +2517,8 @@ class SECFinancialSystem:
                         p = os.path.join(BASE_DIR, rel)
                         if os.path.exists(p):
                             im = Image.open(p).convert("RGBA")
+                            if not _is_valid_icon(im):
+                                continue
                             # Master icons are treated as final assets; avoid extra processing that can distort them.
                             # Normalize to a consistent size for crisp display on the nav rail.
                             try:

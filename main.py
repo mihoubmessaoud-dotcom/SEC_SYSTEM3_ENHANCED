@@ -2392,21 +2392,58 @@ class SECFinancialSystem:
                 "doc": "reports",
             }
 
-            def _dehalo_glyph(im):
+            def _clean_nav_glyph(im):
                 """
-                Remove soft outer shadows/halos from glyph-only icons so they match the
-                clean reference (no background chip / no glow rectangle). UI-only.
+                Extract glyph-only pixels (drop any dark chip/background/stray glow),
+                then mildly dilate to keep edges. UI-only.
                 """
                 try:
                     from PIL import Image, ImageFilter
 
                     im = im.convert("RGBA")
-                    r, g, b, a = im.split()
-                    # Shrink alpha a bit to drop the outer halo.
-                    a2 = a.filter(ImageFilter.MinFilter(size=3))
-                    # Drop very low-alpha pixels (residual glow).
-                    a2 = a2.point(lambda v: 0 if v < 90 else v)
-                    out = Image.merge("RGBA", (r, g, b, a2))
+                    rgb = im.convert("RGB")
+                    w, h = im.size
+                    px = rgb.load()
+
+                    def sat(r, g, b):
+                        mx = max(r, g, b)
+                        mn = min(r, g, b)
+                        return 0 if mx == 0 else (mx - mn) / mx
+
+                    mask = Image.new("L", (w, h), 0)
+                    mpx = mask.load()
+                    for y in range(h):
+                        for x in range(w):
+                            r, g, b = px[x, y]
+                            mx = max(r, g, b)
+                            s = sat(r, g, b)
+                            # keep bright or saturated pixels only (reject dark chip)
+                            if mx >= 170 or s >= 0.28:
+                                mpx[x, y] = 255
+
+                    # Keep edges
+                    mask = mask.filter(ImageFilter.MaxFilter(size=3))
+
+                    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                    opx = out.load()
+                    ipx = im.load()
+                    mpx = mask.load()
+                    for y in range(h):
+                        for x in range(w):
+                            if mpx[x, y]:
+                                opx[x, y] = ipx[x, y]
+
+                    # Tight crop to the glyph content (keeps consistent padding later via resize)
+                    bbox = out.split()[-1].getbbox()
+                    if bbox:
+                        l, t, r, b = bbox
+                        pad = 2
+                        l = max(0, l - pad)
+                        t = max(0, t - pad)
+                        r = min(w, r + pad)
+                        b = min(h, b + pad)
+                        out = out.crop((l, t, r, b))
+
                     return out
                 except Exception:
                     return im
@@ -2425,9 +2462,9 @@ class SECFinancialSystem:
                         p = os.path.join(BASE_DIR, rel)
                         if os.path.exists(p):
                             im = Image.open(p).convert("RGBA")
-                            # For the two problematic icons, aggressively remove halo/shadow.
+                            # For the two problematic icons, extract glyph-only pixels (no chip / no shadow).
                             if name in ("percent", "bars_purple"):
-                                im = _dehalo_glyph(im)
+                                im = _clean_nav_glyph(im)
                             # Normalize to a consistent size for crisp display on the nav rail.
                             try:
                                 if im.size != (NAV_ICON_PX, NAV_ICON_PX):

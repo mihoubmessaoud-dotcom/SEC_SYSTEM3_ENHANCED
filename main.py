@@ -2357,7 +2357,7 @@ class SECFinancialSystem:
         NAV_RAIL_W = 300  # match reference rail width (UI-only)
         NAV_PAD_X = 12
         NAV_BTN_W = NAV_RAIL_W - (NAV_PAD_X * 2)
-        NAV_ICON_PX = 56
+        NAV_ICON_PX = 64
 
         nav_rail = tk.Frame(
             content_row,
@@ -2410,6 +2410,13 @@ class SECFinancialSystem:
                             try:
                                 if im.size != (NAV_ICON_PX, NAV_ICON_PX):
                                     im = im.resize((NAV_ICON_PX, NAV_ICON_PX), Image.LANCZOS)
+                                    try:
+                                        from PIL import ImageFilter
+
+                                        # Mild sharpening after resize to reduce perceived blur.
+                                        im = im.filter(ImageFilter.UnsharpMask(radius=1.2, percent=160, threshold=3))
+                                    except Exception:
+                                        pass
                             except Exception:
                                 pass
                             return ImageTk.PhotoImage(im)

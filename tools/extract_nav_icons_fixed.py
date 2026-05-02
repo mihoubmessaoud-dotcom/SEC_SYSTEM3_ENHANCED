@@ -282,6 +282,42 @@ def _make_bg_transparent(icon_rgba: Image.Image) -> Image.Image:
                 continue
             r, g, b, a = px[x, y]
             out_px[x, y] = (r, g, b, a)
+    # Remove tiny stray blobs (e.g., a leftover '%' fragment) by keeping the largest connected
+    # component in the alpha channel.
+    alpha = out.split()[-1]
+    apx = alpha.load()
+    visited = set()
+    best = []
+
+    def neigh(xx: int, yy: int):
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = xx + dx, yy + dy
+            if 0 <= nx < w and 0 <= ny < h:
+                yield nx, ny
+
+    for yy in range(h):
+        for xx in range(w):
+            if apx[xx, yy] == 0 or (xx, yy) in visited:
+                continue
+            stack = [(xx, yy)]
+            visited.add((xx, yy))
+            comp = []
+            while stack:
+                cx, cy = stack.pop()
+                comp.append((cx, cy))
+                for nx, ny in neigh(cx, cy):
+                    if apx[nx, ny] != 0 and (nx, ny) not in visited:
+                        visited.add((nx, ny))
+                        stack.append((nx, ny))
+            if len(comp) > len(best):
+                best = comp
+
+    if best:
+        clean = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        cpx = clean.load()
+        for xx, yy in best:
+            cpx[xx, yy] = out_px[xx, yy]
+        return clean
     return out
 
 

@@ -2392,6 +2392,25 @@ class SECFinancialSystem:
                 "doc": "reports",
             }
 
+            def _dehalo_glyph(im):
+                """
+                Remove soft outer shadows/halos from glyph-only icons so they match the
+                clean reference (no background chip / no glow rectangle). UI-only.
+                """
+                try:
+                    from PIL import Image, ImageFilter
+
+                    im = im.convert("RGBA")
+                    r, g, b, a = im.split()
+                    # Shrink alpha a bit to drop the outer halo.
+                    a2 = a.filter(ImageFilter.MinFilter(size=3))
+                    # Drop very low-alpha pixels (residual glow).
+                    a2 = a2.point(lambda v: 0 if v < 90 else v)
+                    out = Image.merge("RGBA", (r, g, b, a2))
+                    return out
+                except Exception:
+                    return im
+
             def _load_icon(name: str):
                 # Prefer user-supplied master icons (glyph-only), fallback to generated icons.
                 cand_names = [name]
@@ -2406,6 +2425,9 @@ class SECFinancialSystem:
                         p = os.path.join(BASE_DIR, rel)
                         if os.path.exists(p):
                             im = Image.open(p).convert("RGBA")
+                            # For the two problematic icons, aggressively remove halo/shadow.
+                            if name in ("percent", "bars_purple"):
+                                im = _dehalo_glyph(im)
                             # Normalize to a consistent size for crisp display on the nav rail.
                             try:
                                 if im.size != (NAV_ICON_PX, NAV_ICON_PX):

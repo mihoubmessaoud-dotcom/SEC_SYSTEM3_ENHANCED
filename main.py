@@ -2503,9 +2503,7 @@ class SECFinancialSystem:
                         p = os.path.join(BASE_DIR, rel)
                         if os.path.exists(p):
                             im = Image.open(p).convert("RGBA")
-                            # For the two problematic icons, extract glyph-only pixels (no chip / no shadow).
-                            if name in ("percent", "bars_purple"):
-                                im = _clean_nav_glyph(im)
+                            # Master icons are treated as final assets; avoid extra processing that can distort them.
                             # Normalize to a consistent size for crisp display on the nav rail.
                             try:
                                 if im.size != (NAV_ICON_PX, NAV_ICON_PX):

@@ -154,7 +154,7 @@ class SECFinancialSystem:
 
     def _init_ui(self):
         # Header height closer to the reference design (keep compact so it doesn't steal data space)
-        header = tk.Frame(self.root, bg=PALETTE['nav_bg'], height=86)
+        header = tk.Frame(self.root, bg=PALETTE['nav_bg'], height=66)
         header.pack(fill='x')
         header.pack_propagate(False)
 
@@ -200,10 +200,10 @@ class SECFinancialSystem:
                 _do()
 
         header.bind("<Configure>", _on_header_configure)
-        _render_header_bg(1600, 86)
+        _render_header_bg(1600, 66)
 
         brand_box = tk.Frame(header, bg=PALETTE['nav_bg'])
-        brand_box.pack(side='left', fill='both', expand=True, padx=18, pady=6)
+        brand_box.pack(side='left', fill='both', expand=True, padx=14, pady=2)
 
         # Premium header title with glow/shadow (keeps same text; UI-only).
         title_text = self._t('app_header')
@@ -221,7 +221,7 @@ class SECFinancialSystem:
             if os.path.exists(logo_path):
                 logo = Image.open(logo_path).convert("RGBA")
                 # Slightly smaller logo to keep header compact
-                logo = logo.resize((46, 46))
+                logo = logo.resize((34, 34))
                 self._header_logo_img = ImageTk.PhotoImage(logo)
         except Exception:
             self._header_logo_img = None
@@ -234,7 +234,7 @@ class SECFinancialSystem:
             ).pack(side='left', padx=(0, 12))
         else:
             # keep spacing even if the logo isn't available
-            tk.Frame(brand_row, width=46, height=46, bg=PALETTE['nav_bg']).pack(side='left', padx=(0, 12))
+            tk.Frame(brand_row, width=38, height=38, bg=PALETTE['nav_bg']).pack(side='left', padx=(0, 10))
 
         title_wrap = tk.Frame(brand_row, bg=PALETTE['nav_bg'])
         title_wrap.pack(side='left', anchor='w')
@@ -274,7 +274,7 @@ class SECFinancialSystem:
 
         # Subtitle with subtle glow
         subtitle_wrap = tk.Frame(brand_box, bg=PALETTE['nav_bg'])
-        subtitle_wrap.pack(side='top', anchor='w', pady=(0, 0), padx=(58, 0))
+        subtitle_wrap.pack(side='top', anchor='w', pady=(0, 0), padx=(48, 0))
         self.header_subtitle_shadow = tk.Label(
             subtitle_wrap,
             text=subtitle_text,
@@ -303,13 +303,13 @@ class SECFinancialSystem:
             bg=PALETTE['nav_surface'],
             fg='white',
         )
-        lang_box.pack(side='right', padx=14, pady=14)
+        lang_box.pack(side='right', padx=10, pady=8)
 
         try:
             lang_panel = RoundedPanel(
                 lang_box,
-                width=200,
-                height=44,
+                width=176,
+                height=36,
                 radius=16,
                 fill=PALETTE['nav_surface'],
                 border=PALETTE['dash_teal'],
@@ -317,7 +317,7 @@ class SECFinancialSystem:
             )
             lang_panel.pack()
             lang_inner = tk.Frame(lang_panel, bg=PALETTE['nav_surface'])
-            lang_inner.place(x=12, y=8, relwidth=1.0, height=28)
+            lang_inner.place(x=9, y=5, relwidth=1.0, height=24)
         except Exception:
             lang_inner = tk.Frame(
                 lang_box,
@@ -345,7 +345,7 @@ class SECFinancialSystem:
 
         main = tk.Frame(self.root, bg=PALETTE['bg'])
         # Keep top chrome compact to preserve data viewport height (match reference density).
-        main.pack(fill='both', expand=True, padx=10, pady=6)
+        main.pack(fill='both', expand=True, padx=10, pady=4)
 
         left = tk.Frame(
             main,
@@ -2015,7 +2015,7 @@ class SECFinancialSystem:
 
     def _build_right(self, parent):
         shell = tk.Frame(parent, bg=PALETTE['bg'])
-        shell.pack(fill='both', expand=True, padx=8, pady=6)
+        shell.pack(fill='both', expand=True, padx=8, pady=2)
 
         workspace_bar = tk.Frame(
             shell,
@@ -2024,7 +2024,7 @@ class SECFinancialSystem:
             highlightthickness=1,
             highlightbackground=PALETTE['border'],
         )
-        workspace_bar.pack(fill='x', pady=(0, 2))
+        workspace_bar.pack(fill='x', pady=(0, 0))
 
         search_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
         search_row.pack(fill='x', padx=8, pady=(6, 2))
@@ -2103,7 +2103,7 @@ class SECFinancialSystem:
             pass
 
         ops_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
-        ops_row.pack(fill='x', padx=8, pady=(0, 3))
+        ops_row.pack(fill='x', padx=8, pady=(0, 1))
         tk.Label(
             ops_row,
             text=self._t('company_symbols'),
@@ -2152,7 +2152,7 @@ class SECFinancialSystem:
             font=FONTS['button'],
             fg=PALETTE['dash_text'],
             width=92,
-            height=40,
+            height=36,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2178,7 +2178,7 @@ class SECFinancialSystem:
             font=FONTS['normal'],
             fg=PALETTE['dash_text'],
             width=132,
-            height=40,
+            height=36,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2193,7 +2193,7 @@ class SECFinancialSystem:
             font=FONTS['normal'],
             fg=PALETTE['dash_text'],
             width=120,
-            height=40,
+            height=36,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2221,14 +2221,42 @@ class SECFinancialSystem:
         ttk.Spinbox(
             ops_row, from_=1990, to=2035, textvariable=self.end_year_var, width=6
         ).pack(side='right')
+        fetch_btn_icon = None
+        load_btn_icon = None
+        export_btn_icon = None
+        try:
+            from PIL import Image, ImageTk
+            p_fetch = os.path.join(BASE_DIR, "assets", "ui", "nav_icons", "financials.png")
+            p_load = os.path.join(BASE_DIR, "assets", "ui", "nav_icons", "doc.png")
+            p_export = os.path.join(BASE_DIR, "assets", "ui", "nav_icons", "reports.png")
+
+            if os.path.exists(p_fetch):
+                fetch_btn_icon = ImageTk.PhotoImage(Image.open(p_fetch).convert("RGBA").resize((22, 22), Image.LANCZOS))
+            if os.path.exists(p_load):
+                load_btn_icon = ImageTk.PhotoImage(Image.open(p_load).convert("RGBA").resize((22, 22), Image.LANCZOS))
+            if os.path.exists(p_export):
+                export_btn_icon = ImageTk.PhotoImage(Image.open(p_export).convert("RGBA").resize((30, 30), Image.LANCZOS))
+
+            if not hasattr(self, "_action_icon_images"):
+                self._action_icon_images = {}
+            self._action_icon_images["fetch"] = fetch_btn_icon
+            self._action_icon_images["load"] = load_btn_icon
+            self._action_icon_images["export"] = export_btn_icon
+        except Exception:
+            pass
+
         self.fetch_btn = GlowButton(
             ops_row,
             text=self._t('fetch_data'),
             command=self.fetch_data,
             font=FONTS['button'],
             fg=PALETTE['dash_text'],
-            width=210,
-            height=40,
+            image=fetch_btn_icon,
+            compound="right",
+            anchor="e",
+            justify="right",
+            width=184,
+            height=36,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2241,8 +2269,12 @@ class SECFinancialSystem:
             command=self.load_results_from_excel,
             font=FONTS['normal'],
             fg=PALETTE['dash_text'],
-            width=120,
-            height=40,
+            image=load_btn_icon,
+            compound="right",
+            anchor="e",
+            justify="right",
+            width=106,
+            height=36,
             radius=14,
             border_width=2,
             glow_radius=10,
@@ -2251,22 +2283,38 @@ class SECFinancialSystem:
         self.quick_load_btn.pack(side='left', padx=(0, 6))
         self.quick_export_btn = GlowButton(
             ops_row,
-            text=self._t('tool_export_compact'),
+            text="" if export_btn_icon is not None else "⇩",
             command=self.export_to_excel_safe,
             font=FONTS['normal'],
             fg=PALETTE['dash_text'],
-            width=170,
-            height=40,
+            image=export_btn_icon,
+            compound="right",
+            anchor="center",
+            justify="center",
+            width=60,
+            height=36,
             radius=14,
             border_width=2,
             glow_radius=10,
             style=blue_style,
         )
         self.quick_export_btn.pack(side='left')
+        try:
+            # Keep export always visible: place it before the wider action buttons.
+            self.quick_export_btn.pack_forget()
+            self.quick_export_btn.pack(side='left', padx=(0, 6), before=self.fetch_btn)
+        except Exception:
+            pass
+        try:
+            # Keep tooltip-like accessibility by exposing the action on hover title (UI-only).
+            self.quick_export_btn.bind("<Enter>", lambda _e: self._update_workspace_context(self._t('tool_export_compact')))
+            self.quick_export_btn.bind("<Leave>", lambda _e: self._update_workspace_context())
+        except Exception:
+            pass
         self._refresh_company_selector()
 
         meta_row = tk.Frame(workspace_bar, bg=PALETTE['surface_alt'])
-        meta_row.pack(fill='x', padx=8, pady=(1, 3))
+        meta_row.pack(fill='x', padx=8, pady=(0, 1))
         self.workspace_context_label = tk.Label(
             meta_row,
             text=self._t('status_ready'),
@@ -2354,11 +2402,11 @@ class SECFinancialSystem:
         content_row.pack(fill='both', expand=True)
 
         # Premium right-side navigation rail (matches the reference design intent).
-        NAV_RAIL_W = 300  # match reference rail width (UI-only)
+        NAV_RAIL_W = 286  # slightly narrower to match reference proportions
         NAV_PAD_X = 12
         NAV_BTN_W = NAV_RAIL_W - (NAV_PAD_X * 2)
         # Keep icons large but leave breathing room from the rounded border.
-        NAV_ICON_PX = 60
+        NAV_ICON_PX = 52
 
         nav_rail = tk.Frame(
             content_row,
@@ -2509,11 +2557,19 @@ class SECFinancialSystem:
                     except Exception:
                         return False
 
+                prefer_generated = set()
                 for nm in cand_names:
-                    for rel in (
-                        os.path.join("assets", "ui", "nav_icons_master", f"{nm}.png"),
-                        os.path.join("assets", "ui", "nav_icons", f"{nm}.png"),
-                    ):
+                    if nm in prefer_generated:
+                        rel_candidates = (
+                            os.path.join("assets", "ui", "nav_icons", f"{nm}.png"),
+                            os.path.join("assets", "ui", "nav_icons_master", f"{nm}.png"),
+                        )
+                    else:
+                        rel_candidates = (
+                            os.path.join("assets", "ui", "nav_icons_master", f"{nm}.png"),
+                            os.path.join("assets", "ui", "nav_icons", f"{nm}.png"),
+                        )
+                    for rel in rel_candidates:
                         p = os.path.join(BASE_DIR, rel)
                         if os.path.exists(p):
                             im = Image.open(p).convert("RGBA")
@@ -2659,13 +2715,13 @@ class SECFinancialSystem:
                 anchor="e",
                 justify="right",
                 width=NAV_BTN_W,
-                height=62,
+                height=56,
                 radius=16,
                 border_width=2,
                 glow_radius=10,
                 style=rail_default_style,
             )
-            btn.pack(fill='x', pady=8)
+            btn.pack(fill='x', pady=5)
             # store both widget and the two styles for selection highlighting
             btn._rail_styles = (rail_default_style, rail_selected_style)  # type: ignore[attr-defined]
             self.workspace_nav_buttons[key] = btn
